@@ -75,6 +75,16 @@ func (g *CoreDNSGenerator) Render() error {
 	if err := os.MkdirAll(zonesDir, 0o755); err != nil {
 		return err
 	}
+	if entries, err := os.ReadDir(zonesDir); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			if strings.HasSuffix(entry.Name(), ".zone") {
+				_ = os.Remove(filepath.Join(zonesDir, entry.Name()))
+			}
+		}
+	}
 
 	// build zone files
 	zoneFiles := make([]ZoneFile, 0, len(domains))
