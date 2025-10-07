@@ -2,6 +2,7 @@ package render
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -173,6 +174,7 @@ func (g *OpenRestyGenerator) Render() error {
 	if err != nil {
 		return err
 	}
+	localEdges := g.localEdgeIPs()
 	nsList, err := g.Infra.ActiveNameServers()
 	if err != nil {
 		return err
@@ -181,7 +183,10 @@ func (g *OpenRestyGenerator) Render() error {
 	for _, ns := range nsList {
 		nsIPs[ns.IPv4] = struct{}{}
 	}
-	edgeIPs := uniqueStrings(edges)
+	edgeIPs := uniqueStrings(localEdges)
+	if len(edgeIPs) == 0 {
+		edgeIPs = uniqueStrings(edges)
+	}
 	if err := os.MkdirAll(g.OutputDir, 0o755); err != nil {
 		return err
 	}
@@ -240,6 +245,37 @@ func (g *OpenRestyGenerator) Render() error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(g.OutputDir, "nginx.conf"), buf.Bytes(), 0o644)
+}
+
+type localEdgeNode struct {
+	IPs   []string `json:"ips"`
+	NSIPs []string `json:"ns_ips"`
+}
+
+func (g *OpenRestyGenerator) localEdgeIPs() []string {
+	path := filepath.Join(g.DataDir, "cluster", "node.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var node localEdgeNode
+	if err := json.Unmarshal(data, &node); err != nil {
+		return nil
+	}
+	ns := make(map[string]struct{}, len(node.NSIPs))
+	for _, ip := range node.NSIPs {
+		ns[ip] = struct{}{}
+	}
+	edges := make([]string, 0, len(node.IPs))
+	for _, ip := range node.IPs {
+		if _, ok := ns[ip]; ok {
+			continue
+		}
+		if ip != "" {
+			edges = append(edges, ip)
+		}
+	}
+	return edges
 }
 
 func ensureDot(input string) string {
