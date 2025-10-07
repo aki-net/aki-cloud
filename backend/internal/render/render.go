@@ -53,6 +53,18 @@ func (g *CoreDNSGenerator) Render() error {
 	if err != nil {
 		return err
 	}
+	local := g.localNodeInfo()
+	filteredNS := make([]infra.NameServer, 0, len(nsList))
+	if local.NodeID != "" {
+		for _, ns := range nsList {
+			if ns.NodeID == local.NodeID {
+				filteredNS = append(filteredNS, ns)
+			}
+		}
+	}
+	if len(filteredNS) == 0 {
+		filteredNS = nsList
+	}
 	edges, err := g.Infra.EdgeIPs()
 	if err != nil {
 		return err
@@ -126,7 +138,7 @@ func (g *CoreDNSGenerator) Render() error {
 		Zones       []zoneMeta
 		ZonesDir    string
 	}{
-		NameServers: nsList,
+		NameServers: filteredNS,
 		Zones:       zones,
 		ZonesDir:    zonesDir,
 	}
@@ -174,7 +186,8 @@ func (g *OpenRestyGenerator) Render() error {
 	if err != nil {
 		return err
 	}
-	localEdges := g.localEdgeIPs()
+	localInfo := g.localNodeInfo()
+	localEdges := g.localEdgeIPs(localInfo)
 	nsList, err := g.Infra.ActiveNameServers()
 	if err != nil {
 		return err
@@ -248,20 +261,33 @@ func (g *OpenRestyGenerator) Render() error {
 }
 
 type localEdgeNode struct {
-	IPs   []string `json:"ips"`
-	NSIPs []string `json:"ns_ips"`
+	NodeID string   `json:"node_id"`
+	IPs    []string `json:"ips"`
+	NSIPs  []string `json:"ns_ips"`
 }
 
-func (g *OpenRestyGenerator) localEdgeIPs() []string {
-	path := filepath.Join(g.DataDir, "cluster", "node.json")
+func (g *OpenRestyGenerator) localNodeInfo() localEdgeNode {
+	return loadLocalNodeInfo(g.DataDir)
+}
+
+func (g *CoreDNSGenerator) localNodeInfo() localEdgeNode {
+	return loadLocalNodeInfo(g.DataDir)
+}
+
+func loadLocalNodeInfo(dataDir string) localEdgeNode {
+	path := filepath.Join(dataDir, "cluster", "node.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil
+		return localEdgeNode{}
 	}
 	var node localEdgeNode
 	if err := json.Unmarshal(data, &node); err != nil {
-		return nil
+		return localEdgeNode{}
 	}
+	return node
+}
+
+func (g *OpenRestyGenerator) localEdgeIPs(node localEdgeNode) []string {
 	ns := make(map[string]struct{}, len(node.NSIPs))
 	for _, ip := range node.NSIPs {
 		ns[ip] = struct{}{}
