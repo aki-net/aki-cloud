@@ -117,6 +117,31 @@ func (n *Node) ComputeEdgeIPs() {
 	n.EdgeIPs = edges
 }
 
+// EdgeHealthStatus describes the current reachability of an edge IP.
+type EdgeHealthStatus struct {
+	IP           string       `json:"ip"`
+	Healthy      bool         `json:"healthy"`
+	LastChecked  time.Time    `json:"last_checked"`
+	FailureCount int          `json:"failure_count"`
+	Message      string       `json:"message,omitempty"`
+	Version      ClockVersion `json:"version"`
+}
+
+// MergeEdgeHealth applies LWW semantics for edge health records.
+func MergeEdgeHealth(local EdgeHealthStatus, remote EdgeHealthStatus) EdgeHealthStatus {
+	if local.IP == "" {
+		return remote
+	}
+	if remote.IP == "" {
+		return local
+	}
+	winner := MergeClock(local.Version, remote.Version)
+	if winner == remote.Version {
+		return remote
+	}
+	return local
+}
+
 // ErrValidation indicates input validation failure.
 type ErrValidation string
 

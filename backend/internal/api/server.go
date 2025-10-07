@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,6 +26,7 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/go-chi/jwtauth/v5"
 	"github.com/google/uuid"
+	"github.com/miekg/dns"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -35,6 +38,30 @@ type Server struct {
 	Orchestrator *orchestrator.Service
 	Sync         *syncsvc.Service
 	Infra        *infra.Controller
+}
+
+type domainOverview struct {
+	Domain      string    `json:"domain"`
+	OwnerID     string    `json:"owner_id"`
+	OwnerEmail  string    `json:"owner_email,omitempty"`
+	OwnerExists bool      `json:"owner_exists"`
+	OriginIP    string    `json:"origin_ip"`
+	Proxied     bool      `json:"proxied"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type nsCheckRequest struct {
+	Targets []string `json:"targets"`
+}
+
+type nsCheckResult struct {
+	NodeID    string `json:"node_id"`
+	Name      string `json:"name"`
+	FQDN      string `json:"fqdn"`
+	IPv4      string `json:"ipv4"`
+	Healthy   bool   `json:"healthy"`
+	LatencyMS int64  `json:"latency_ms"`
+	Message   string `json:"message,omitempty"`
 }
 
 // Routes constructs the HTTP router.
@@ -89,6 +116,9 @@ func (s *Server) Routes() http.Handler {
 				r.Post("/nodes", s.handleCreateNode)
 				r.Put("/nodes/{id}", s.handleUpdateNode)
 				r.Delete("/nodes/{id}", s.handleDeleteNode)
+
+				r.Get("/domains/overview", s.handleDomainsOverview)
+				r.Post("/infra/nameservers/check", s.handleNameServerCheck)
 
 				r.Post("/ops/rebuild", s.handleRebuild)
 			})
@@ -577,6 +607,49 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
+func (s *Server) handleDomainsOverview(w http.ResponseWriter, r *http.Request) {
+	domains, err := s.Store.GetDomains()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	users, err := s.Store.GetUsers()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	userMap := make(map[string]models.User, len(users))
+	for _, user := range users {
+		userMap[user.ID] = user
+	}
+	overview := make([]domainOverview, 0, len(domains))
+	for _, domain := range domains {
+		entry := domainOverview{
+			Domain:      domain.Domain,
+			OwnerID:     domain.Owner,
+			OwnerExists: false,
+			OriginIP:    domain.OriginIP,
+			Proxied:     domain.Proxied,
+			UpdatedAt:   domain.UpdatedAt,
+		}
+		if user, ok := userMap[domain.Owner]; ok {
+			entry.OwnerExists = true
+			entry.OwnerEmail = user.Email
+		}
+		overview = append(overview, entry)
+	}
+	sort.Slice(overview, func(i, j int) bool {
+		if overview[i].OwnerEmail != overview[j].OwnerEmail {
+			return overview[i].OwnerEmail < overview[j].OwnerEmail
+		}
+		if overview[i].OwnerID != overview[j].OwnerID {
+			return overview[i].OwnerID < overview[j].OwnerID
+		}
+		return overview[i].Domain < overview[j].Domain
+	})
+	writeJSON(w, http.StatusOK, overview)
+}
+
 func (s *Server) handleRebuild(w http.ResponseWriter, r *http.Request) {
 	if err := s.Orchestrator.FlushSync(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -700,4 +773,84 @@ func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+func (s *Server) handleNameServerCheck(w http.ResponseWriter, r *http.Request) {
+	var req nsCheckRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	targets := make(map[string]struct{}, len(req.Targets))
+	for _, target := range req.Targets {
+		t := strings.TrimSpace(strings.ToLower(target))
+		if t != "" {
+			targets[t] = struct{}{}
+		}
+	}
+	nsList, err := s.Infra.ActiveNameServers()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	results := make([]nsCheckResult, 0, len(nsList))
+	for _, ns := range nsList {
+		if len(targets) > 0 {
+			if _, ok := targets[strings.ToLower(ns.FQDN)]; !ok {
+				continue
+			}
+		}
+		healthy, latency, message := s.probeNameServer(r.Context(), ns)
+		results = append(results, nsCheckResult{
+			NodeID:    ns.NodeID,
+			Name:      ns.Name,
+			FQDN:      ns.FQDN,
+			IPv4:      ns.IPv4,
+			Healthy:   healthy,
+			LatencyMS: latency.Milliseconds(),
+			Message:   message,
+		})
+	}
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Name != results[j].Name {
+			return results[i].Name < results[j].Name
+		}
+		if results[i].FQDN != results[j].FQDN {
+			return results[i].FQDN < results[j].FQDN
+		}
+		return results[i].IPv4 < results[j].IPv4
+	})
+	writeJSON(w, http.StatusOK, results)
+}
+
+func (s *Server) probeNameServer(ctx context.Context, ns infra.NameServer) (bool, time.Duration, string) {
+	base := strings.TrimSpace(ns.BaseZone)
+	if base == "" {
+		base = ns.FQDN
+	}
+	fqdn := dns.Fqdn(base)
+	client := &dns.Client{
+		Timeout: 3 * time.Second,
+	}
+	msg := dns.Msg{}
+	msg.SetQuestion(fqdn, dns.TypeNS)
+	start := time.Now()
+	resp, _, err := client.ExchangeContext(ctx, &msg, net.JoinHostPort(ns.IPv4, "53"))
+	latency := time.Since(start)
+	if err != nil {
+		return false, latency, err.Error()
+	}
+	if resp == nil {
+		return false, latency, "nil response"
+	}
+	if resp.Rcode != dns.RcodeSuccess {
+		if text, ok := dns.RcodeToString[resp.Rcode]; ok {
+			return false, latency, text
+		}
+		return false, latency, fmt.Sprintf("rcode %d", resp.Rcode)
+	}
+	if len(resp.Answer) == 0 {
+		return false, latency, "empty answer"
+	}
+	return true, latency, ""
 }

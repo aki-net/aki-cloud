@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"aki-cloud/backend/internal/infra"
+	"aki-cloud/backend/internal/models"
 	"aki-cloud/backend/internal/store"
 )
 
@@ -70,6 +71,14 @@ func (g *CoreDNSGenerator) Render() error {
 	if err != nil {
 		return err
 	}
+	edgeHealth, err := g.Store.GetEdgeHealthMap()
+	if err != nil {
+		return err
+	}
+	healthyEdges := filterHealthyEdges(edges, edgeHealth)
+	if len(healthyEdges) == 0 {
+		healthyEdges = edges
+	}
 	fmt.Printf("CoreDNS generator: data dir %s, %d domain(s), %d nameserver(s), %d edge IP(s)\n", g.DataDir, len(domains), len(activeNS), len(edges))
 	zonesDir := filepath.Join(g.DataDir, "dns", "zones")
 	if err := os.MkdirAll(zonesDir, 0o755); err != nil {
@@ -100,8 +109,8 @@ func (g *CoreDNSGenerator) Render() error {
 			ttl = 60
 		}
 		arecords := []string{}
-		if domain.Proxied {
-			arecords = append(arecords, edges...)
+		if domain.Proxied && len(healthyEdges) > 0 {
+			arecords = append(arecords, healthyEdges...)
 		} else {
 			arecords = append(arecords, domain.OriginIP)
 		}
@@ -197,6 +206,11 @@ func (g *OpenRestyGenerator) Render() error {
 	if err != nil {
 		return err
 	}
+	edgeHealth, err := g.Store.GetEdgeHealthMap()
+	if err != nil {
+		return err
+	}
+	healthyEdges := filterHealthyEdges(edges, edgeHealth)
 	localInfo := g.localNodeInfo()
 	localEdges := g.localEdgeIPs(localInfo)
 	nsList, err := g.Infra.ActiveNameServers()
@@ -207,7 +221,14 @@ func (g *OpenRestyGenerator) Render() error {
 	for _, ns := range nsList {
 		nsIPs[ns.IPv4] = struct{}{}
 	}
-	edgeIPs := uniqueStrings(localEdges)
+	filteredLocal := filterHealthyEdges(localEdges, edgeHealth)
+	if len(filteredLocal) == 0 {
+		filteredLocal = healthyEdges
+		if len(filteredLocal) == 0 {
+			filteredLocal = edges
+		}
+	}
+	edgeIPs := uniqueStrings(filteredLocal)
 	if len(edgeIPs) == 0 {
 		edgeIPs = uniqueStrings(edges)
 	}
@@ -327,6 +348,33 @@ func sanitizeFileName(name string) string {
 	cleaned = strings.ReplaceAll(cleaned, string(os.PathSeparator), "-")
 	cleaned = strings.ReplaceAll(cleaned, " ", "-")
 	return cleaned
+}
+
+func filterHealthyEdges(all []string, health map[string]models.EdgeHealthStatus) []string {
+	const staleThreshold = 10 * time.Minute
+	if len(all) == 0 {
+		return all
+	}
+	filtered := make([]string, 0, len(all))
+	for _, ip := range all {
+		status, ok := health[ip]
+		if !ok {
+			filtered = append(filtered, ip)
+			continue
+		}
+		if status.Healthy {
+			filtered = append(filtered, ip)
+			continue
+		}
+		if status.LastChecked.IsZero() {
+			filtered = append(filtered, ip)
+			continue
+		}
+		if time.Since(status.LastChecked) > staleThreshold {
+			filtered = append(filtered, ip)
+		}
+	}
+	return filtered
 }
 
 func uniqueStrings(values []string) []string {

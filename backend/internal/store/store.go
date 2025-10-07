@@ -44,6 +44,10 @@ func (s *Store) peersFile() string {
 	return filepath.Join(s.dataDir, "cluster", "peers.json")
 }
 
+func (s *Store) edgeHealthFile() string {
+	return filepath.Join(s.dataDir, "cluster", "edge_health.json")
+}
+
 func (s *Store) domainDir(domain string) string {
 	domain = strings.ToLower(domain)
 	return filepath.Join(s.dataDir, "domains", domain)
@@ -117,6 +121,94 @@ func (s *Store) SaveUsers(users []models.User) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return writeJSONAtomic(s.usersFile(), users)
+}
+
+// GetEdgeHealth returns the current edge health snapshot.
+func (s *Store) GetEdgeHealth() ([]models.EdgeHealthStatus, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	path := s.edgeHealthFile()
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return []models.EdgeHealthStatus{}, nil
+		}
+		return nil, err
+	}
+	var statuses []models.EdgeHealthStatus
+	if err := readJSON(path, &statuses); err != nil {
+		return nil, err
+	}
+	return statuses, nil
+}
+
+// GetEdgeHealthMap returns a map keyed by IP for quick lookups.
+func (s *Store) GetEdgeHealthMap() (map[string]models.EdgeHealthStatus, error) {
+	statuses, err := s.GetEdgeHealth()
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]models.EdgeHealthStatus, len(statuses))
+	for _, status := range statuses {
+		m[status.IP] = status
+	}
+	return m, nil
+}
+
+// SaveEdgeHealth persists the provided health slice atomically.
+func (s *Store) SaveEdgeHealth(statuses []models.EdgeHealthStatus) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return writeJSONAtomic(s.edgeHealthFile(), statuses)
+}
+
+// UpsertEdgeHealth inserts or updates a single edge health record.
+func (s *Store) UpsertEdgeHealth(status models.EdgeHealthStatus) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	path := s.edgeHealthFile()
+	var statuses []models.EdgeHealthStatus
+	if _, err := os.Stat(path); err == nil {
+		if err := readJSON(path, &statuses); err != nil {
+			return err
+		}
+	}
+	replaced := false
+	for i := range statuses {
+		if statuses[i].IP == status.IP {
+			statuses[i] = status
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		statuses = append(statuses, status)
+	}
+	return writeJSONAtomic(path, statuses)
+}
+
+// DeleteEdgeHealth removes a record for the provided IP.
+func (s *Store) DeleteEdgeHealth(ip string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	path := s.edgeHealthFile()
+	var statuses []models.EdgeHealthStatus
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := readJSON(path, &statuses); err != nil {
+		return err
+	}
+	pruned := make([]models.EdgeHealthStatus, 0, len(statuses))
+	for _, st := range statuses {
+		if st.IP == ip {
+			continue
+		}
+		pruned = append(pruned, st)
+	}
+	return writeJSONAtomic(path, pruned)
 }
 
 // GetDomains returns all domain records.

@@ -1,8 +1,10 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import {
+  checkNameServers,
   createUser,
   deleteNode,
   deleteUser,
+  fetchDomainOverview,
   fetchEdges,
   fetchNameServers,
   fetchNodes,
@@ -10,7 +12,7 @@ import {
   rebuildServices,
   upsertNode,
 } from '../services/api';
-import { NameServerEntry, NodeRecord, UserRecord } from '../types';
+import { DomainOverview, NameServerEntry, NameServerStatus, NodeRecord, UserRecord } from '../types';
 
 interface NodeFormState {
   id?: string;
@@ -22,11 +24,19 @@ interface NodeFormState {
   api_endpoint: string;
 }
 
+interface DomainGroup {
+  label: string;
+  exists: boolean;
+  domains: DomainOverview[];
+}
+
 export const AdminDashboard = () => {
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [nodes, setNodes] = useState<NodeRecord[]>([]);
   const [nameservers, setNameservers] = useState<NameServerEntry[]>([]);
   const [edges, setEdges] = useState<string[]>([]);
+  const [domains, setDomains] = useState<DomainOverview[]>([]);
+  const [nsStatus, setNsStatus] = useState<NameServerStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [userForm, setUserForm] = useState({ email: '', password: '', role: 'user' });
@@ -39,20 +49,23 @@ export const AdminDashboard = () => {
     api_endpoint: '',
   });
   const [pending, setPending] = useState(false);
+  const [nsPending, setNsPending] = useState(false);
 
   const load = async () => {
     try {
       setLoading(true);
-      const [usersData, nodesData, nsData, edgeData] = await Promise.all([
+      const [usersData, nodesData, nsData, edgeData, domainData] = await Promise.all([
         fetchUsers(),
         fetchNodes(),
         fetchNameServers(),
         fetchEdges(),
+        fetchDomainOverview(),
       ]);
       setUsers(usersData);
       setNodes(nodesData);
       setNameservers(nsData);
       setEdges(edgeData);
+      setDomains(domainData);
     } catch (err) {
       setError('Failed to load infrastructure data');
     } finally {
@@ -60,9 +73,97 @@ export const AdminDashboard = () => {
     }
   };
 
+  const refreshDomainOverview = async () => {
+    try {
+      const data = await fetchDomainOverview();
+      setDomains(data);
+    } catch (err) {
+      setError('Failed to refresh domain overview');
+    }
+  };
+
+  const refreshNameServerStatus = async (guard?: { cancelled: boolean }) => {
+    if (guard?.cancelled) {
+      return;
+    }
+    setNsPending(true);
+    try {
+      const data = await checkNameServers();
+      if (guard?.cancelled) {
+        return;
+      }
+      setNsStatus(data);
+    } catch (err) {
+      if (!guard?.cancelled) {
+        setError((prev) => prev ?? 'Failed to check nameservers');
+      }
+    } finally {
+      if (!guard?.cancelled) {
+        setNsPending(false);
+      }
+    }
+  };
+
   useEffect(() => {
-    load().catch(() => null);
+    const guard = { cancelled: false };
+    const run = async () => {
+      await load();
+      if (guard.cancelled) {
+        return;
+      }
+      await refreshNameServerStatus(guard);
+    };
+    run().catch(() => null);
+    return () => {
+      guard.cancelled = true;
+    };
   }, []);
+
+  const groupSortKey = (group: DomainGroup) => {
+    return `${group.exists ? '0' : '1'}-${group.label}`;
+  };
+
+  const domainGroups = useMemo<DomainGroup[]>(() => {
+    const groups = new Map<string, DomainGroup>();
+    domains.forEach((domain) => {
+      const label = domain.owner_email || domain.owner_id || 'unassigned';
+      const key = label.toLowerCase();
+      const entry = groups.get(key);
+      if (entry) {
+        entry.domains.push(domain);
+        entry.exists = entry.exists || domain.owner_exists;
+      } else {
+        groups.set(key, {
+          label,
+          exists: domain.owner_exists,
+          domains: [domain],
+        });
+      }
+    });
+    const list = Array.from(groups.values());
+    list.forEach((group) => group.domains.sort((a, b) => a.domain.localeCompare(b.domain)));
+    list.sort((a, b) => groupSortKey(a).localeCompare(groupSortKey(b)));
+    return list;
+  }, [domains]);
+
+  const nsStatusMap = useMemo(() => {
+    const map = new Map<string, NameServerStatus>();
+    nsStatus.forEach((status) => {
+      map.set(`${status.fqdn}|${status.ipv4}`, status);
+    });
+    return map;
+  }, [nsStatus]);
+
+  const formatDate = (value: string) => {
+    if (!value) {
+      return '—';
+    }
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return '—';
+    }
+    return parsed.toLocaleString();
+  };
 
   const submitUser = async (event: FormEvent) => {
     event.preventDefault();
@@ -89,6 +190,7 @@ export const AdminDashboard = () => {
     try {
       await deleteUser(id);
       setUsers((prev) => prev.filter((user) => user.id !== id));
+      await refreshDomainOverview();
     } catch (err) {
       setError('Failed to delete user');
     }
@@ -116,6 +218,7 @@ export const AdminDashboard = () => {
         return [...prev, saved];
       });
       setNodeForm({ name: '', ips: '', ns_ips: '', ns_label: 'dns', ns_base_domain: '', api_endpoint: '' });
+      await refreshNameServerStatus();
     } catch (err) {
       setError('Failed to persist node');
     } finally {
@@ -142,6 +245,7 @@ export const AdminDashboard = () => {
     try {
       await deleteNode(node.id);
       setNodes((prev) => prev.filter((item) => item.id !== node.id));
+      await refreshNameServerStatus();
     } catch (err) {
       setError('Failed to delete node');
     }
@@ -151,6 +255,7 @@ export const AdminDashboard = () => {
     try {
       setPending(true);
       await rebuildServices();
+      await refreshNameServerStatus();
     } catch (err) {
       setError('Failed to trigger rebuild');
     } finally {
@@ -323,23 +428,85 @@ export const AdminDashboard = () => {
       </div>
 
       <div className="card">
-        <h3 className="section-title">Active Nameservers</h3>
+        <h3 className="section-title">Domains by Owner</h3>
+        {domainGroups.length === 0 ? (
+          <p>No domains configured.</p>
+        ) : (
+          domainGroups.map((group) => (
+            <div className="card nested" key={group.label}>
+              <div className="group-header">
+                <strong>{group.label}</strong>
+                {!group.exists && <span className="badge warning">user removed</span>}
+              </div>
+              <table className="table compact">
+                <thead>
+                  <tr>
+                    <th>Domain</th>
+                    <th>Origin</th>
+                    <th>Mode</th>
+                    <th>Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {group.domains.map((domain) => (
+                    <tr key={domain.domain}>
+                      <td>{domain.domain}</td>
+                      <td>{domain.origin_ip}</td>
+                      <td>
+                        <span className={`badge ${domain.proxied ? 'info' : 'secondary'}`}>
+                          {domain.proxied ? 'proxied' : 'direct'}
+                        </span>
+                      </td>
+                      <td>{formatDate(domain.updated_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="card">
+        <div className="section-header">
+          <h3 className="section-title">Authoritative Nameservers</h3>
+          <button className="button secondary" onClick={() => refreshNameServerStatus()} disabled={nsPending}>
+            {nsPending ? 'Checking…' : 'Check reachability'}
+          </button>
+        </div>
         <table className="table">
           <thead>
             <tr>
               <th>Node</th>
               <th>Hostname</th>
               <th>IPv4</th>
+              <th>Status</th>
+              <th>Latency</th>
+              <th>Notes</th>
             </tr>
           </thead>
           <tbody>
-            {nameservers.map((entry) => (
-              <tr key={`${entry.node_id}-${entry.ipv4}`}>
-                <td>{entry.name}</td>
-                <td>{entry.fqdn}</td>
-                <td>{entry.ipv4}</td>
-              </tr>
-            ))}
+            {nameservers.map((entry) => {
+              const status = nsStatusMap.get(`${entry.fqdn}|${entry.ipv4}`);
+              return (
+                <tr key={`${entry.node_id}-${entry.ipv4}`}>
+                  <td>{entry.name}</td>
+                  <td>{entry.fqdn}</td>
+                  <td>{entry.ipv4}</td>
+                  <td>
+                    {status ? (
+                      <span className={`badge ${status.healthy ? 'success' : 'danger'}`}>
+                        {status.healthy ? 'healthy' : 'unreachable'}
+                      </span>
+                    ) : (
+                      <span className="badge secondary">unknown</span>
+                    )}
+                  </td>
+                  <td>{status ? `${status.latency_ms} ms` : '—'}</td>
+                  <td>{status?.message ?? '—'}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

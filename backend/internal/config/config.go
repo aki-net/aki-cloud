@@ -9,14 +9,18 @@ import (
 
 // Config captures runtime configuration for the backend service.
 type Config struct {
-	DataDir           string
-	Port              int
-	ClusterSecretFile string
-	NodeID            string
-	NodeName          string
-	JWTSecret         []byte
-	SyncInterval      time.Duration
-	ReloadDebounce    time.Duration
+	DataDir                string
+	Port                   int
+	ClusterSecretFile      string
+	NodeID                 string
+	NodeName               string
+	JWTSecret              []byte
+	SyncInterval           time.Duration
+	ReloadDebounce         time.Duration
+	HealthInterval         time.Duration
+	HealthDialTimeout      time.Duration
+	HealthFailureThreshold int
+	HealthFailureDecay     time.Duration
 }
 
 // Load reads configuration values from environment variables with sensible defaults.
@@ -57,15 +61,36 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("invalid RELOAD_DEBOUNCE_MS: %w", err)
 	}
 
+	healthIntervalSeconds, err := getEnvInt("HEALTH_CHECK_INTERVAL_SECONDS", 30)
+	if err != nil {
+		return nil, fmt.Errorf("invalid HEALTH_CHECK_INTERVAL_SECONDS: %w", err)
+	}
+	healthDialTimeoutMillis, err := getEnvInt("HEALTH_DIAL_TIMEOUT_MS", 2500)
+	if err != nil {
+		return nil, fmt.Errorf("invalid HEALTH_DIAL_TIMEOUT_MS: %w", err)
+	}
+	healthFailureThreshold, err := getEnvInt("HEALTH_FAILURE_THRESHOLD", 3)
+	if err != nil {
+		return nil, fmt.Errorf("invalid HEALTH_FAILURE_THRESHOLD: %w", err)
+	}
+	healthFailureDecaySeconds, err := getEnvInt("HEALTH_FAILURE_DECAY_SECONDS", 300)
+	if err != nil {
+		return nil, fmt.Errorf("invalid HEALTH_FAILURE_DECAY_SECONDS: %w", err)
+	}
+
 	return &Config{
-		DataDir:           dataDir,
-		Port:              port,
-		ClusterSecretFile: clusterSecretFile,
-		NodeID:            nodeID,
-		NodeName:          nodeName,
-		JWTSecret:         bytesTrim(jwtSecret),
-		SyncInterval:      time.Duration(syncIntervalSeconds) * time.Second,
-		ReloadDebounce:    time.Duration(reloadDebounceMillis) * time.Millisecond,
+		DataDir:                dataDir,
+		Port:                   port,
+		ClusterSecretFile:      clusterSecretFile,
+		NodeID:                 nodeID,
+		NodeName:               nodeName,
+		JWTSecret:              bytesTrim(jwtSecret),
+		SyncInterval:           time.Duration(syncIntervalSeconds) * time.Second,
+		ReloadDebounce:         time.Duration(reloadDebounceMillis) * time.Millisecond,
+		HealthInterval:         time.Duration(healthIntervalSeconds) * time.Second,
+		HealthDialTimeout:      time.Duration(healthDialTimeoutMillis) * time.Millisecond,
+		HealthFailureThreshold: healthFailureThreshold,
+		HealthFailureDecay:     time.Duration(healthFailureDecaySeconds) * time.Second,
 	}, nil
 }
 

@@ -3,8 +3,10 @@ import {
   CreateDomainPayload,
   CreateUserPayload,
   DomainRecord,
+  DomainOverview,
   LoginPayload,
   NameServerEntry,
+  NameServerStatus,
   NodeRecord,
   SessionUser,
   UpsertDomainPayload,
@@ -122,6 +124,17 @@ export const fetchNameServers = async (): Promise<NameServerEntry[]> => {
 
 export const fetchEdges = async (): Promise<string[]> => {
   const res = await client.get<string[]>('/infra/edges');
+  return res.data;
+};
+
+export const fetchDomainOverview = async (): Promise<DomainOverview[]> => {
+  const res = await client.get<DomainOverview[]>('/admin/domains/overview');
+  return res.data;
+};
+
+export const checkNameServers = async (targets?: string[]): Promise<NameServerStatus[]> => {
+  const payload = targets && targets.length > 0 ? { targets } : {};
+  const res = await client.post<NameServerStatus[]>('/admin/infra/nameservers/check', payload);
   return res.data;
 };
 

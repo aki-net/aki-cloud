@@ -23,6 +23,7 @@ FRONTEND_PORT="3000"
 BACKEND_PORT="8080"
 SECRETS_SUPPLIED=""
 JWT_SECRET_INPUT=""
+AUTO_FIREWALL="auto"
 
 REPO_URL="${REPO_URL:-https://github.com/aki-net/aki-cloud.git}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/aki-cloud}"
@@ -54,6 +55,7 @@ Options:
   --frontend-port PORT       Frontend port (default 3000)
   --cluster-secret VALUE     Pre-existing cluster secret (join)
   --jwt-secret VALUE         Pre-existing JWT secret (join)
+  --auto-firewall true|false Enable or disable automatic firewall adjustments (default: auto)
   --repo-url URL             Git repository to clone (default: https://github.com/aki-net/aki-cloud.git)
   --install-dir PATH         Target installation directory (default: /opt/aki-cloud)
   --system-user USER         System user to own the deployment (default: akicloud)
@@ -146,6 +148,10 @@ parse_args() {
       --jwt-secret)
         JWT_SECRET_INPUT="$2"
         RERUN_ARGS+=(--jwt-secret "$2")
+        shift 2 ;;
+      --auto-firewall)
+        AUTO_FIREWALL="$2"
+        RERUN_ARGS+=(--auto-firewall "$2")
         shift 2 ;;
       --repo-url)
         REPO_URL="$2"
@@ -429,6 +435,10 @@ write_env_file() {
   if [[ -z "$api_base" ]]; then
     api_base="http://localhost:$BACKEND_PORT"
   fi
+  local health_interval="${HEALTH_CHECK_INTERVAL_SECONDS:-30}"
+  local health_timeout="${HEALTH_DIAL_TIMEOUT_MS:-2500}"
+  local health_threshold="${HEALTH_FAILURE_THRESHOLD:-3}"
+  local health_decay="${HEALTH_FAILURE_DECAY_SECONDS:-300}"
   cat > "$PROJECT_DIR/.env" <<EOF
 BACKEND_PORT=$BACKEND_PORT
 FRONTEND_PORT=$FRONTEND_PORT
@@ -439,6 +449,10 @@ ENABLE_COREDNS=$enable_coredns
 ENABLE_OPENRESTY=$enable_openresty
 SYNC_INTERVAL_SECONDS=15
 RELOAD_DEBOUNCE_MS=1500
+HEALTH_CHECK_INTERVAL_SECONDS=$health_interval
+HEALTH_DIAL_TIMEOUT_MS=$health_timeout
+HEALTH_FAILURE_THRESHOLD=$health_threshold
+HEALTH_FAILURE_DECAY_SECONDS=$health_decay
 JWT_SECRET_FILE=/data/cluster/jwt_secret
 CLUSTER_SECRET_FILE=/data/cluster/secret
 EOF
@@ -505,6 +519,10 @@ nodes = snapshot.get("nodes", [])
 (data_dir / "infra").mkdir(exist_ok=True)
 (data_dir / "infra" / "nodes.json").write_text(json.dumps(nodes, indent=2))
 
+edge_health = snapshot.get("edge_health", [])
+(data_dir / "cluster").mkdir(exist_ok=True)
+(data_dir / "cluster" / "edge_health.json").write_text(json.dumps(edge_health, indent=2))
+
 snapshot_path.unlink(missing_ok=True)
 PY
 }
@@ -518,6 +536,39 @@ check_seed_reachable() {
   if ! curl -fsS --max-time 10 "$seed_url/healthz" >/dev/null; then
     abort "Unable to reach seed backend at $seed_url. Verify connectivity before retrying."
   fi
+}
+
+ensure_firewall_rule() {
+  local proto="$1"
+  local port="$2"
+  if ! command -v iptables >/dev/null 2>&1; then
+    return 1
+  fi
+  if ! iptables -C INPUT -p "$proto" --dport "$port" -j ACCEPT >/dev/null 2>&1; then
+    iptables -I INPUT -p "$proto" --dport "$port" -j ACCEPT >/dev/null 2>&1 || return 1
+  fi
+  return 0
+}
+
+configure_firewall() {
+  local enable_dns="$1"
+  if [[ "$AUTO_FIREWALL" == "false" ]]; then
+    return
+  fi
+  if ! command -v iptables >/dev/null 2>&1; then
+    echo "iptables not found, skipping firewall automation"
+    return
+  fi
+  local ports=("22" "$BACKEND_PORT" "$FRONTEND_PORT" "80" "443")
+  if [[ "$enable_dns" == "true" ]]; then
+    ports+=("53")
+  fi
+  for port in "${ports[@]}"; do
+    ensure_firewall_rule tcp "$port" >/dev/null 2>&1 || true
+    if [[ "$port" == "53" ]]; then
+      ensure_firewall_rule udp "$port" >/dev/null 2>&1 || true
+    fi
+  done
 }
 
 main() {
@@ -606,6 +657,7 @@ main() {
     fi
 
     write_env_file "$enable_dns" "$enable_proxy" "$API_ENDPOINT"
+    configure_firewall "$enable_dns"
   else
     if [[ -z "$SEED" ]]; then
       prompt_if_empty SEED "Seed backend URL (e.g. http://1.2.3.4:8080)"
@@ -635,6 +687,7 @@ main() {
       enable_proxy="$ENABLE_OPENRESTY"
     fi
     write_env_file "$enable_dns" "$enable_proxy" "$API_ENDPOINT"
+    configure_firewall "$enable_dns"
   fi
 
   check_ports "$NS_IPS" "53" || true

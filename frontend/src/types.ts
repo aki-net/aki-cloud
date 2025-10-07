@@ -72,3 +72,23 @@ export interface NameServerEntry {
   fqdn: string;
   ipv4: string;
 }
+
+export interface DomainOverview {
+  domain: string;
+  owner_id: string;
+  owner_email?: string;
+  owner_exists: boolean;
+  origin_ip: string;
+  proxied: boolean;
+  updated_at: string;
+}
+
+export interface NameServerStatus {
+  node_id: string;
+  name: string;
+  fqdn: string;
+  ipv4: string;
+  healthy: boolean;
+  latency_ms: number;
+  message?: string;
+}

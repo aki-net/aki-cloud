@@ -18,16 +18,18 @@ import (
 
 // Digest represents a snapshot hash of important datasets.
 type Digest struct {
-	Domains map[string]models.ClockVersion `json:"domains"`
-	Users   models.ClockVersion            `json:"users"`
-	Nodes   models.ClockVersion            `json:"nodes"`
+	Domains    map[string]models.ClockVersion `json:"domains"`
+	Users      models.ClockVersion            `json:"users"`
+	Nodes      models.ClockVersion            `json:"nodes"`
+	EdgeHealth map[string]models.ClockVersion `json:"edge_health"`
 }
 
 // Snapshot bundles the full dataset for synchronization.
 type Snapshot struct {
-	Domains []models.DomainRecord `json:"domains"`
-	Users   []models.User         `json:"users"`
-	Nodes   []models.Node         `json:"nodes"`
+	Domains    []models.DomainRecord     `json:"domains"`
+	Users      []models.User             `json:"users"`
+	Nodes      []models.Node             `json:"nodes"`
+	EdgeHealth []models.EdgeHealthStatus `json:"edge_health"`
 }
 
 // Service coordinates data synchronization.
@@ -87,12 +89,21 @@ func (s *Service) ComputeDigest() (Digest, error) {
 	if err != nil {
 		return Digest{}, err
 	}
+	healthStatuses, err := s.store.GetEdgeHealth()
+	if err != nil {
+		return Digest{}, err
+	}
 	userClock := aggregateClock(users, s.nodeID)
 	nodeClock := aggregateClock(nodes, s.nodeID)
+	healthClock := make(map[string]models.ClockVersion, len(healthStatuses))
+	for _, status := range healthStatuses {
+		healthClock[status.IP] = status.Version
+	}
 	return Digest{
-		Domains: domainVersions,
-		Users:   userClock,
-		Nodes:   nodeClock,
+		Domains:    domainVersions,
+		Users:      userClock,
+		Nodes:      nodeClock,
+		EdgeHealth: healthClock,
 	}, nil
 }
 
@@ -121,10 +132,15 @@ func (s *Service) BuildSnapshot() (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
+	healthStatuses, err := s.store.GetEdgeHealth()
+	if err != nil {
+		return Snapshot{}, err
+	}
 	return Snapshot{
-		Domains: domains,
-		Users:   users,
-		Nodes:   nodes,
+		Domains:    domains,
+		Users:      users,
+		Nodes:      nodes,
+		EdgeHealth: healthStatuses,
 	}, nil
 }
 
@@ -176,6 +192,29 @@ func (s *Service) ApplySnapshot(snapshot Snapshot) error {
 		return err
 	}
 	if len(snapshot.Nodes) > 0 {
+		changed = true
+	}
+
+	localHealthMap, err := s.store.GetEdgeHealthMap()
+	if err != nil {
+		return err
+	}
+	healthChanged := false
+	for _, remote := range snapshot.EdgeHealth {
+		local := localHealthMap[remote.IP]
+		merged := models.MergeEdgeHealth(local, remote)
+		if merged.IP == "" {
+			continue
+		}
+		if err := s.store.UpsertEdgeHealth(merged); err != nil {
+			return err
+		}
+		if merged.Healthy != local.Healthy || merged.FailureCount != local.FailureCount || merged.Message != local.Message || merged.Version != local.Version {
+			healthChanged = true
+		}
+		delete(localHealthMap, remote.IP)
+	}
+	if healthChanged {
 		changed = true
 	}
 	if changed {

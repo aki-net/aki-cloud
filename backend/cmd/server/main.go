@@ -13,6 +13,7 @@ import (
 	"aki-cloud/backend/internal/api"
 	"aki-cloud/backend/internal/auth"
 	"aki-cloud/backend/internal/config"
+	"aki-cloud/backend/internal/health"
 	"aki-cloud/backend/internal/infra"
 	"aki-cloud/backend/internal/orchestrator"
 	"aki-cloud/backend/internal/store"
@@ -45,6 +46,8 @@ func main() {
 		orch.Trigger(context.Background())
 	})
 
+	healthMonitor := health.New(st, infraCtl, orch, cfg.NodeID, cfg.HealthInterval, cfg.HealthDialTimeout, cfg.HealthFailureThreshold, cfg.HealthFailureDecay)
+
 	server := &api.Server{
 		Config:       cfg,
 		Store:        st,
@@ -73,6 +76,7 @@ func main() {
 
 	syncCtx, syncCancel := context.WithCancel(ctx)
 	go syncSvc.Start(syncCtx, cfg.SyncInterval)
+	go healthMonitor.Start(syncCtx)
 
 	go func() {
 		log.Printf("backend listening on %s", httpServer.Addr)

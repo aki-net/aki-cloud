@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -49,7 +50,7 @@ func (s *Service) Flush(ctx context.Context) {
 	}
 	run := func(script string) error {
 		cmd := exec.CommandContext(ctx, filepath.Join(s.scriptsDir, script))
-		cmd.Env = append(cmd.Env,
+		cmd.Env = append(os.Environ(),
 			fmt.Sprintf("PATH=%s", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"),
 		)
 		return cmd.Run()
@@ -71,7 +72,7 @@ func (s *Service) FlushSync(ctx context.Context) error {
 	defer s.mu.Unlock()
 	run := func(script string) error {
 		cmd := exec.CommandContext(ctx, filepath.Join(s.scriptsDir, script))
-		cmd.Env = append(cmd.Env,
+		cmd.Env = append(os.Environ(),
 			fmt.Sprintf("PATH=%s", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"),
 		)
 		return cmd.Run()
