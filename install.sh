@@ -28,6 +28,7 @@ REPO_URL="${REPO_URL:-https://github.com/aki-net/aki-cloud.git}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/aki-cloud}"
 SYSTEM_USER="${SYSTEM_USER:-akicloud}"
 SKIP_BOOTSTRAP="${SKIP_BOOTSTRAP:-0}"
+PRIMARY_IP=""
 
 declare -a RERUN_ARGS=()
 
@@ -424,10 +425,14 @@ PY
 write_env_file() {
   local enable_coredns="$1"
   local enable_openresty="$2"
+  local api_base="$3"
+  if [[ -z "$api_base" ]]; then
+    api_base="http://localhost:$BACKEND_PORT"
+  fi
   cat > "$PROJECT_DIR/.env" <<EOF
 BACKEND_PORT=$BACKEND_PORT
 FRONTEND_PORT=$FRONTEND_PORT
-FRONTEND_API_BASE=http://localhost:$BACKEND_PORT
+FRONTEND_API_BASE=$api_base
 NODE_ID=$NODE_ID
 NODE_NAME=$NODE_NAME
 ENABLE_COREDNS=$enable_coredns
@@ -504,6 +509,17 @@ snapshot_path.unlink(missing_ok=True)
 PY
 }
 
+check_seed_reachable() {
+  local seed_url="$1"
+  if [[ -z "$seed_url" ]]; then
+    return
+  fi
+  require_command curl
+  if ! curl -fsS --max-time 10 "$seed_url/healthz" >/dev/null; then
+    abort "Unable to reach seed backend at $seed_url. Verify connectivity before retrying."
+  fi
+}
+
 main() {
   parse_args "$@"
 
@@ -531,6 +547,7 @@ main() {
   prompt_if_empty NODE_NAME "Node name"
   prompt_if_empty IPS "All node IPs (comma separated)"
   IPS="$(normalize_csv "$IPS")"
+  PRIMARY_IP="${IPS%%,*}"
   prompt_if_empty NS_IPS "Nameserver IPs (comma separated, leave blank if none)"
   NS_IPS="$(normalize_csv "$NS_IPS")"
   prompt_if_empty NS_LABEL "NS label"
@@ -538,14 +555,11 @@ main() {
   prompt_if_empty BACKEND_PORT "Backend port"
   prompt_if_empty FRONTEND_PORT "Frontend port"
 
-  if [[ -z "$API_ENDPOINT" ]]; then
-    local first_ip="${IPS%%,*}"
-    if [[ -n "$first_ip" ]]; then
-      API_ENDPOINT="http://${first_ip}:${BACKEND_PORT}"
-    fi
+  if [[ -z "$API_ENDPOINT" && -n "$PRIMARY_IP" ]]; then
+    API_ENDPOINT="http://${PRIMARY_IP}:${BACKEND_PORT}"
   fi
-  local api_prompt_ip="${IPS%%,*}"
-  prompt_if_empty API_ENDPOINT "Backend API endpoint (e.g. http://${api_prompt_ip:-127.0.0.1}:$BACKEND_PORT)"
+  local api_prompt_ip="${PRIMARY_IP:-127.0.0.1}"
+  prompt_if_empty API_ENDPOINT "Backend API endpoint (e.g. http://${api_prompt_ip}:$BACKEND_PORT)"
 
   if [[ -z "$NS_LABEL" ]]; then
     NS_LABEL="dns"
@@ -591,7 +605,7 @@ main() {
       enable_proxy="$ENABLE_OPENRESTY"
     fi
 
-    write_env_file "$enable_dns" "$enable_proxy"
+    write_env_file "$enable_dns" "$enable_proxy" "$API_ENDPOINT"
   else
     if [[ -z "$SEED" ]]; then
       prompt_if_empty SEED "Seed backend URL (e.g. http://1.2.3.4:8080)"
@@ -602,6 +616,7 @@ main() {
     if [[ -z "$JWT_SECRET_INPUT" ]]; then
       prompt_secret_if_empty JWT_SECRET_INPUT "JWT secret"
     fi
+    check_seed_reachable "$SEED"
     write_secret_files "$SECRETS_SUPPLIED" "$JWT_SECRET_INPUT"
     write_node_files "$NODE_ID" "$NODE_NAME" "$IPS" "$NS_IPS" "$NS_LABEL" "$NS_BASE_DOMAIN" "$API_ENDPOINT"
     pull_snapshot "$SEED" "$SECRETS_SUPPLIED"
@@ -619,7 +634,7 @@ main() {
     if [[ "$ENABLE_OPENRESTY" == "true" || "$ENABLE_OPENRESTY" == "false" ]]; then
       enable_proxy="$ENABLE_OPENRESTY"
     fi
-    write_env_file "$enable_dns" "$enable_proxy"
+    write_env_file "$enable_dns" "$enable_proxy" "$API_ENDPOINT"
   fi
 
   check_ports "$NS_IPS" "53" || true
@@ -628,9 +643,14 @@ main() {
   render_configs
   bring_up_compose
 
+  local api_host
+  api_host="$(printf '%s' "$API_ENDPOINT" | awk -F[/:] '{print $4}')"
+  if [[ -z "$api_host" ]]; then
+    api_host="${PRIMARY_IP:-127.0.0.1}"
+  fi
   echo "Installation completed."
-  echo "Backend API: http://localhost:$BACKEND_PORT"
-  echo "Frontend UI: http://localhost:$FRONTEND_PORT"
+  echo "Backend API: $API_ENDPOINT"
+  echo "Frontend UI: http://$api_host:$FRONTEND_PORT"
 }
 
 main "$@"

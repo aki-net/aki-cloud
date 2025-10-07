@@ -41,6 +41,10 @@ func main() {
 	syncSvc := syncsvc.New(st, cfg.DataDir, cfg.NodeID, secret)
 	infraCtl := infra.New(st, cfg.DataDir)
 
+	syncSvc.SetChangeHandler(func() {
+		orch.Trigger(context.Background())
+	})
+
 	server := &api.Server{
 		Config:       cfg,
 		Store:        st,

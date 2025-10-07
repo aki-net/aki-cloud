@@ -32,12 +32,13 @@ type Snapshot struct {
 
 // Service coordinates data synchronization.
 type Service struct {
-	store   *store.Store
-	dataDir string
-	nodeID  string
-	client  *http.Client
-	secret  []byte
-	baseURL string
+	store    *store.Store
+	dataDir  string
+	nodeID   string
+	client   *http.Client
+	secret   []byte
+	baseURL  string
+	onChange func()
 }
 
 // New creates a new sync service.
@@ -48,6 +49,17 @@ func New(st *store.Store, dataDir string, nodeID string, secret []byte) *Service
 		nodeID:  nodeID,
 		client:  &http.Client{Timeout: 10 * time.Second},
 		secret:  secret,
+	}
+}
+
+// SetChangeHandler registers a callback invoked when remote data alters local state.
+func (s *Service) SetChangeHandler(fn func()) {
+	s.onChange = fn
+}
+
+func (s *Service) notifyChange() {
+	if s.onChange != nil {
+		s.onChange()
 	}
 }
 
@@ -127,11 +139,15 @@ func (s *Service) ApplySnapshot(snapshot Snapshot) error {
 	for _, d := range localDomains {
 		domainMap[d.Domain] = d
 	}
+	changed := false
 	for _, remote := range snapshot.Domains {
 		local := domainMap[remote.Domain]
 		merged := mergeDomain(local, remote)
 		if err := s.store.SaveDomain(merged); err != nil {
 			return err
+		}
+		if merged.Domain != "" {
+			changed = true
 		}
 	}
 
@@ -140,6 +156,7 @@ func (s *Service) ApplySnapshot(snapshot Snapshot) error {
 		if err := s.store.SaveUsers(snapshot.Users); err != nil {
 			return err
 		}
+		changed = true
 	}
 	// merge nodes + peers
 	if err := s.store.SaveNodes(snapshot.Nodes); err != nil {
@@ -147,6 +164,12 @@ func (s *Service) ApplySnapshot(snapshot Snapshot) error {
 	}
 	if err := s.updatePeers(snapshot.Nodes); err != nil {
 		return err
+	}
+	if len(snapshot.Nodes) > 0 {
+		changed = true
+	}
+	if changed {
+		s.notifyChange()
 	}
 	return nil
 }
