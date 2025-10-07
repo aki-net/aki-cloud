@@ -2,20 +2,13 @@ package sync
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"math/rand"
-	"os"
-	"path/filepath"
 	"time"
 )
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
-}
-
-type peerList struct {
-	Peers []string `json:"peers"`
 }
 
 // Start launches the periodic sync loop.
@@ -48,17 +41,5 @@ func (s *Service) SyncOnce(ctx context.Context) error {
 }
 
 func (s *Service) loadPeers() ([]string, error) {
-	path := filepath.Join(s.dataDir, "cluster", "peers.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var list peerList
-	if err := json.Unmarshal(data, &list); err != nil {
-		return nil, err
-	}
-	return list.Peers, nil
+	return s.store.GetPeers()
 }

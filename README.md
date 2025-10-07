@@ -45,6 +45,7 @@ Run the installer from the project root. It supports fully-interactive and flag-
   --node-name node-1 \
   --ips 203.0.113.10,203.0.113.11 \
   --ns-ips 203.0.113.10 \
+  --api-endpoint http://203.0.113.10:8080 \
   --ns-label dns \
   --ns-base-domain aki.cloud \
   --admin-email admin@example.com \
@@ -66,6 +67,7 @@ Key outputs/live artefacts:
   --node-name node-2 \
   --ips 198.51.100.20,198.51.100.21 \
   --ns-ips 198.51.100.20 \
+  --api-endpoint http://198.51.100.20:8080 \
   --ns-label dns \
   --ns-base-domain aki.cloud \
   --seed http://203.0.113.10:8080 \
@@ -78,7 +80,7 @@ The installer pulls a snapshot over the `/api/v1/sync/pull` endpoint, writes loc
 ### Flags (non-interactive)
 
 - `--mode fresh|join`
-- `--node-name`, `--ips`, `--ns-ips`, `--ns-label`, `--ns-base-domain`
+- `--node-name`, `--ips`, `--ns-ips`, `--ns-label`, `--ns-base-domain`, `--api-endpoint`
 - `--admin-email`, `--admin-pass`, `--admin-pass-file`
 - `--seed`, `--cluster-secret`, `--jwt-secret`
 - `--backend-port`, `--frontend-port`
@@ -110,7 +112,7 @@ Data persistence: All state lives under `./data`. Keep regular backups of this d
 - `POST /auth/login`
 - Domain CRUD: `/api/v1/domains`
 - Admin Users CRUD: `/api/v1/admin/users`
-- Admin Nodes CRUD: `/api/v1/admin/nodes`
+- Admin Nodes CRUD: `/api/v1/admin/nodes` (name, IPs, NS tagging, API endpoint for peer sync)
 - Infra insights: `/api/v1/infra/nameservers`, `/infra/edges`
 - Ops: `/api/v1/admin/ops/rebuild`
 - Sync: `/api/v1/sync/digest`, `/pull`, `/push` (cluster-authenticated).
@@ -173,6 +175,6 @@ Manual validation checklist (local or staging):
 - **Install script errors**: ensure Docker daemon is running and the Compose plugin is available (`docker compose version`).
 - **CoreDNS not answering**: confirm `ENABLE_COREDNS=true` and that the NS IPs are bound on the host; inspect `docker compose logs coredns`.
 - **OpenResty not proxying**: ensure edge IPs exist in node metadata; check `data/openresty/sites-enabled/` for generated configs.
-- **Sync stalls**: verify `data/cluster/peers.json` contains reachable peer addresses and that ports are open between nodes.
+- **Sync stalls**: ensure every node record has a valid `api_endpoint`; `data/cluster/peers.json` is auto-generated from these endpoints, so inspect it and confirm ports are open between nodes.
 
 All components are documented within their respective `README.md` files for deeper operational notes.

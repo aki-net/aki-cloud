@@ -40,6 +40,10 @@ func (s *Store) nodesFile() string {
 	return filepath.Join(s.dataDir, "infra", "nodes.json")
 }
 
+func (s *Store) peersFile() string {
+	return filepath.Join(s.dataDir, "cluster", "peers.json")
+}
+
 func (s *Store) domainDir(domain string) string {
 	domain = strings.ToLower(domain)
 	return filepath.Join(s.dataDir, "domains", domain)
@@ -196,6 +200,9 @@ func (s *Store) GetNodes() ([]models.Node, error) {
 func (s *Store) SaveNodes(nodes []models.Node) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for i := range nodes {
+		nodes[i].ComputeEdgeIPs()
+	}
 	return writeJSONAtomic(s.nodesFile(), nodes)
 }
 

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -140,11 +141,12 @@ func (s *Service) ApplySnapshot(snapshot Snapshot) error {
 			return err
 		}
 	}
-	// merge nodes
-	if len(snapshot.Nodes) > 0 {
-		if err := s.store.SaveNodes(snapshot.Nodes); err != nil {
-			return err
-		}
+	// merge nodes + peers
+	if err := s.store.SaveNodes(snapshot.Nodes); err != nil {
+		return err
+	}
+	if err := s.updatePeers(snapshot.Nodes); err != nil {
+		return err
 	}
 	return nil
 }
@@ -200,4 +202,25 @@ func (s *Service) ValidatePeerRequest(r *http.Request) bool {
 	authz := r.Header.Get("Authorization")
 	expected := s.authHeader()
 	return authz == expected
+}
+
+func (s *Service) updatePeers(nodes []models.Node) error {
+	unique := make(map[string]struct{}, len(nodes))
+	peers := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		if node.ID == s.nodeID {
+			continue
+		}
+		endpoint := strings.TrimSpace(node.APIEndpoint)
+		if endpoint == "" {
+			continue
+		}
+		if _, ok := unique[endpoint]; ok {
+			continue
+		}
+		unique[endpoint] = struct{}{}
+		peers = append(peers, endpoint)
+	}
+	sort.Strings(peers)
+	return s.store.SavePeers(peers)
 }

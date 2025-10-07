@@ -50,6 +50,10 @@ func main() {
 		Infra:        infraCtl,
 	}
 
+	if err := server.EnsurePeers(); err != nil {
+		log.Printf("initial peer sync failed: %v", err)
+	}
+
 	router := server.Routes()
 
 	httpServer := &http.Server{

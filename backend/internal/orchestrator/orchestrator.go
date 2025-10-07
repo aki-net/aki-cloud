@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"log"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -54,10 +55,10 @@ func (s *Service) Flush(ctx context.Context) {
 		return cmd.Run()
 	}
 	if err := run("generate_coredns.sh"); err != nil {
-		// TODO: log error when logging package introduced
+		log.Printf("orchestrator: generate_coredns failed: %v", err)
 	}
 	if err := run("generate_openresty.sh"); err != nil {
-		// TODO: log error when logging package introduced
+		log.Printf("orchestrator: generate_openresty failed: %v", err)
 	}
 	_ = run("reload_coredns.sh")
 	_ = run("reload_openresty.sh")

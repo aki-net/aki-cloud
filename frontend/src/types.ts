@@ -63,6 +63,7 @@ export interface NodeRecord {
   ns_label?: string;
   ns_base_domain?: string;
   edge_ips?: string[];
+  api_endpoint?: string;
 }
 
 export interface NameServerEntry {

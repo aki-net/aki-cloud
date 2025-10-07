@@ -3,7 +3,12 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -98,8 +103,61 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
-	// TODO: add service dependency checks
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+	type componentStatus struct {
+		Name  string
+		Check func() error
+	}
+	components := []componentStatus{
+		{
+			Name: "store",
+			Check: func() error {
+				_, err := s.Store.GetUsers()
+				return err
+			},
+		},
+		{
+			Name: "sync",
+			Check: func() error {
+				_, err := s.Sync.ComputeDigest()
+				return err
+			},
+		},
+		{
+			Name: "coredns_config",
+			Check: func() error {
+				_, err := os.Stat(filepath.Join(s.Config.DataDir, "dns", "Corefile"))
+				return err
+			},
+		},
+		{
+			Name: "openresty_config",
+			Check: func() error {
+				_, err := os.Stat(filepath.Join(s.Config.DataDir, "openresty", "nginx.conf"))
+				return err
+			},
+		},
+	}
+	status := make(map[string]string, len(components))
+	healthy := true
+	for _, comp := range components {
+		if err := comp.Check(); err != nil {
+			status[comp.Name] = fmt.Sprintf("error: %v", err)
+			healthy = false
+		} else {
+			status[comp.Name] = "ok"
+		}
+	}
+	payload := map[string]interface{}{
+		"status":     "ready",
+		"components": status,
+		"node_id":    s.Config.NodeID,
+	}
+	code := http.StatusOK
+	if !healthy {
+		payload["status"] = "degraded"
+		code = http.StatusServiceUnavailable
+	}
+	writeJSON(w, code, payload)
 }
 
 type loginRequest struct {
@@ -430,10 +488,16 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		node.ID = uuid.NewString()
 	}
 	node.Name = strings.TrimSpace(node.Name)
+	node.APIEndpoint = strings.TrimSpace(node.APIEndpoint)
+	node.IPs = filterEmpty(node.IPs)
+	node.NSIPs = filterEmpty(node.NSIPs)
 	node.ComputeEdgeIPs()
 	if err := s.Store.UpsertNode(node); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if err := s.syncPeersFromNodes(); err != nil {
+		log.Printf("sync peers after create node: %v", err)
 	}
 	go s.Orchestrator.Trigger(r.Context())
 	writeJSON(w, http.StatusCreated, node)
@@ -458,30 +522,43 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "node not found")
 		return
 	}
-	var payload models.Node
+	var payload struct {
+		Name        *string   `json:"name"`
+		IPs         *[]string `json:"ips"`
+		NSIPs       *[]string `json:"ns_ips"`
+		NSLabel     *string   `json:"ns_label"`
+		NSBase      *string   `json:"ns_base_domain"`
+		APIEndpoint *string   `json:"api_endpoint"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid payload")
 		return
 	}
-	if payload.Name != "" {
-		existing.Name = payload.Name
+	if payload.Name != nil {
+		existing.Name = strings.TrimSpace(*payload.Name)
 	}
-	if len(payload.IPs) > 0 {
-		existing.IPs = payload.IPs
+	if payload.IPs != nil {
+		existing.IPs = filterEmpty(*payload.IPs)
 	}
-	if len(payload.NSIPs) > 0 {
-		existing.NSIPs = payload.NSIPs
+	if payload.NSIPs != nil {
+		existing.NSIPs = filterEmpty(*payload.NSIPs)
 	}
-	if payload.NSLabel != "" {
-		existing.NSLabel = payload.NSLabel
+	if payload.NSLabel != nil {
+		existing.NSLabel = strings.TrimSpace(*payload.NSLabel)
 	}
-	if payload.NSBase != "" {
-		existing.NSBase = payload.NSBase
+	if payload.NSBase != nil {
+		existing.NSBase = strings.TrimSpace(*payload.NSBase)
+	}
+	if payload.APIEndpoint != nil {
+		existing.APIEndpoint = strings.TrimSpace(*payload.APIEndpoint)
 	}
 	existing.ComputeEdgeIPs()
 	if err := s.Store.UpsertNode(*existing); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if err := s.syncPeersFromNodes(); err != nil {
+		log.Printf("sync peers after update node: %v", err)
 	}
 	go s.Orchestrator.Trigger(r.Context())
 	writeJSON(w, http.StatusOK, existing)
@@ -492,6 +569,9 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 	if err := s.Store.DeleteNode(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if err := s.syncPeersFromNodes(); err != nil {
+		log.Printf("sync peers after delete node: %v", err)
 	}
 	go s.Orchestrator.Trigger(r.Context())
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
@@ -568,6 +648,48 @@ func userFromContext(ctx context.Context) userContext {
 		return u
 	}
 	return userContext{}
+}
+
+// EnsurePeers recomputes the peer list based on current node metadata.
+func (s *Server) EnsurePeers() error {
+	return s.syncPeersFromNodes()
+}
+
+func (s *Server) syncPeersFromNodes() error {
+	nodes, err := s.Store.GetNodes()
+	if err != nil {
+		return err
+	}
+	unique := make(map[string]struct{}, len(nodes))
+	peers := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		if node.ID == s.Config.NodeID {
+			continue
+		}
+		endpoint := strings.TrimSpace(node.APIEndpoint)
+		if endpoint == "" {
+			continue
+		}
+		if _, ok := unique[endpoint]; ok {
+			continue
+		}
+		unique[endpoint] = struct{}{}
+		peers = append(peers, endpoint)
+	}
+	sort.Strings(peers)
+	return s.Store.SavePeers(peers)
+}
+
+func filterEmpty(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload interface{}) {

@@ -19,6 +19,7 @@ interface NodeFormState {
   ns_ips: string;
   ns_label: string;
   ns_base_domain: string;
+  api_endpoint: string;
 }
 
 export const AdminDashboard = () => {
@@ -35,6 +36,7 @@ export const AdminDashboard = () => {
     ns_ips: '',
     ns_label: 'dns',
     ns_base_domain: '',
+    api_endpoint: '',
   });
   const [pending, setPending] = useState(false);
 
@@ -98,11 +100,12 @@ export const AdminDashboard = () => {
     try {
       const nodePayload: NodeRecord = {
         id: nodeForm.id ?? '',
-        name: nodeForm.name,
+        name: nodeForm.name.trim(),
         ips: nodeForm.ips.split(',').map((ip) => ip.trim()).filter(Boolean),
         ns_ips: nodeForm.ns_ips.split(',').map((ip) => ip.trim()).filter(Boolean),
         ns_label: nodeForm.ns_label,
         ns_base_domain: nodeForm.ns_base_domain,
+        api_endpoint: nodeForm.api_endpoint.trim(),
       };
       const saved = await upsertNode(nodePayload);
       setNodes((prev) => {
@@ -112,7 +115,7 @@ export const AdminDashboard = () => {
         }
         return [...prev, saved];
       });
-      setNodeForm({ name: '', ips: '', ns_ips: '', ns_label: 'dns', ns_base_domain: '' });
+      setNodeForm({ name: '', ips: '', ns_ips: '', ns_label: 'dns', ns_base_domain: '', api_endpoint: '' });
     } catch (err) {
       setError('Failed to persist node');
     } finally {
@@ -128,6 +131,7 @@ export const AdminDashboard = () => {
       ns_ips: node.ns_ips.join(', '),
       ns_label: node.ns_label ?? 'dns',
       ns_base_domain: node.ns_base_domain ?? '',
+      api_endpoint: node.api_endpoint ?? '',
     });
   };
 
@@ -248,6 +252,7 @@ export const AdminDashboard = () => {
               <th>Name</th>
               <th>IPs</th>
               <th>NS IPs</th>
+              <th>API Endpoint</th>
               <th></th>
             </tr>
           </thead>
@@ -257,6 +262,7 @@ export const AdminDashboard = () => {
                 <td>{node.name}</td>
                 <td>{node.ips.join(', ')}</td>
                 <td>{node.ns_ips.join(', ')}</td>
+                <td>{node.api_endpoint ?? '—'}</td>
                 <td className="flex right">
                   <button className="button secondary" onClick={() => editNode(node)}>
                     Edit
@@ -304,6 +310,12 @@ export const AdminDashboard = () => {
               onChange={(e) => setNodeForm((prev) => ({ ...prev, ns_base_domain: e.target.value }))}
             />
           </div>
+          <input
+            className="input"
+            placeholder="API endpoint (http://ip:port)"
+            value={nodeForm.api_endpoint}
+            onChange={(e) => setNodeForm((prev) => ({ ...prev, api_endpoint: e.target.value }))}
+          />
           <button className="button" type="submit" disabled={pending}>
             {nodeForm.id ? 'Update node' : 'Add node'}
           </button>

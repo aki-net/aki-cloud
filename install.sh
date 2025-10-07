@@ -12,6 +12,7 @@ IPS=""
 NS_IPS=""
 NS_LABEL=""
 NS_BASE_DOMAIN=""
+API_ENDPOINT=""
 SEED=""
 ADMIN_EMAIL=""
 ADMIN_PASS=""
@@ -41,6 +42,7 @@ Options:
   --ns-ips ip1,ip2           Comma-separated list of IPs acting as nameservers
   --ns-label LABEL           Nameserver label (default: dns)
   --ns-base-domain DOMAIN    Base domain for NS hostnames
+  --api-endpoint URL         Backend API endpoint for this node (default derives from IPs + backend port)
   --seed HOST                Seed backend base URL (join mode)
   --admin-email EMAIL        Initial admin email (fresh)
   --admin-pass PASS          Initial admin password (fresh)
@@ -99,6 +101,10 @@ parse_args() {
       --ns-base-domain)
         NS_BASE_DOMAIN="$2"
         RERUN_ARGS+=(--ns-base-domain "$2")
+        shift 2 ;;
+      --api-endpoint)
+        API_ENDPOINT="$2"
+        RERUN_ARGS+=(--api-endpoint "$2")
         shift 2 ;;
       --seed)
         SEED="$2"
@@ -354,12 +360,12 @@ create_admin_user() {
 }
 
 write_node_files() {
-  python3 - "$DATA_DIR" "$1" "$2" "$3" "$4" "$5" "$6" <<'PY'
+  python3 - "$DATA_DIR" "$1" "$2" "$3" "$4" "$5" "$6" "$7" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-data_dir, node_id, node_name, ips_csv, ns_ips_csv, ns_label, ns_base = sys.argv[1:8]
+data_dir, node_id, node_name, ips_csv, ns_ips_csv, ns_label, ns_base, api_endpoint = sys.argv[1:9]
 
 def csv_to_list(value):
     if not value:
@@ -373,21 +379,45 @@ node = {
     "ns_ips": csv_to_list(ns_ips_csv),
     "ns_label": ns_label,
     "ns_base_domain": ns_base,
+    "api_endpoint": api_endpoint,
 }
 
 cluster_path = Path(data_dir) / "cluster" / "node.json"
 cluster_path.write_text(json.dumps(node, indent=2))
 
 infra_path = Path(data_dir) / "infra" / "nodes.json"
-if not infra_path.exists():
-    infra_path.write_text(json.dumps([{
+nodes = []
+if infra_path.exists():
+    try:
+        nodes = json.loads(infra_path.read_text())
+    except json.JSONDecodeError:
+        nodes = []
+
+updated = False
+for existing in nodes:
+    if existing.get("id") == node_id:
+        existing["name"] = node_name
+        existing["ips"] = node["ips"]
+        existing["ns_ips"] = node["ns_ips"]
+        existing["ns_label"] = ns_label
+        existing["ns_base_domain"] = ns_base
+        existing["api_endpoint"] = api_endpoint
+        updated = True
+        break
+
+if not updated:
+    nodes.append({
         "id": node_id,
         "name": node_name,
         "ips": node["ips"],
         "ns_ips": node["ns_ips"],
         "ns_label": ns_label,
         "ns_base_domain": ns_base,
-    }], indent=2))
+        "api_endpoint": api_endpoint,
+    })
+
+infra_path.parent.mkdir(parents=True, exist_ok=True)
+infra_path.write_text(json.dumps(nodes, indent=2))
 PY
 }
 
@@ -508,6 +538,15 @@ main() {
   prompt_if_empty BACKEND_PORT "Backend port"
   prompt_if_empty FRONTEND_PORT "Frontend port"
 
+  if [[ -z "$API_ENDPOINT" ]]; then
+    local first_ip="${IPS%%,*}"
+    if [[ -n "$first_ip" ]]; then
+      API_ENDPOINT="http://${first_ip}:${BACKEND_PORT}"
+    fi
+  fi
+  local api_prompt_ip="${IPS%%,*}"
+  prompt_if_empty API_ENDPOINT "Backend API endpoint (e.g. http://${api_prompt_ip:-127.0.0.1}:$BACKEND_PORT)"
+
   if [[ -z "$NS_LABEL" ]]; then
     NS_LABEL="dns"
   fi
@@ -534,7 +573,7 @@ main() {
     admin_id="$(generate_uuid)"
     create_admin_user "$ADMIN_EMAIL" "$ADMIN_PASS" "$admin_id"
 
-    write_node_files "$NODE_ID" "$NODE_NAME" "$IPS" "$NS_IPS" "$NS_LABEL" "$NS_BASE_DOMAIN"
+    write_node_files "$NODE_ID" "$NODE_NAME" "$IPS" "$NS_IPS" "$NS_LABEL" "$NS_BASE_DOMAIN" "$API_ENDPOINT"
 
     echo '{"peers":[]}' > "$DATA_DIR/cluster/peers.json"
 
@@ -564,9 +603,10 @@ main() {
       prompt_secret_if_empty JWT_SECRET_INPUT "JWT secret"
     fi
     write_secret_files "$SECRETS_SUPPLIED" "$JWT_SECRET_INPUT"
-    write_node_files "$NODE_ID" "$NODE_NAME" "$IPS" "$NS_IPS" "$NS_LABEL" "$NS_BASE_DOMAIN"
+    write_node_files "$NODE_ID" "$NODE_NAME" "$IPS" "$NS_IPS" "$NS_LABEL" "$NS_BASE_DOMAIN" "$API_ENDPOINT"
     pull_snapshot "$SEED" "$SECRETS_SUPPLIED"
     apply_snapshot
+    write_node_files "$NODE_ID" "$NODE_NAME" "$IPS" "$NS_IPS" "$NS_LABEL" "$NS_BASE_DOMAIN" "$API_ENDPOINT"
     # Determine service flags based on roles
     local enable_dns="false"
     if [[ -n "$NS_IPS" ]]; then

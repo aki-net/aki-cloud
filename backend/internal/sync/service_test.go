@@ -61,7 +61,12 @@ func TestServiceApplySnapshot(t *testing.T) {
 			},
 		},
 		Users: []models.User{{ID: "admin", Email: "a@a", Role: models.RoleAdmin, Password: "hash"}},
-		Nodes: []models.Node{{ID: "node-1", Name: "node-1", IPs: []string{"10.0.0.1"}}},
+		Nodes: []models.Node{{
+			ID:          "node-1",
+			Name:        "node-1",
+			IPs:         []string{"10.0.0.1"},
+			APIEndpoint: "http://10.0.0.1:8080",
+		}},
 	}
 
 	if err := svc.ApplySnapshot(snapshot); err != nil {
@@ -79,6 +84,14 @@ func TestServiceApplySnapshot(t *testing.T) {
 	users, err := st.GetUsers()
 	if err != nil || len(users) != 1 {
 		t.Fatalf("users not merged")
+	}
+
+	peers, err := st.GetPeers()
+	if err != nil {
+		t.Fatalf("get peers: %v", err)
+	}
+	if len(peers) != 1 || peers[0] != "http://10.0.0.1:8080" {
+		t.Fatalf("unexpected peers: %#v", peers)
 	}
 }
 

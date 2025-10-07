@@ -65,11 +65,12 @@ func (g *CoreDNSGenerator) Render() error {
 	if len(filteredNS) == 0 {
 		filteredNS = nsList
 	}
+	activeNS := filteredNS
 	edges, err := g.Infra.EdgeIPs()
 	if err != nil {
 		return err
 	}
-	fmt.Printf("CoreDNS generator: data dir %s, %d domain(s), %d nameserver(s), %d edge IP(s)\n", g.DataDir, len(domains), len(nsList), len(edges))
+	fmt.Printf("CoreDNS generator: data dir %s, %d domain(s), %d nameserver(s), %d edge IP(s)\n", g.DataDir, len(domains), len(activeNS), len(edges))
 	zonesDir := filepath.Join(g.DataDir, "dns", "zones")
 	if err := os.MkdirAll(zonesDir, 0o755); err != nil {
 		return err
@@ -80,8 +81,8 @@ func (g *CoreDNSGenerator) Render() error {
 	now := time.Now().UTC()
 	serial := now.Format("2006010215")
 	primaryNS := "ns1.local.invalid."
-	if len(nsList) > 0 {
-		primaryNS = ensureDot(nsList[0].FQDN)
+	if len(activeNS) > 0 {
+		primaryNS = ensureDot(activeNS[0].FQDN)
 	}
 	for _, domain := range domains {
 		ttl := domain.TTL
@@ -97,8 +98,8 @@ func (g *CoreDNSGenerator) Render() error {
 		if len(arecords) == 0 {
 			arecords = []string{domain.OriginIP}
 		}
-		nsRecords := make([]string, 0, len(nsList))
-		for _, ns := range nsList {
+		nsRecords := make([]string, 0, len(activeNS))
+		for _, ns := range activeNS {
 			nsRecords = append(nsRecords, ensureDot(ns.FQDN))
 		}
 		if len(nsRecords) == 0 {

@@ -33,5 +33,5 @@ npm run lint      # eslint (optional)
 
 - Login form (JWT stored in local storage, attached to API requests).
 - User dashboard: list domains, create/update/delete, proxied toggle with optimistic updates.
-- Admin dashboard: users CRUD, nodes CRUD (IPs + NS tagging), live nameserver and edge views, “Rebuild services” trigger.
+- Admin dashboard: users CRUD, nodes CRUD (IPs + NS tagging + API endpoints), live nameserver and edge views, “Rebuild services” trigger.
 - Non-blocking propagation alerts to remind operators of sync delay.
