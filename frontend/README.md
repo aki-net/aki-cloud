@@ -12,7 +12,7 @@ npm run dev -- --host
 
 Environment variables:
 
-- `VITE_API_BASE` – backend base URL (default: `http://localhost:8080`).
+- `VITE_API_BASE` – backend base URL. If unset, the app falls back to the current browser origin and swaps port `3000` for `8080`, so hosting the frontend on the same node “just works”.
 
 ## Build
 

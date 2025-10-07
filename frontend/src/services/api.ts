@@ -11,7 +11,29 @@ import {
   UserRecord,
 } from '../types';
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8080';
+const resolveApiBase = (): string => {
+  const explicit = import.meta.env.VITE_API_BASE?.trim();
+  if (explicit) {
+    return explicit.replace(/\/+$/, '');
+  }
+
+  if (typeof window !== 'undefined') {
+    const current = new URL(window.location.href);
+    const configuredPort = import.meta.env.VITE_API_PORT?.trim();
+
+    if (configuredPort) {
+      current.port = configuredPort;
+    } else if (current.port === '3000') {
+      current.port = '8080';
+    }
+
+    return `${current.protocol}//${current.host}`.replace(/\/+$/, '');
+  }
+
+  return 'http://localhost:8080';
+};
+
+const API_BASE = resolveApiBase();
 
 const client = axios.create({
   baseURL: `${API_BASE}/api/v1`,
