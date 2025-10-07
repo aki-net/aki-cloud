@@ -42,6 +42,14 @@ type ZoneFile struct {
 	Serial     string
 	NSRecords  []string
 	ARecords   []string
+	Extra      []ZoneRecord
+}
+
+// ZoneRecord represents an arbitrary record in a zone file.
+type ZoneRecord struct {
+	Name  string
+	Type  string
+	Value string
 }
 
 // Render writes CoreDNS Corefile and zone files to data directory.
@@ -134,7 +142,13 @@ func (g *CoreDNSGenerator) Render() error {
 			ARecords:   uniqueStrings(arecords),
 		}
 		zoneFiles = append(zoneFiles, zone)
-		fmt.Printf("CoreDNS generator: writing zone for %s (%d A record(s))\n", zone.Domain, len(zone.ARecords))
+	}
+
+	infraZones := g.buildInfrastructureZones(activeNS, serial)
+	zoneFiles = append(zoneFiles, infraZones...)
+
+	for _, zone := range zoneFiles {
+		fmt.Printf("CoreDNS generator: writing zone for %s (%d NS, %d A, %d extra)\n", zone.Domain, len(zone.NSRecords), len(zone.ARecords), len(zone.Extra))
 		if err := writeZoneFile(zonesDir, zone); err != nil {
 			return err
 		}
@@ -183,6 +197,9 @@ $TTL {{.TTL}}
 {{- range .ARecords}}
 @ IN A {{.}}
 {{- end}}
+{{- range .Extra}}
+{{.Name}} IN {{.Type}} {{.Value}}
+{{- end}}
 `
 	parsed, err := template.New("zone").Parse(tmpl)
 	if err != nil {
@@ -194,6 +211,65 @@ $TTL {{.TTL}}
 	}
 	file := filepath.Join(dir, fmt.Sprintf("%s.zone", zone.Domain))
 	return os.WriteFile(file, buf.Bytes(), 0o644)
+}
+
+func (g *CoreDNSGenerator) buildInfrastructureZones(nsList []infra.NameServer, serial string) []ZoneFile {
+	if len(nsList) == 0 {
+		return nil
+	}
+	grouped := make(map[string][]infra.NameServer)
+	for _, ns := range nsList {
+		base := strings.TrimSuffix(ns.BaseZone, ".")
+		if base == "" {
+			continue
+		}
+		grouped[base] = append(grouped[base], ns)
+	}
+
+	zones := make([]ZoneFile, 0, len(grouped))
+	for base, servers := range grouped {
+		if len(servers) == 0 {
+			continue
+		}
+		nsRecords := make([]string, 0, len(servers))
+		extra := make([]ZoneRecord, 0, len(servers)*3)
+		labelMap := make(map[string][]infra.NameServer)
+		for _, ns := range servers {
+			nsRecords = append(nsRecords, ensureDot(ns.FQDN))
+			if ns.IPv4 != "" {
+				extra = append(extra, ZoneRecord{
+					Name:  relativeLabel(ns.FQDN, base),
+					Type:  "A",
+					Value: ns.IPv4,
+				})
+			}
+			label := strings.TrimSpace(ns.NSLabel)
+			if label == "" {
+				label = "dns"
+			}
+			labelMap[label] = append(labelMap[label], ns)
+		}
+		for label, nsByLabel := range labelMap {
+			for _, ns := range nsByLabel {
+				extra = append(extra, ZoneRecord{
+					Name:  label,
+					Type:  "NS",
+					Value: ensureDot(ns.FQDN),
+				})
+			}
+		}
+		zone := ZoneFile{
+			Domain:     base,
+			TTL:        300,
+			PrimaryNS:  ensureDot(servers[0].FQDN),
+			AdminEmail: fmt.Sprintf("admin.%s.", strings.TrimSuffix(base, ".")),
+			Serial:     serial,
+			NSRecords:  uniqueStrings(nsRecords),
+			Extra:      dedupeRecords(extra),
+		}
+		zones = append(zones, zone)
+	}
+	return zones
 }
 
 // Render writes OpenResty configs with template.
@@ -343,6 +419,19 @@ func ensureDot(input string) string {
 	return input + "."
 }
 
+func relativeLabel(fqdn string, zone string) string {
+	fqdn = strings.TrimSuffix(fqdn, ".")
+	zone = strings.TrimSuffix(zone, ".")
+	if fqdn == zone {
+		return "@"
+	}
+	suffix := "." + zone
+	if zone != "" && strings.HasSuffix(fqdn, suffix) {
+		return strings.TrimSuffix(fqdn, suffix)
+	}
+	return fqdn
+}
+
 func sanitizeFileName(name string) string {
 	cleaned := strings.ReplaceAll(name, "..", ".")
 	cleaned = strings.ReplaceAll(cleaned, string(os.PathSeparator), "-")
@@ -389,6 +478,26 @@ func uniqueStrings(values []string) []string {
 		}
 		seen[v] = struct{}{}
 		out = append(out, v)
+	}
+	return out
+}
+
+func dedupeRecords(records []ZoneRecord) []ZoneRecord {
+	if len(records) == 0 {
+		return records
+	}
+	seen := make(map[string]struct{}, len(records))
+	out := make([]ZoneRecord, 0, len(records))
+	for _, r := range records {
+		if r.Name == "" {
+			r.Name = "@"
+		}
+		key := strings.Join([]string{r.Name, r.Type, r.Value}, "\x1f")
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, r)
 	}
 	return out
 }

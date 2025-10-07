@@ -550,23 +550,44 @@ ensure_firewall_rule() {
   return 0
 }
 
+ensure_ufw_rule() {
+  local proto="$1"
+  local port="$2"
+  if ! command -v ufw >/dev/null 2>&1; then
+    return 1
+  fi
+  if ! ufw status | grep -q "Status: active"; then
+    return 1
+  fi
+  ufw --force allow proto "$proto" from any to any port "$port" >/dev/null 2>&1 || return 1
+  return 0
+}
+
 configure_firewall() {
   local enable_dns="$1"
   if [[ "$AUTO_FIREWALL" == "false" ]]; then
     return
   fi
-  if ! command -v iptables >/dev/null 2>&1; then
-    echo "iptables not found, skipping firewall automation"
-    return
+  local have_iptables=0
+  if command -v iptables >/dev/null 2>&1; then
+    have_iptables=1
+  else
+    echo "iptables not found, skipping iptables firewall automation"
   fi
   local ports=("22" "$BACKEND_PORT" "$FRONTEND_PORT" "80" "443")
   if [[ "$enable_dns" == "true" ]]; then
     ports+=("53")
   fi
   for port in "${ports[@]}"; do
-    ensure_firewall_rule tcp "$port" >/dev/null 2>&1 || true
+    if [[ "$have_iptables" -eq 1 ]]; then
+      ensure_firewall_rule tcp "$port" >/dev/null 2>&1 || true
+      if [[ "$port" == "53" ]]; then
+        ensure_firewall_rule udp "$port" >/dev/null 2>&1 || true
+      fi
+    fi
+    ensure_ufw_rule tcp "$port" >/dev/null 2>&1 || true
     if [[ "$port" == "53" ]]; then
-      ensure_firewall_rule udp "$port" >/dev/null 2>&1 || true
+      ensure_ufw_rule udp "$port" >/dev/null 2>&1 || true
     fi
   done
 }
