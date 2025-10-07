@@ -327,12 +327,18 @@ func (g *OpenRestyGenerator) Render() error {
 	}
 	filteredLocal := filterHealthyEdges(localEdges, edgeHealth)
 	if len(filteredLocal) == 0 {
+		filteredLocal = localEdges
+	}
+	if len(filteredLocal) == 0 {
 		filteredLocal = healthyEdges
 		if len(filteredLocal) == 0 {
 			filteredLocal = edges
 		}
 	}
 	edgeIPs := uniqueStrings(filteredLocal)
+	if len(edgeIPs) == 0 {
+		edgeIPs = uniqueStrings(localEdges)
+	}
 	if len(edgeIPs) == 0 {
 		edgeIPs = uniqueStrings(edges)
 	}
