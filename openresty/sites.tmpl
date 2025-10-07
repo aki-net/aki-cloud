@@ -1,5 +1,5 @@
 server {
-    listen {{ .EdgeIP }}:80 reuseport;
+    listen {{ .EdgeIP }}:80;
     server_name {{ .Domain }};
 
     access_log /var/log/nginx/{{ .Domain }}.access.log combined;
