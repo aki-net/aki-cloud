@@ -139,6 +139,7 @@ func (s *Service) ApplySnapshot(snapshot Snapshot) error {
 	for _, d := range localDomains {
 		domainMap[d.Domain] = d
 	}
+	snapshotDomains := make(map[string]struct{}, len(snapshot.Domains))
 	changed := false
 	for _, remote := range snapshot.Domains {
 		local := domainMap[remote.Domain]
@@ -147,6 +148,15 @@ func (s *Service) ApplySnapshot(snapshot Snapshot) error {
 			return err
 		}
 		if merged.Domain != "" {
+			changed = true
+		}
+		snapshotDomains[strings.ToLower(remote.Domain)] = struct{}{}
+	}
+	for _, local := range localDomains {
+		if _, ok := snapshotDomains[strings.ToLower(local.Domain)]; ok {
+			continue
+		}
+		if err := s.store.DeleteDomain(local.Domain); err == nil {
 			changed = true
 		}
 	}
