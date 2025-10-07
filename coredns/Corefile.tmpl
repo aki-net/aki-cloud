@@ -1,6 +1,7 @@
 {{- if .NameServers -}}
 {{- range .NameServers }}
-{{ .IPv4 }}:53 {
+.:53 {
+    bind {{ .IPv4 }}
     errors
     log
     reload 5s
