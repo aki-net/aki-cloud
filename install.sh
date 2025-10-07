@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+PROJECT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 DATA_DIR="$PROJECT_DIR/data"
 
 MODE=""
@@ -9,7 +10,7 @@ NODE_NAME=""
 NODE_ID=""
 IPS=""
 NS_IPS=""
-NS_LABEL="dns"
+NS_LABEL=""
 NS_BASE_DOMAIN=""
 SEED=""
 ADMIN_EMAIL=""
@@ -21,6 +22,13 @@ FRONTEND_PORT="3000"
 BACKEND_PORT="8080"
 SECRETS_SUPPLIED=""
 JWT_SECRET_INPUT=""
+
+REPO_URL="${REPO_URL:-https://github.com/aki-net/aki-cloud.git}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/aki-cloud}"
+SYSTEM_USER="${SYSTEM_USER:-akicloud}"
+SKIP_BOOTSTRAP="${SKIP_BOOTSTRAP:-0}"
+
+declare -a RERUN_ARGS=()
 
 usage() {
   cat <<'EOF'
@@ -43,6 +51,9 @@ Options:
   --frontend-port PORT       Frontend port (default 3000)
   --cluster-secret VALUE     Pre-existing cluster secret (join)
   --jwt-secret VALUE         Pre-existing JWT secret (join)
+  --repo-url URL             Git repository to clone (default: https://github.com/aki-net/aki-cloud.git)
+  --install-dir PATH         Target installation directory (default: /opt/aki-cloud)
+  --system-user USER         System user to own the deployment (default: akicloud)
   -h, --help                 Show this help text
 EOF
 }
@@ -61,27 +72,191 @@ require_command() {
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --mode) MODE="$2"; shift 2 ;;
-      --node-name) NODE_NAME="$2"; shift 2 ;;
-      --node-id) NODE_ID="$2"; shift 2 ;;
-      --ips) IPS="$2"; shift 2 ;;
-      --ns-ips) NS_IPS="$2"; shift 2 ;;
-      --ns-label) NS_LABEL="$2"; shift 2 ;;
-      --ns-base-domain) NS_BASE_DOMAIN="$2"; shift 2 ;;
-      --seed) SEED="$2"; shift 2 ;;
-      --admin-email) ADMIN_EMAIL="$2"; shift 2 ;;
-      --admin-pass) ADMIN_PASS="$2"; shift 2 ;;
-      --admin-pass-file) ADMIN_PASS_FILE="$2"; shift 2 ;;
-      --enable-coredns) ENABLE_COREDNS="$2"; shift 2 ;;
-      --enable-openresty) ENABLE_OPENRESTY="$2"; shift 2 ;;
-      --backend-port) BACKEND_PORT="$2"; shift 2 ;;
-      --frontend-port) FRONTEND_PORT="$2"; shift 2 ;;
-      --cluster-secret) SECRETS_SUPPLIED="$2"; shift 2 ;;
-      --jwt-secret) JWT_SECRET_INPUT="$2"; shift 2 ;;
-      -h|--help) usage; exit 0 ;;
-      *) abort "Unknown option $1" ;;
+      --mode)
+        MODE="$2"
+        RERUN_ARGS+=(--mode "$2")
+        shift 2 ;;
+      --node-name)
+        NODE_NAME="$2"
+        RERUN_ARGS+=(--node-name "$2")
+        shift 2 ;;
+      --node-id)
+        NODE_ID="$2"
+        RERUN_ARGS+=(--node-id "$2")
+        shift 2 ;;
+      --ips)
+        IPS="$2"
+        RERUN_ARGS+=(--ips "$2")
+        shift 2 ;;
+      --ns-ips)
+        NS_IPS="$2"
+        RERUN_ARGS+=(--ns-ips "$2")
+        shift 2 ;;
+      --ns-label)
+        NS_LABEL="$2"
+        RERUN_ARGS+=(--ns-label "$2")
+        shift 2 ;;
+      --ns-base-domain)
+        NS_BASE_DOMAIN="$2"
+        RERUN_ARGS+=(--ns-base-domain "$2")
+        shift 2 ;;
+      --seed)
+        SEED="$2"
+        RERUN_ARGS+=(--seed "$2")
+        shift 2 ;;
+      --admin-email)
+        ADMIN_EMAIL="$2"
+        RERUN_ARGS+=(--admin-email "$2")
+        shift 2 ;;
+      --admin-pass)
+        ADMIN_PASS="$2"
+        RERUN_ARGS+=(--admin-pass "$2")
+        shift 2 ;;
+      --admin-pass-file)
+        ADMIN_PASS_FILE="$2"
+        RERUN_ARGS+=(--admin-pass-file "$2")
+        shift 2 ;;
+      --enable-coredns)
+        ENABLE_COREDNS="$2"
+        RERUN_ARGS+=(--enable-coredns "$2")
+        shift 2 ;;
+      --enable-openresty)
+        ENABLE_OPENRESTY="$2"
+        RERUN_ARGS+=(--enable-openresty "$2")
+        shift 2 ;;
+      --backend-port)
+        BACKEND_PORT="$2"
+        RERUN_ARGS+=(--backend-port "$2")
+        shift 2 ;;
+      --frontend-port)
+        FRONTEND_PORT="$2"
+        RERUN_ARGS+=(--frontend-port "$2")
+        shift 2 ;;
+      --cluster-secret)
+        SECRETS_SUPPLIED="$2"
+        RERUN_ARGS+=(--cluster-secret "$2")
+        shift 2 ;;
+      --jwt-secret)
+        JWT_SECRET_INPUT="$2"
+        RERUN_ARGS+=(--jwt-secret "$2")
+        shift 2 ;;
+      --repo-url)
+        REPO_URL="$2"
+        shift 2 ;;
+      --install-dir)
+        INSTALL_DIR="$2"
+        RERUN_ARGS+=(--install-dir "$2")
+        shift 2 ;;
+      --system-user)
+        SYSTEM_USER="$2"
+        RERUN_ARGS+=(--system-user "$2")
+        shift 2 ;;
+      --skip-bootstrap)
+        SKIP_BOOTSTRAP="1"
+        shift ;;
+      -h|--help)
+        usage
+        exit 0 ;;
+      *)
+        abort "Unknown option $1" ;;
     esac
   done
+}
+
+log() {
+  echo "[install] $1"
+}
+
+install_base_packages() {
+  log "Installing base packages"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y \
+    ca-certificates \
+    curl \
+    git \
+    gnupg \
+    lsb-release \
+    make \
+    openssl \
+    python3 \
+    python3-venv \
+    sudo \
+    wget
+}
+
+install_docker_packages() {
+  if command -v docker >/dev/null 2>&1; then
+    return
+  fi
+  log "Installing Docker Engine"
+  install -m 0755 -d /etc/apt/keyrings
+  if [[ ! -f /etc/apt/keyrings/docker.gpg ]]; then
+    curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  fi
+  chmod a+r /etc/apt/keyrings/docker.gpg
+  local codename
+  codename="$(lsb_release -cs)"
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $codename stable" > /etc/apt/sources.list.d/docker.list
+  apt-get update
+  apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  systemctl enable docker >/dev/null 2>&1 || true
+  systemctl start docker
+}
+
+ensure_system_user() {
+  if ! id "$SYSTEM_USER" >/dev/null 2>&1; then
+    log "Creating system user $SYSTEM_USER"
+    useradd -m -s /bin/bash "$SYSTEM_USER"
+  fi
+  usermod -aG docker "$SYSTEM_USER"
+}
+
+clone_or_update_repo() {
+  if [[ -d "$INSTALL_DIR/.git" ]]; then
+    log "Updating repository in $INSTALL_DIR"
+    git -C "$INSTALL_DIR" fetch --all --prune
+    local current_branch
+    current_branch="$(git -C "$INSTALL_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
+    git -C "$INSTALL_DIR" checkout "$current_branch"
+    git -C "$INSTALL_DIR" reset --hard "origin/$current_branch"
+  else
+    log "Cloning repository $REPO_URL into $INSTALL_DIR"
+    rm -rf "$INSTALL_DIR"
+    git clone "$REPO_URL" "$INSTALL_DIR"
+  fi
+  chown -R "$SYSTEM_USER":"$SYSTEM_USER" "$INSTALL_DIR"
+}
+
+maybe_bootstrap() {
+  if [[ "$SKIP_BOOTSTRAP" == "1" ]]; then
+    return
+  fi
+
+  local repo_present="0"
+  if [[ -f "$PROJECT_DIR/docker-compose.yml" && -d "$PROJECT_DIR/backend" ]]; then
+    repo_present="1"
+  fi
+
+  if command -v docker >/dev/null 2>&1 && [[ "$repo_present" == "1" ]]; then
+    return
+  fi
+
+  if [[ $EUID -ne 0 ]]; then
+    abort "Bootstrap requires root privileges. Re-run the installer as root."
+  fi
+
+  install_base_packages
+  install_docker_packages
+  ensure_system_user
+  clone_or_update_repo
+
+  log "Re-executing installer as $SYSTEM_USER"
+  exec sudo -H -u "$SYSTEM_USER" env \
+    SKIP_BOOTSTRAP=1 \
+    INSTALL_DIR="$INSTALL_DIR" \
+    SYSTEM_USER="$SYSTEM_USER" \
+    "$INSTALL_DIR/install.sh" "${RERUN_ARGS[@]}"
 }
 
 prompt_if_empty() {
@@ -302,6 +477,8 @@ PY
 main() {
   parse_args "$@"
 
+  maybe_bootstrap
+
   require_command python3
   require_command openssl
 
@@ -330,6 +507,10 @@ main() {
   prompt_if_empty NS_BASE_DOMAIN "NS base domain"
   prompt_if_empty BACKEND_PORT "Backend port"
   prompt_if_empty FRONTEND_PORT "Frontend port"
+
+  if [[ -z "$NS_LABEL" ]]; then
+    NS_LABEL="dns"
+  fi
 
   if [[ -z "$NODE_ID" ]]; then
     NODE_ID="$(generate_uuid)"
