@@ -438,7 +438,7 @@ pull_snapshot() {
   require_command curl
   local auth_header
   auth_header="Bearer $(python3 -c 'import binascii,sys; sys.stdout.write(binascii.hexlify(sys.stdin.buffer.read()).decode())' <<<"$secret")"
-  curl -fsSL -H "Authorization: $auth_header" "$seed_url/api/v1/sync/pull" -o "$DATA_DIR/cluster/snapshot.json"
+  curl -fsSL -X POST -H "Authorization: $auth_header" "$seed_url/api/v1/sync/pull" -o "$DATA_DIR/cluster/snapshot.json"
 }
 
 apply_snapshot() {
