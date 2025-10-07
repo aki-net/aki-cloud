@@ -1,0 +1,99 @@
+package sync
+
+import (
+	"os"
+	"testing"
+	"time"
+
+	"aki-cloud/backend/internal/models"
+	"aki-cloud/backend/internal/store"
+)
+
+func newTestStore(t *testing.T) *store.Store {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "sync-store-")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	st, err := store.New(dir)
+	if err != nil {
+		t.Fatalf("store init: %v", err)
+	}
+	return st
+}
+
+func TestMergeDomainPrefersNewest(t *testing.T) {
+	now := time.Now().UTC()
+	local := models.DomainRecord{
+		Domain:   "example.test",
+		OriginIP: "203.0.113.10",
+		Version:  models.ClockVersion{Counter: 1, NodeID: "node-a", Updated: now.Add(-time.Minute).Unix()},
+	}
+	remote := models.DomainRecord{
+		Domain:   "example.test",
+		OriginIP: "198.51.100.4",
+		Version:  models.ClockVersion{Counter: 2, NodeID: "node-b", Updated: now.Unix()},
+	}
+
+	merged := mergeDomain(local, remote)
+	if merged.OriginIP != remote.OriginIP {
+		t.Fatalf("expected remote record to win")
+	}
+}
+
+func TestServiceApplySnapshot(t *testing.T) {
+	st := newTestStore(t)
+	svc := New(st, t.TempDir(), "node-a", []byte("secret"))
+
+	snapshot := Snapshot{
+		Domains: []models.DomainRecord{
+			{
+				Domain:   "example.test",
+				OriginIP: "203.0.113.5",
+				Proxied:  false,
+				TTL:      60,
+				Version: models.ClockVersion{
+					Counter: 1,
+					NodeID:  "seed",
+					Updated: time.Now().Unix(),
+				},
+			},
+		},
+		Users: []models.User{{ID: "admin", Email: "a@a", Role: models.RoleAdmin, Password: "hash"}},
+		Nodes: []models.Node{{ID: "node-1", Name: "node-1", IPs: []string{"10.0.0.1"}}},
+	}
+
+	if err := svc.ApplySnapshot(snapshot); err != nil {
+		t.Fatalf("apply snapshot: %v", err)
+	}
+
+	domain, err := st.GetDomain("example.test")
+	if err != nil {
+		t.Fatalf("get domain: %v", err)
+	}
+	if domain.OriginIP != "203.0.113.5" {
+		t.Fatalf("unexpected origin ip")
+	}
+
+	users, err := st.GetUsers()
+	if err != nil || len(users) != 1 {
+		t.Fatalf("users not merged")
+	}
+}
+
+func TestComputeDigest(t *testing.T) {
+	st := newTestStore(t)
+	if err := st.UpsertUser(models.User{ID: "admin", Email: "admin", Role: models.RoleAdmin, Password: "hash"}); err != nil {
+		t.Fatalf("upsert user: %v", err)
+	}
+	dataDir := t.TempDir()
+	svc := New(st, dataDir, "node-a", []byte("secret"))
+	digest, err := svc.ComputeDigest()
+	if err != nil {
+		t.Fatalf("compute digest: %v", err)
+	}
+	if digest.Users.Counter == 0 {
+		t.Fatalf("expected non-zero user counter")
+	}
+}

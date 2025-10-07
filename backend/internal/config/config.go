@@ -1,0 +1,98 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"time"
+)
+
+// Config captures runtime configuration for the backend service.
+type Config struct {
+	DataDir           string
+	Port              int
+	ClusterSecretFile string
+	NodeID            string
+	NodeName          string
+	JWTSecret         []byte
+	SyncInterval      time.Duration
+	ReloadDebounce    time.Duration
+}
+
+// Load reads configuration values from environment variables with sensible defaults.
+func Load() (*Config, error) {
+	dataDir := getEnvDefault("DATA_DIR", "./data")
+	if dataDir == "" {
+		return nil, fmt.Errorf("DATA_DIR must be provided")
+	}
+
+	port, err := getEnvInt("PORT", 8080)
+	if err != nil {
+		return nil, fmt.Errorf("invalid PORT: %w", err)
+	}
+
+	clusterSecretFile := getEnvDefault("CLUSTER_SECRET_FILE", fmt.Sprintf("%s/cluster/secret", dataDir))
+	nodeID := os.Getenv("NODE_ID")
+	nodeName := os.Getenv("NODE_NAME")
+	if nodeID == "" {
+		return nil, fmt.Errorf("NODE_ID must be provided")
+	}
+	if nodeName == "" {
+		return nil, fmt.Errorf("NODE_NAME must be provided")
+	}
+
+	jwtSecretFile := getEnvDefault("JWT_SECRET_FILE", fmt.Sprintf("%s/cluster/jwt_secret", dataDir))
+	jwtSecret, err := os.ReadFile(jwtSecretFile)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read JWT secret file: %w", err)
+	}
+
+	syncIntervalSeconds, err := getEnvInt("SYNC_INTERVAL_SECONDS", 15)
+	if err != nil {
+		return nil, fmt.Errorf("invalid SYNC_INTERVAL_SECONDS: %w", err)
+	}
+
+	reloadDebounceMillis, err := getEnvInt("RELOAD_DEBOUNCE_MS", 1500)
+	if err != nil {
+		return nil, fmt.Errorf("invalid RELOAD_DEBOUNCE_MS: %w", err)
+	}
+
+	return &Config{
+		DataDir:           dataDir,
+		Port:              port,
+		ClusterSecretFile: clusterSecretFile,
+		NodeID:            nodeID,
+		NodeName:          nodeName,
+		JWTSecret:         bytesTrim(jwtSecret),
+		SyncInterval:      time.Duration(syncIntervalSeconds) * time.Second,
+		ReloadDebounce:    time.Duration(reloadDebounceMillis) * time.Millisecond,
+	}, nil
+}
+
+func getEnvDefault(key, def string) string {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	return v
+}
+
+func getEnvInt(key string, def int) (int, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return def, nil
+	}
+	return strconv.Atoi(v)
+}
+
+func bytesTrim(v []byte) []byte {
+	for len(v) > 0 {
+		switch v[len(v)-1] {
+		case '\n', '\r', '\t', ' ':
+			v = v[:len(v)-1]
+		default:
+			return v
+		}
+	}
+	return v
+}

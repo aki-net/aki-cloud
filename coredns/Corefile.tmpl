@@ -1,0 +1,19 @@
+{{- if .NameServers -}}
+{{- range .NameServers }}
+{{ .IPv4 }}:53 {
+    errors
+    log
+    reload 5s
+    cache 30
+    {{- range $.Zones }}
+    file {{ $.ZonesDir }}/{{ .FileName }} {{ .Domain }}
+    {{- end }}
+}
+
+{{ end -}}
+{{- else -}}
+.:53 {
+    errors
+    log
+}
+{{- end -}}

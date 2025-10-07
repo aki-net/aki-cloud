@@ -1,0 +1,273 @@
+package render
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"text/template"
+	"time"
+
+	"aki-cloud/backend/internal/infra"
+	"aki-cloud/backend/internal/store"
+)
+
+// CoreDNSGenerator renders CoreDNS configuration using templates.
+type CoreDNSGenerator struct {
+	Store    *store.Store
+	Infra    *infra.Controller
+	DataDir  string
+	Template string
+}
+
+// OpenRestyGenerator renders OpenResty configs.
+type OpenRestyGenerator struct {
+	Store     *store.Store
+	Infra     *infra.Controller
+	DataDir   string
+	NginxTmpl string
+	SitesTmpl string
+	OutputDir string
+}
+
+// ZoneFile represents a DNS zone rendering payload.
+type ZoneFile struct {
+	Domain     string
+	TTL        int
+	PrimaryNS  string
+	AdminEmail string
+	Serial     string
+	NSRecords  []string
+	ARecords   []string
+}
+
+// Render writes CoreDNS Corefile and zone files to data directory.
+func (g *CoreDNSGenerator) Render() error {
+	domains, err := g.Store.GetDomains()
+	if err != nil {
+		return err
+	}
+	nsList, err := g.Infra.ActiveNameServers()
+	if err != nil {
+		return err
+	}
+	edges, err := g.Infra.EdgeIPs()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("CoreDNS generator: data dir %s, %d domain(s), %d nameserver(s), %d edge IP(s)\n", g.DataDir, len(domains), len(nsList), len(edges))
+	zonesDir := filepath.Join(g.DataDir, "dns", "zones")
+	if err := os.MkdirAll(zonesDir, 0o755); err != nil {
+		return err
+	}
+
+	// build zone files
+	zoneFiles := make([]ZoneFile, 0, len(domains))
+	now := time.Now().UTC()
+	serial := now.Format("2006010215")
+	primaryNS := "ns1.local.invalid."
+	if len(nsList) > 0 {
+		primaryNS = ensureDot(nsList[0].FQDN)
+	}
+	for _, domain := range domains {
+		ttl := domain.TTL
+		if ttl <= 0 {
+			ttl = 60
+		}
+		arecords := []string{}
+		if domain.Proxied {
+			arecords = append(arecords, edges...)
+		} else {
+			arecords = append(arecords, domain.OriginIP)
+		}
+		if len(arecords) == 0 {
+			arecords = []string{domain.OriginIP}
+		}
+		nsRecords := make([]string, 0, len(nsList))
+		for _, ns := range nsList {
+			nsRecords = append(nsRecords, ensureDot(ns.FQDN))
+		}
+		if len(nsRecords) == 0 {
+			nsRecords = append(nsRecords, primaryNS)
+		}
+		zone := ZoneFile{
+			Domain:     strings.TrimSuffix(domain.Domain, "."),
+			TTL:        ttl,
+			PrimaryNS:  primaryNS,
+			AdminEmail: fmt.Sprintf("admin.%s.", strings.TrimSuffix(domain.Domain, ".")),
+			Serial:     serial,
+			NSRecords:  nsRecords,
+			ARecords:   uniqueStrings(arecords),
+		}
+		zoneFiles = append(zoneFiles, zone)
+		fmt.Printf("CoreDNS generator: writing zone for %s (%d A record(s))\n", zone.Domain, len(zone.ARecords))
+		if err := writeZoneFile(zonesDir, zone); err != nil {
+			return err
+		}
+	}
+
+	// render Corefile
+	coreTemplate, err := template.ParseFiles(g.Template)
+	if err != nil {
+		return err
+	}
+	type zoneMeta struct {
+		Domain   string
+		FileName string
+	}
+	zones := make([]zoneMeta, 0, len(zoneFiles))
+	for _, z := range zoneFiles {
+		zones = append(zones, zoneMeta{Domain: ensureDot(z.Domain), FileName: fmt.Sprintf("%s.zone", z.Domain)})
+	}
+	data := struct {
+		NameServers []infra.NameServer
+		Zones       []zoneMeta
+		ZonesDir    string
+	}{
+		NameServers: nsList,
+		Zones:       zones,
+		ZonesDir:    zonesDir,
+	}
+	buf := bytes.Buffer{}
+	if err := coreTemplate.Execute(&buf, data); err != nil {
+		return err
+	}
+	corefilePath := filepath.Join(g.DataDir, "dns", "Corefile")
+	if err := os.MkdirAll(filepath.Dir(corefilePath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(corefilePath, buf.Bytes(), 0o644)
+}
+
+func writeZoneFile(dir string, zone ZoneFile) error {
+	tmpl := `$ORIGIN {{.Domain}}.
+$TTL {{.TTL}}
+@ IN SOA {{.PrimaryNS}} {{.AdminEmail}} {{.Serial}} 3600 600 86400 60
+{{- range .NSRecords}}
+@ IN NS {{.}}
+{{- end}}
+{{- range .ARecords}}
+@ IN A {{.}}
+{{- end}}
+`
+	parsed, err := template.New("zone").Parse(tmpl)
+	if err != nil {
+		return err
+	}
+	buf := bytes.Buffer{}
+	if err := parsed.Execute(&buf, zone); err != nil {
+		return err
+	}
+	file := filepath.Join(dir, fmt.Sprintf("%s.zone", zone.Domain))
+	return os.WriteFile(file, buf.Bytes(), 0o644)
+}
+
+// Render writes OpenResty configs with template.
+func (g *OpenRestyGenerator) Render() error {
+	domains, err := g.Store.GetDomains()
+	if err != nil {
+		return err
+	}
+	edges, err := g.Infra.EdgeIPs()
+	if err != nil {
+		return err
+	}
+	nsList, err := g.Infra.ActiveNameServers()
+	if err != nil {
+		return err
+	}
+	nsIPs := map[string]struct{}{}
+	for _, ns := range nsList {
+		nsIPs[ns.IPv4] = struct{}{}
+	}
+	edgeIPs := uniqueStrings(edges)
+	if err := os.MkdirAll(g.OutputDir, 0o755); err != nil {
+		return err
+	}
+	sitesDir := filepath.Join(g.OutputDir, "sites-enabled")
+	if err := os.MkdirAll(sitesDir, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(sitesDir)
+	if err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			_ = os.Remove(filepath.Join(sitesDir, entry.Name()))
+		}
+	}
+
+	tmpl, err := template.ParseFiles(g.SitesTmpl)
+	if err != nil {
+		return err
+	}
+
+	for _, domain := range domains {
+		if !domain.Proxied {
+			continue
+		}
+		for _, edgeIP := range edgeIPs {
+			if _, isNS := nsIPs[edgeIP]; isNS {
+				continue
+			}
+			data := map[string]interface{}{
+				"Domain":   domain.Domain,
+				"EdgeIP":   edgeIP,
+				"OriginIP": domain.OriginIP,
+			}
+			buf := bytes.Buffer{}
+			if err := tmpl.Execute(&buf, data); err != nil {
+				return err
+			}
+			file := filepath.Join(sitesDir, fmt.Sprintf("%s@%s.conf", sanitizeFileName(domain.Domain), strings.ReplaceAll(edgeIP, ":", "_")))
+			if err := os.WriteFile(file, buf.Bytes(), 0o644); err != nil {
+				return err
+			}
+		}
+	}
+
+	nginxTemplate, err := template.ParseFiles(g.NginxTmpl)
+	if err != nil {
+		return err
+	}
+	nginxData := map[string]interface{}{
+		"SitesDir": sitesDir,
+	}
+	buf := bytes.Buffer{}
+	if err := nginxTemplate.Execute(&buf, nginxData); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(g.OutputDir, "nginx.conf"), buf.Bytes(), 0o644)
+}
+
+func ensureDot(input string) string {
+	if strings.HasSuffix(input, ".") {
+		return input
+	}
+	return input + "."
+}
+
+func sanitizeFileName(name string) string {
+	cleaned := strings.ReplaceAll(name, "..", ".")
+	cleaned = strings.ReplaceAll(cleaned, string(os.PathSeparator), "-")
+	cleaned = strings.ReplaceAll(cleaned, " ", "-")
+	return cleaned
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}

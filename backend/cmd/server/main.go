@@ -1,0 +1,84 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"aki-cloud/backend/internal/api"
+	"aki-cloud/backend/internal/auth"
+	"aki-cloud/backend/internal/config"
+	"aki-cloud/backend/internal/infra"
+	"aki-cloud/backend/internal/orchestrator"
+	"aki-cloud/backend/internal/store"
+	syncsvc "aki-cloud/backend/internal/sync"
+)
+
+func main() {
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("failed to load config: %v", err)
+	}
+
+	st, err := store.New(cfg.DataDir)
+	if err != nil {
+		log.Fatalf("failed to init store: %v", err)
+	}
+
+	authSvc := auth.New(cfg.JWTSecret)
+	orch := orchestrator.New(cfg.DataDir, cfg.ReloadDebounce)
+
+	secret, err := os.ReadFile(cfg.ClusterSecretFile)
+	if err != nil {
+		log.Fatalf("failed to read cluster secret: %v", err)
+	}
+
+	syncSvc := syncsvc.New(st, cfg.DataDir, cfg.NodeID, secret)
+	infraCtl := infra.New(st, cfg.DataDir)
+
+	server := &api.Server{
+		Config:       cfg,
+		Store:        st,
+		Auth:         authSvc,
+		Orchestrator: orch,
+		Sync:         syncSvc,
+		Infra:        infraCtl,
+	}
+
+	router := server.Routes()
+
+	httpServer := &http.Server{
+		Addr:              fmt.Sprintf(":%d", cfg.Port),
+		Handler:           router,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	syncCtx, syncCancel := context.WithCancel(ctx)
+	go syncSvc.Start(syncCtx, cfg.SyncInterval)
+
+	go func() {
+		log.Printf("backend listening on %s", httpServer.Addr)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("http server error: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	syncCancel()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("server shutdown error: %v", err)
+	}
+}

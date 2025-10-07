@@ -1,0 +1,59 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /data
+      CLUSTER_SECRET_FILE: /data/cluster/secret
+      JWT_SECRET_FILE: /data/cluster/jwt_secret
+      NODE_ID: ${NODE_ID}
+      NODE_NAME: ${NODE_NAME}
+    volumes:
+      - ./data:/data
+      - ./scripts:/app/scripts:ro
+      - ./coredns:/app/coredns:ro
+      - ./openresty:/app/openresty:ro
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    restart: unless-stopped
+
+  coredns:
+    build:
+      context: ./coredns
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /data
+      ENABLE_COREDNS: ${ENABLE_COREDNS:-true}
+    volumes:
+      - ./data:/data
+    network_mode: host
+    restart: unless-stopped
+
+  openresty:
+    build:
+      context: ./openresty
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /data
+      ENABLE_OPENRESTY: ${ENABLE_OPENRESTY:-true}
+    volumes:
+      - ./data:/data
+    network_mode: host
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    env_file:
+      - .env
+    environment:
+      VITE_API_BASE: ${FRONTEND_API_BASE:-http://localhost:${BACKEND_PORT:-8080}}
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    restart: unless-stopped
