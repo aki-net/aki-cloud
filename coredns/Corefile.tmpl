@@ -4,10 +4,10 @@
     errors
     log
     reload 5s
-    cache 30
-    {{- range $.Zones }}
+{{- range $.Zones }}
     file {{ $.ZonesDir }}/{{ .FileName }} {{ .Domain }}
-    {{- end }}
+{{- end }}
+    cache 30
 }
 
 {{ end -}}
