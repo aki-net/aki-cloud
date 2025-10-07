@@ -268,6 +268,34 @@ func (g *CoreDNSGenerator) buildInfrastructureZones(nsList []infra.NameServer, s
 			Extra:      dedupeRecords(extra),
 		}
 		zones = append(zones, zone)
+		for label, nsByLabel := range labelMap {
+			if len(nsByLabel) == 0 {
+				continue
+			}
+			labelDomain := fmt.Sprintf("%s.%s", label, base)
+			labelNSRecords := make([]string, 0, len(nsByLabel))
+			labelExtras := make([]ZoneRecord, 0, len(nsByLabel))
+			for _, ns := range nsByLabel {
+				labelNSRecords = append(labelNSRecords, ensureDot(ns.FQDN))
+				if ns.IPv4 != "" {
+					labelExtras = append(labelExtras, ZoneRecord{
+						Name:  relativeLabel(ns.FQDN, labelDomain),
+						Type:  "A",
+						Value: ns.IPv4,
+					})
+				}
+			}
+			labelZone := ZoneFile{
+				Domain:     labelDomain,
+				TTL:        300,
+				PrimaryNS:  ensureDot(nsByLabel[0].FQDN),
+				AdminEmail: fmt.Sprintf("admin.%s.", strings.TrimSuffix(labelDomain, ".")),
+				Serial:     serial,
+				NSRecords:  uniqueStrings(labelNSRecords),
+				Extra:      dedupeRecords(labelExtras),
+			}
+			zones = append(zones, labelZone)
+		}
 	}
 	return zones
 }
