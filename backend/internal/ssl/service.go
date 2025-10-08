@@ -201,11 +201,23 @@ func (s *Service) probeOriginHTTP(ctx context.Context, rec models.DomainRecord) 
 	}
 	req.Host = rec.Domain
 	resp, err := s.httpClient.Do(req)
+	if err == nil {
+		resp.Body.Close()
+		if resp.StatusCode < 500 {
+			return true
+		}
+	}
+	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://%s", rec.OriginIP), nil)
 	if err != nil {
 		return false
 	}
-	resp.Body.Close()
-	return resp.StatusCode < 500
+	getReq.Host = rec.Domain
+	getResp, err := s.httpClient.Do(getReq)
+	if err != nil {
+		return false
+	}
+	getResp.Body.Close()
+	return getResp.StatusCode < 500
 }
 
 func (s *Service) needsCertificate(rec models.DomainRecord, mode models.EncryptionMode) bool {
