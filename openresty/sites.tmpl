@@ -23,12 +23,6 @@ server {
     location / {
         return 301 https://$host$request_uri;
     }
-    {{- else if .ForceHTTPFallback }}
-    location / {
-        default_type text/plain;
-        add_header Cache-Control "no-store";
-        return 200 "aki-cloud temporary http response\n";
-    }
     {{- else }}
     location / {
         proxy_pass {{ .ProxyPass }};
@@ -73,13 +67,6 @@ server {
         proxy_set_header X-Forwarded-Host $host;
     }
 
-    {{- if .ForceHTTPFallback }}
-    location / {
-        default_type text/plain;
-        add_header Cache-Control "no-store";
-        return 200 "aki-cloud temporary http response\n";
-    }
-    {{- else }}
     location / {
         proxy_pass {{ .ProxyPass }};
         proxy_set_header Host $host;
@@ -105,16 +92,33 @@ server {
         {{- end }}
         {{- end }}
     }
-    {{- end }}
 }
 {{- end }}
 
-{{- if and (not .HasCertificate) .RejectTLS }}
+{{- if and .PendingTLS (not .HasCertificate) }}
 server {
     listen {{ .EdgeIP }}:443 ssl;
     server_name {{ .Domain }};
-    ssl_reject_handshake on;
-    access_log off;
-    error_log /var/log/nginx/{{ .Domain }}.tls-reject.log warn;
+    ssl_certificate {{ .PlaceholderCert }};
+    ssl_certificate_key {{ .PlaceholderKey }};
+    ssl_session_cache shared:SSL-PENDING:1m;
+    ssl_session_timeout 1m;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    location ^~ /.well-known/acme-challenge/ {
+        default_type text/plain;
+        proxy_pass {{ or .ChallengeProxy "http://127.0.0.1:8080" }}$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+    }
+
+    location / {
+        default_type text/plain;
+        add_header Cache-Control "no-store";
+        return 503 "edge certificate provisioning in progress\n";
+    }
 }
 {{- end }}

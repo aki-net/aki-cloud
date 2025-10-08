@@ -2,8 +2,15 @@ package render
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -444,11 +451,19 @@ func (g *OpenRestyGenerator) Render() error {
 		strictOrigin := mode == models.EncryptionStrictOriginPull && originPullCert != "" && originPullKey != ""
 		redirectHTTP := hasCert && mode != models.EncryptionFlexible
 		needsTLS := mode != models.EncryptionOff
-		forceHTTPFallback := needsTLS && !hasCert && (domain.TLS.UseRecommended || domain.TLS.Status == models.CertificateStatusPending || len(domain.TLS.Challenges) > 0)
-		rejectTLS := needsTLS && !hasCert
-		if forceHTTPFallback {
-			originScheme = "http"
+		pendingTLS := needsTLS && !hasCert
+
+		placeholderCert := ""
+		placeholderKey := ""
+		if pendingTLS {
+			certPath, keyPath, err := ensurePlaceholderCertificate(g.DataDir, domain.Domain)
+			if err != nil {
+				return err
+			}
+			placeholderCert = certPath
+			placeholderKey = keyPath
 		}
+
 		proxyPass := fmt.Sprintf("%s://%s", originScheme, domain.OriginIP)
 		for _, edgeIP := range edgeIPs {
 			if _, isNS := nsIPs[edgeIP]; isNS {
@@ -463,26 +478,27 @@ func (g *OpenRestyGenerator) Render() error {
 				}
 			}
 			data := map[string]interface{}{
-				"Domain":            domain.Domain,
-				"EdgeIP":            edgeIP,
-				"OriginIP":          domain.OriginIP,
-				"ProxyPass":         proxyPass,
-				"Mode":              mode,
-				"HasCertificate":    hasCert,
-				"RejectTLS":         rejectTLS,
-				"CertPath":          certPath,
-				"KeyPath":           keyPath,
-				"ChallengeDir":      challengeDir,
-				"RedirectHTTP":      redirectHTTP,
-				"ForceHTTPFallback": forceHTTPFallback,
-				"FallbackLabel":     baseName,
-				"OriginIsHTTPS":     originScheme == "https",
-				"VerifyOrigin":      verifyOrigin,
-				"OriginServerName":  domain.Domain,
-				"StrictOriginPull":  strictOrigin,
-				"OriginPullCert":    originPullCert,
-				"OriginPullKey":     originPullKey,
-				"ChallengeProxy":    challengeUpstream,
+				"Domain":           domain.Domain,
+				"EdgeIP":           edgeIP,
+				"OriginIP":         domain.OriginIP,
+				"ProxyPass":        proxyPass,
+				"Mode":             mode,
+				"HasCertificate":   hasCert,
+				"CertPath":         certPath,
+				"KeyPath":          keyPath,
+				"ChallengeDir":     challengeDir,
+				"RedirectHTTP":     redirectHTTP,
+				"PendingTLS":       pendingTLS,
+				"FallbackLabel":    baseName,
+				"OriginIsHTTPS":    originScheme == "https",
+				"VerifyOrigin":     verifyOrigin,
+				"OriginServerName": domain.Domain,
+				"StrictOriginPull": strictOrigin,
+				"OriginPullCert":   originPullCert,
+				"OriginPullKey":    originPullKey,
+				"ChallengeProxy":   challengeUpstream,
+				"PlaceholderCert":  placeholderCert,
+				"PlaceholderKey":   placeholderKey,
 			}
 			buf := bytes.Buffer{}
 			if err := tmpl.Execute(&buf, data); err != nil {
@@ -521,6 +537,101 @@ func (g *OpenRestyGenerator) localNodeInfo() localEdgeNode {
 
 func (g *CoreDNSGenerator) localNodeInfo() localEdgeNode {
 	return loadLocalNodeInfo(g.DataDir)
+}
+
+func ensurePlaceholderCertificate(dataDir, domain string) (string, string, error) {
+	base := sanitizeFileName(domain)
+	certDir := filepath.Join(dataDir, "openresty", "placeholder")
+	if err := os.MkdirAll(certDir, 0o755); err != nil {
+		return "", "", err
+	}
+	certPath := filepath.Join(certDir, fmt.Sprintf("%s.crt", base))
+	keyPath := filepath.Join(certDir, fmt.Sprintf("%s.key", base))
+
+	if validPlaceholder(certPath, domain) && fileExists(keyPath) {
+		return certPath, keyPath, nil
+	}
+
+	certPEM, keyPEM, err := generatePlaceholderCertificate(domain)
+	if err != nil {
+		return "", "", err
+	}
+	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
+		return "", "", err
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		return "", "", err
+	}
+	return certPath, keyPath, nil
+}
+
+func validPlaceholder(path string, domain string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(data)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return false
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false
+	}
+	if time.Now().After(cert.NotAfter.Add(-24 * time.Hour)) {
+		return false
+	}
+	expected := map[string]struct{}{
+		strings.ToLower(domain):        {},
+		strings.ToLower("*." + domain): {},
+	}
+	for _, name := range cert.DNSNames {
+		delete(expected, strings.ToLower(name))
+	}
+	return len(expected) == 0
+}
+
+func generatePlaceholderCertificate(domain string) ([]byte, []byte, error) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	now := time.Now().UTC()
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, nil, err
+	}
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName: domain,
+		},
+		DNSNames:  []string{domain, "*." + domain},
+		NotBefore: now.Add(-1 * time.Hour),
+		NotAfter:  now.Add(90 * 24 * time.Hour),
+		KeyUsage:  x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageServerAuth,
+		},
+		BasicConstraintsValid: true,
+		IsCA:                  false,
+	}
+	derBytes, err := x509.CreateCertificate(rand.Reader, template, template, &priv.PublicKey, priv)
+	if err != nil {
+		return nil, nil, err
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	keyBytes, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		return nil, nil, err
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes})
+	return certPEM, keyPEM, nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func syncChallenges(dir string, challenges []models.ACMEChallenge) error {
