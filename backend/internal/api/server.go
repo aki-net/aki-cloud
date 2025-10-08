@@ -526,6 +526,9 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			existing.TLS.LockExpiresAt = time.Time{}
 			existing.TLS.RecommendedMode = ""
 			existing.TLS.RecommendedAt = time.Time{}
+			if existing.TLS.Certificate != nil && existing.TLS.Certificate.CertChainPEM != "" {
+				existing.TLS.Status = models.CertificateStatusActive
+			}
 		}
 		existing.TLS.UpdatedAt = time.Now().UTC()
 		if !existing.TLS.UseRecommended && existing.TLS.Mode == "" {
