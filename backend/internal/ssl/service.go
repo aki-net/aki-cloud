@@ -38,6 +38,7 @@ type Service struct {
 	store      *store.Store
 	orch       *orchestrator.Service
 	account    *accountStore
+	backoffs   *backoffStore
 	httpClient *http.Client
 }
 
@@ -48,6 +49,7 @@ func New(cfg *config.Config, st *store.Store, orch *orchestrator.Service) *Servi
 		store:      st,
 		orch:       orch,
 		account:    newAccountStore(cfg.DataDir),
+		backoffs:   newBackoffStore(cfg.DataDir),
 		httpClient: &http.Client{Timeout: 5 * time.Second},
 	}
 }
@@ -92,6 +94,12 @@ func (s *Service) reconcileDomain(ctx context.Context, rec models.DomainRecord) 
 	rec.EnsureTLSDefaults()
 	if !rec.Proxied {
 		return nil
+	}
+
+	if updated, err := s.syncBackoffState(rec); err != nil {
+		log.Printf("tls: sync backoff for %s failed: %v", rec.Domain, err)
+	} else if updated != nil {
+		rec = *updated
 	}
 
 	if updated, err := s.ensureRecommendation(ctx, rec); err != nil {
@@ -332,7 +340,20 @@ func (s *Service) markError(domain, lockID string, keepAuto bool, issueErr error
 	if err != nil {
 		log.Printf("tls: mark error on %s failed: %v", domain, err)
 	}
-	s.orch.Trigger(context.Background())
+	if s.orch != nil {
+		s.orch.Trigger(context.Background())
+	}
+
+	if isRateLimitError(issueErr) && retry.After(now) {
+		entry := backoffEntry{
+			RetryAfter: retry,
+			Reason:     issueErr.Error(),
+			UpdatedAt:  now,
+		}
+		if err := s.backoffs.Set(domain, entry); err != nil {
+			log.Printf("tls: persist rate limit backoff for %s failed: %v", domain, err)
+		}
+	}
 }
 
 func (s *Service) retryInterval() time.Duration {
@@ -530,15 +551,75 @@ func (s *Service) issueCertificate(ctx context.Context, rec models.DomainRecord,
 	if err := s.account.Save(user); err != nil {
 		log.Printf("tls: account save failed: %v", err)
 	}
+	if err := s.backoffs.Clear(rec.Domain); err != nil {
+		log.Printf("tls: clear backoff for %s failed: %v", rec.Domain, err)
+	}
 	if mode == models.EncryptionStrictOriginPull {
 		if err := s.ensureOriginPullMaterial(rec.Domain); err != nil {
 			log.Printf("tls: origin pull generation failed for %s: %v", rec.Domain, err)
 		}
 	}
-	s.orch.Trigger(context.Background())
+	if s.orch != nil {
+		s.orch.Trigger(context.Background())
+	}
 	return nil
 }
 
 // obtainCertificate lives in acme.go
 // persistCertificate lives in acme.go
 // ensureOriginPullMaterial lives in originpull.go
+
+func (s *Service) syncBackoffState(rec models.DomainRecord) (*models.DomainRecord, error) {
+	if s.backoffs == nil {
+		return nil, nil
+	}
+	entry, err := s.backoffs.Get(rec.Domain)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	if entry == nil {
+		return nil, nil
+	}
+	if !entry.RetryAfter.After(now) {
+		if err := s.backoffs.Clear(rec.Domain); err != nil {
+			log.Printf("tls: clear expired backoff for %s failed: %v", rec.Domain, err)
+		}
+		return nil, nil
+	}
+	if rec.TLS.RetryAfter.Equal(entry.RetryAfter) && rec.TLS.LastError == entry.Reason && rec.TLS.Status == models.CertificateStatusErrored {
+		return nil, nil
+	}
+	updated, err := s.store.MutateDomain(rec.Domain, func(r *models.DomainRecord) error {
+		r.EnsureTLSDefaults()
+		if r.TLS.RetryAfter.Before(entry.RetryAfter) {
+			r.TLS.RetryAfter = entry.RetryAfter
+		} else {
+			r.TLS.RetryAfter = entry.RetryAfter
+		}
+		if entry.Reason != "" {
+			r.TLS.LastError = entry.Reason
+		}
+		if r.TLS.Status != models.CertificateStatusActive {
+			r.TLS.Status = models.CertificateStatusErrored
+		}
+		r.TLS.UpdatedAt = now
+		r.UpdatedAt = now
+		r.Version.Counter++
+		r.Version.NodeID = s.cfg.NodeID
+		r.Version.Updated = now.Unix()
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
+func isRateLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "error:rateLimited") || strings.Contains(msg, "too many certificates")
+}

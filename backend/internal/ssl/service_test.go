@@ -1,6 +1,7 @@
 package ssl
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"testing"
@@ -25,6 +26,7 @@ func newTestService(t *testing.T, dataDir string, st *store.Store, nodeID string
 		cfg:        cfg,
 		store:      st,
 		account:    newAccountStore(cfg.DataDir),
+		backoffs:   newBackoffStore(cfg.DataDir),
 		httpClient: &http.Client{Timeout: 5 * time.Second},
 	}
 }
@@ -188,5 +190,131 @@ func TestNextRetryFallsBackToMinimum(t *testing.T) {
 	min := now.Add(5 * time.Minute)
 	if got.Before(min) {
 		t.Fatalf("expected fallback retry >= %v, got %v", min, got)
+	}
+}
+
+func TestRateLimitBackoffPersistsAcrossToggle(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.New(dir)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	svc := newTestService(t, dir, st, "node-a")
+
+	rec := models.DomainRecord{
+		Domain:   "toggle.example.com",
+		Owner:    "user",
+		OriginIP: "203.0.113.10",
+		Proxied:  true,
+	}
+	rec.EnsureTLSDefaults()
+	if err := st.SaveDomain(rec); err != nil {
+		t.Fatalf("SaveDomain: %v", err)
+	}
+
+	errMsg := "acme: error: 429 :: POST :: https://acme-v02.api.letsencrypt.org/acme/new-order :: urn:ietf:params:acme:error:rateLimited :: too many certificates (5) already issued for this exact set of identifiers in the last 168h0m0s, retry after 2025-10-09 13:39:27 UTC"
+	svc.markError(rec.Domain, "lock-1", true, errors.New(errMsg))
+
+	entry, err := svc.backoffs.Get(rec.Domain)
+	if err != nil {
+		t.Fatalf("backoffs.Get: %v", err)
+	}
+	if entry == nil {
+		t.Fatalf("expected backoff entry to exist")
+	}
+
+	if _, err := st.MutateDomain(rec.Domain, func(r *models.DomainRecord) error {
+		r.TLS.RetryAfter = time.Time{}
+		r.TLS.LastError = ""
+		r.TLS.Status = models.CertificateStatusNone
+		return nil
+	}); err != nil {
+		t.Fatalf("MutateDomain reset: %v", err)
+	}
+
+	current, err := st.GetDomain(rec.Domain)
+	if err != nil {
+		t.Fatalf("GetDomain: %v", err)
+	}
+	if err := svc.reconcileDomain(context.Background(), *current); err != nil {
+		t.Fatalf("reconcileDomain: %v", err)
+	}
+
+	updated, err := st.GetDomain(rec.Domain)
+	if err != nil {
+		t.Fatalf("GetDomain post reconcile: %v", err)
+	}
+	if !updated.TLS.RetryAfter.Equal(entry.RetryAfter) {
+		t.Fatalf("expected retryAfter %v, got %v", entry.RetryAfter, updated.TLS.RetryAfter)
+	}
+	if updated.TLS.LastError == "" {
+		t.Fatalf("expected last error to be preserved")
+	}
+	if updated.TLS.Status != models.CertificateStatusErrored {
+		t.Fatalf("expected status errored, got %s", updated.TLS.Status)
+	}
+}
+
+func TestRateLimitBackoffCarriesThroughRecreate(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.New(dir)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	svc := newTestService(t, dir, st, "node-a")
+
+	rec := models.DomainRecord{
+		Domain:   "recreate.example.com",
+		Owner:    "user",
+		OriginIP: "198.51.100.10",
+		Proxied:  true,
+	}
+	rec.EnsureTLSDefaults()
+	if err := st.SaveDomain(rec); err != nil {
+		t.Fatalf("SaveDomain: %v", err)
+	}
+
+	errMsg := "acme: error: 429 :: POST :: https://acme-v02.api.letsencrypt.org/acme/new-order :: urn:ietf:params:acme:error:rateLimited :: too many certificates (5) already issued for this exact set of identifiers in the last 168h0m0s, retry after 2025-10-09 13:39:27 UTC"
+	svc.markError(rec.Domain, "lock-1", true, errors.New(errMsg))
+
+	if err := st.DeleteDomain(rec.Domain); err != nil {
+		t.Fatalf("DeleteDomain: %v", err)
+	}
+
+	newRec := models.DomainRecord{
+		Domain:   rec.Domain,
+		Owner:    rec.Owner,
+		OriginIP: rec.OriginIP,
+		Proxied:  true,
+	}
+	newRec.EnsureTLSDefaults()
+	if err := st.SaveDomain(newRec); err != nil {
+		t.Fatalf("SaveDomain new rec: %v", err)
+	}
+
+	current, err := st.GetDomain(newRec.Domain)
+	if err != nil {
+		t.Fatalf("GetDomain new: %v", err)
+	}
+	if err := svc.reconcileDomain(context.Background(), *current); err != nil {
+		t.Fatalf("reconcileDomain: %v", err)
+	}
+
+	updated, err := st.GetDomain(newRec.Domain)
+	if err != nil {
+		t.Fatalf("GetDomain updated: %v", err)
+	}
+	entry, err := svc.backoffs.Get(newRec.Domain)
+	if err != nil {
+		t.Fatalf("backoffs.Get: %v", err)
+	}
+	if entry == nil {
+		t.Fatalf("expected rate limit entry to remain after recreate")
+	}
+	if !updated.TLS.RetryAfter.Equal(entry.RetryAfter) {
+		t.Fatalf("expected retryAfter %v, got %v", entry.RetryAfter, updated.TLS.RetryAfter)
+	}
+	if updated.TLS.LastError == "" {
+		t.Fatalf("expected last error to be populated")
 	}
 }

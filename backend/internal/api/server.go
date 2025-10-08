@@ -517,9 +517,6 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		}
 		if payload.TLS.UseRecommended != nil {
 			existing.TLS.UseRecommended = *payload.TLS.UseRecommended
-			existing.TLS.RetryAfter = time.Time{}
-			existing.TLS.LastError = ""
-			existing.TLS.Status = models.CertificateStatusNone
 			existing.TLS.Challenges = nil
 			existing.TLS.LockID = ""
 			existing.TLS.LockNodeID = ""
@@ -528,6 +525,8 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			existing.TLS.RecommendedAt = time.Time{}
 			if existing.TLS.Certificate != nil && existing.TLS.Certificate.CertChainPEM != "" {
 				existing.TLS.Status = models.CertificateStatusActive
+			} else if !existing.TLS.UseRecommended {
+				existing.TLS.Status = models.CertificateStatusNone
 			}
 		}
 		existing.TLS.UpdatedAt = time.Now().UTC()
