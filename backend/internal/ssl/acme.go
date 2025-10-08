@@ -80,7 +80,7 @@ func (s *Service) persistCertificate(domain string, res *certificate.Resource, l
 	if res == nil {
 		return errors.New("empty certificate resource")
 	}
-	certs, err := x509.ParseCertificates(res.Certificate)
+	certs, err := certcrypto.ParsePEMBundle(res.Certificate)
 	if err != nil || len(certs) == 0 {
 		return fmt.Errorf("parse certificate chain: %w", err)
 	}
