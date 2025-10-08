@@ -33,7 +33,12 @@ server {
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header Connection "";
         proxy_http_version 1.1;
+        {{- if .ForceHTTPFallback }}
+        proxy_intercept_errors on;
+        error_page 301 302 307 308 = @force_http_stub_{{ .FallbackLabel }};
+        {{- else }}
         proxy_intercept_errors off;
+        {{- end }}
         proxy_buffering on;
     }
     {{- end }}
@@ -92,5 +97,12 @@ server {
         {{- end }}
         {{- end }}
     }
+}
+{{- end }}
+
+{{- if .ForceHTTPFallback }}
+location @force_http_stub_{{ .FallbackLabel }} {
+    default_type text/plain;
+    return 200 "aki-cloud temporary http response\n";
 }
 {{- end }}

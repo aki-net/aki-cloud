@@ -435,28 +435,34 @@ func (g *OpenRestyGenerator) Render() error {
 		}
 		strictOrigin := mode == models.EncryptionStrictOriginPull && originPullCert != "" && originPullKey != ""
 		redirectHTTP := hasCert && mode != models.EncryptionFlexible
+		forceHTTPFallback := domain.TLS.UseRecommended && !hasCert
+		if forceHTTPFallback {
+			originScheme = "http"
+		}
 		proxyPass := fmt.Sprintf("%s://%s", originScheme, domain.OriginIP)
 		for _, edgeIP := range edgeIPs {
 			if _, isNS := nsIPs[edgeIP]; isNS {
 				continue
 			}
 			data := map[string]interface{}{
-				"Domain":           domain.Domain,
-				"EdgeIP":           edgeIP,
-				"OriginIP":         domain.OriginIP,
-				"ProxyPass":        proxyPass,
-				"Mode":             mode,
-				"HasCertificate":   hasCert,
-				"CertPath":         certPath,
-				"KeyPath":          keyPath,
-				"ChallengeDir":     challengeDir,
-				"RedirectHTTP":     redirectHTTP,
-				"OriginIsHTTPS":    originScheme == "https",
-				"VerifyOrigin":     verifyOrigin,
-				"OriginServerName": domain.Domain,
-				"StrictOriginPull": strictOrigin,
-				"OriginPullCert":   originPullCert,
-				"OriginPullKey":    originPullKey,
+				"Domain":            domain.Domain,
+				"EdgeIP":            edgeIP,
+				"OriginIP":          domain.OriginIP,
+				"ProxyPass":         proxyPass,
+				"Mode":              mode,
+				"HasCertificate":    hasCert,
+				"CertPath":          certPath,
+				"KeyPath":           keyPath,
+				"ChallengeDir":      challengeDir,
+				"RedirectHTTP":      redirectHTTP,
+				"ForceHTTPFallback": forceHTTPFallback,
+				"FallbackLabel":     baseName,
+				"OriginIsHTTPS":     originScheme == "https",
+				"VerifyOrigin":      verifyOrigin,
+				"OriginServerName":  domain.Domain,
+				"StrictOriginPull":  strictOrigin,
+				"OriginPullCert":    originPullCert,
+				"OriginPullKey":     originPullKey,
 			}
 			buf := bytes.Buffer{}
 			if err := tmpl.Execute(&buf, data); err != nil {
