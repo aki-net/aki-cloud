@@ -116,8 +116,9 @@ func (s *Service) reconcileDomain(ctx context.Context, rec models.DomainRecord) 
 		return nil
 	}
 
+	keepAuto := lockedRec.TLS.UseRecommended
 	if err := s.issueCertificate(ctx, *lockedRec, mode, lockID); err != nil {
-		s.markError(rec.Domain, lockID, err)
+		s.markError(rec.Domain, lockID, keepAuto, err)
 		return err
 	}
 	return nil
@@ -280,13 +281,16 @@ func (s *Service) releaseLock(domain, lockID string) {
 	}
 }
 
-func (s *Service) markError(domain, lockID string, issueErr error) {
+func (s *Service) markError(domain, lockID string, keepAuto bool, issueErr error) {
 	now := time.Now().UTC()
 	retry := now.Add(s.retryInterval())
 	if retry.Before(now.Add(5 * time.Minute)) {
 		retry = now.Add(5 * time.Minute)
 	}
 	_, err := s.store.MutateDomain(domain, func(rec *models.DomainRecord) error {
+		if keepAuto {
+			rec.TLS.UseRecommended = true
+		}
 		if rec.TLS.LockID == lockID {
 			rec.TLS.LockID = ""
 			rec.TLS.LockNodeID = ""
