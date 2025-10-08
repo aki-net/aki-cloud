@@ -443,7 +443,7 @@ func (g *OpenRestyGenerator) Render() error {
 		}
 		strictOrigin := mode == models.EncryptionStrictOriginPull && originPullCert != "" && originPullKey != ""
 		redirectHTTP := hasCert && mode != models.EncryptionFlexible
-		forceHTTPFallback := !hasCert && (domain.TLS.UseRecommended || domain.TLS.Status == models.CertificateStatusPending || len(domain.TLS.Challenges) > 0)
+		forceHTTPFallback := mode != models.EncryptionOff && !hasCert && (domain.TLS.UseRecommended || domain.TLS.Status == models.CertificateStatusPending || len(domain.TLS.Challenges) > 0)
 		if forceHTTPFallback {
 			originScheme = "http"
 		}
