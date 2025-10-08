@@ -5,10 +5,13 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log"
 	"net"
 	"net/http"
 	"regexp"
+	"sort"
+	"strings"
 	"time"
 
 	"aki-cloud/backend/internal/config"
@@ -103,6 +106,10 @@ func (s *Service) reconcileDomain(ctx context.Context, rec models.DomainRecord) 
 	}
 
 	if !s.needsCertificate(rec, mode) {
+		return nil
+	}
+
+	if !s.shouldAttemptDomain(rec) {
 		return nil
 	}
 
@@ -351,6 +358,149 @@ func nextRetry(now time.Time, fallback time.Duration, issueErr error) time.Time 
 		return minRetry
 	}
 	return retry
+}
+
+func (s *Service) shouldAttemptDomain(rec models.DomainRecord) bool {
+	if rec.TLS.LockNodeID != "" && rec.TLS.LockNodeID == s.cfg.NodeID {
+		return true
+	}
+
+	nodes, err := s.store.GetNodes()
+	if err != nil {
+		log.Printf("tls: unable to list nodes: %v", err)
+		return true
+	}
+
+	health, err := s.store.GetEdgeHealthMap()
+	if err != nil {
+		log.Printf("tls: unable to load edge health: %v", err)
+		health = nil
+	}
+
+	candidates := coordinatorCandidates(nodes, health, s.cfg.NodeID)
+	if len(candidates) == 0 {
+		return true
+	}
+
+	assigned := selectCoordinator(rec.Domain, candidates)
+	if assigned == "" || assigned == s.cfg.NodeID {
+		return true
+	}
+
+	if !nodeHealthyByID(assigned, nodes, health) {
+		return true
+	}
+
+	now := time.Now().UTC()
+	threshold := s.coordinatorStaleThreshold()
+	if threshold > 0 && !rec.TLS.LastAttemptAt.IsZero() && now.Sub(rec.TLS.LastAttemptAt) > threshold {
+		return true
+	}
+
+	return false
+}
+
+func (s *Service) coordinatorStaleThreshold() time.Duration {
+	lockTTL := s.cfg.ACMELockTTL
+	if lockTTL <= 0 {
+		lockTTL = 10 * time.Minute
+	}
+	retry := s.retryInterval()
+	if retry <= 0 {
+		retry = 15 * time.Minute
+	}
+	threshold := maxDuration(lockTTL, retry)
+	if threshold < 5*time.Minute {
+		threshold = 5 * time.Minute
+	}
+	return threshold
+}
+
+func coordinatorCandidates(nodes []models.Node, health map[string]models.EdgeHealthStatus, selfID string) []string {
+	healthy := make([]string, 0, len(nodes))
+	fallback := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		node.ComputeEdgeIPs()
+		if len(node.EdgeIPs) == 0 {
+			continue
+		}
+		fallback = append(fallback, node.ID)
+		if nodeHealthy(node, health) {
+			healthy = append(healthy, node.ID)
+		}
+	}
+	ids := healthy
+	if len(ids) == 0 {
+		ids = fallback
+	}
+	if len(ids) == 0 && selfID != "" {
+		ids = []string{selfID}
+	}
+	sort.Strings(ids)
+	return uniqueStrings(ids)
+}
+
+func nodeHealthy(node models.Node, health map[string]models.EdgeHealthStatus) bool {
+	if len(node.EdgeIPs) == 0 {
+		return false
+	}
+	if len(health) == 0 {
+		return true
+	}
+	for _, ip := range node.EdgeIPs {
+		if status, ok := health[ip]; !ok || status.Healthy {
+			return true
+		}
+	}
+	return false
+}
+
+func nodeHealthyByID(id string, nodes []models.Node, health map[string]models.EdgeHealthStatus) bool {
+	for _, node := range nodes {
+		if node.ID != id {
+			continue
+		}
+		node.ComputeEdgeIPs()
+		return nodeHealthy(node, health)
+	}
+	return false
+}
+
+func selectCoordinator(domain string, candidates []string) string {
+	if len(candidates) == 0 {
+		return ""
+	}
+	hash := hashDomain(domain)
+	index := hash % uint64(len(candidates))
+	return candidates[index]
+}
+
+func hashDomain(domain string) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(strings.ToLower(domain)))
+	return h.Sum64()
+}
+
+func uniqueStrings(values []string) []string {
+	if len(values) == 0 {
+		return values
+	}
+	out := values[:0]
+	prev := ""
+	for i, val := range values {
+		if i == 0 || val != prev {
+			out = append(out, val)
+			prev = val
+		}
+	}
+	return out
+}
+
+func maxDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (s *Service) issueCertificate(ctx context.Context, rec models.DomainRecord, mode models.EncryptionMode, lockID string) error {
