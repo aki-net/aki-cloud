@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"regexp"
 	"time"
 
 	"aki-cloud/backend/internal/config"
@@ -295,10 +296,7 @@ func (s *Service) releaseLock(domain, lockID string) {
 
 func (s *Service) markError(domain, lockID string, keepAuto bool, issueErr error) {
 	now := time.Now().UTC()
-	retry := now.Add(s.retryInterval())
-	if retry.Before(now.Add(5 * time.Minute)) {
-		retry = now.Add(5 * time.Minute)
-	}
+	retry := nextRetry(now, s.retryInterval(), issueErr)
 	_, err := s.store.MutateDomain(domain, func(rec *models.DomainRecord) error {
 		if keepAuto {
 			rec.TLS.UseRecommended = true
@@ -330,6 +328,24 @@ func (s *Service) retryInterval() time.Duration {
 		return 15 * time.Minute
 	}
 	return s.cfg.ACMERetryAfter
+}
+
+var retryAfterRegexp = regexp.MustCompile(`retry after ([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}) UTC`)
+
+func nextRetry(now time.Time, fallback time.Duration, issueErr error) time.Time {
+	if issueErr != nil {
+		if match := retryAfterRegexp.FindStringSubmatch(issueErr.Error()); len(match) == 2 {
+			if ts, err := time.ParseInLocation("2006-01-02 15:04:05", match[1], time.UTC); err == nil && ts.After(now) {
+				return ts
+			}
+		}
+	}
+	retry := now.Add(fallback)
+	minRetry := now.Add(5 * time.Minute)
+	if retry.Before(minRetry) {
+		return minRetry
+	}
+	return retry
 }
 
 func (s *Service) issueCertificate(ctx context.Context, rec models.DomainRecord, mode models.EncryptionMode, lockID string) error {
