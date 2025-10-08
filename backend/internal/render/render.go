@@ -443,7 +443,9 @@ func (g *OpenRestyGenerator) Render() error {
 		}
 		strictOrigin := mode == models.EncryptionStrictOriginPull && originPullCert != "" && originPullKey != ""
 		redirectHTTP := hasCert && mode != models.EncryptionFlexible
-		forceHTTPFallback := mode != models.EncryptionOff && !hasCert && (domain.TLS.UseRecommended || domain.TLS.Status == models.CertificateStatusPending || len(domain.TLS.Challenges) > 0)
+		needsTLS := mode != models.EncryptionOff
+		forceHTTPFallback := needsTLS && !hasCert && (domain.TLS.UseRecommended || domain.TLS.Status == models.CertificateStatusPending || len(domain.TLS.Challenges) > 0)
+		rejectTLS := needsTLS && !hasCert
 		if forceHTTPFallback {
 			originScheme = "http"
 		}
@@ -467,6 +469,7 @@ func (g *OpenRestyGenerator) Render() error {
 				"ProxyPass":         proxyPass,
 				"Mode":              mode,
 				"HasCertificate":    hasCert,
+				"RejectTLS":         rejectTLS,
 				"CertPath":          certPath,
 				"KeyPath":           keyPath,
 				"ChallengeDir":      challengeDir,

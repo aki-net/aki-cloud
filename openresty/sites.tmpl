@@ -108,3 +108,13 @@ server {
     {{- end }}
 }
 {{- end }}
+
+{{- if and (not .HasCertificate) .RejectTLS }}
+server {
+    listen {{ .EdgeIP }}:443 ssl;
+    server_name {{ .Domain }};
+    ssl_reject_handshake on;
+    access_log off;
+    error_log /var/log/nginx/{{ .Domain }}.tls-reject.log warn;
+}
+{{- end }}
