@@ -249,6 +249,63 @@ func (s *Server) handleACMEChallenge(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, challenge.KeyAuth)
 		return
 	}
+	if r.Header.Get("X-Acme-Proxied") == "" {
+		client := &http.Client{Timeout: 2 * time.Second}
+		nodes, err := s.Store.GetNodes()
+		if err == nil {
+			type target struct {
+				id       string
+				endpoint string
+			}
+			nodeMap := make(map[string]target, len(nodes))
+			order := make([]target, 0, len(nodes))
+			for _, node := range nodes {
+				endpoint := strings.TrimSuffix(node.APIEndpoint, "/")
+				if endpoint == "" {
+					continue
+				}
+				if node.ID == s.Config.NodeID {
+					continue
+				}
+				t := target{id: node.ID, endpoint: endpoint}
+				nodeMap[node.ID] = t
+				order = append(order, t)
+			}
+			if lockID := record.TLS.LockNodeID; lockID != "" {
+				if t, ok := nodeMap[lockID]; ok {
+					order = append([]target{t}, order...)
+				}
+			}
+			seen := make(map[string]struct{}, len(order))
+			for _, node := range order {
+				if _, ok := seen[node.endpoint]; ok {
+					continue
+				}
+				seen[node.endpoint] = struct{}{}
+				req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, fmt.Sprintf("%s/.well-known/acme-challenge/%s", node.endpoint, token), nil)
+				if err != nil {
+					continue
+				}
+				req.Host = host
+				req.Header.Set("Host", host)
+				req.Header.Set("X-Acme-Proxied", "1")
+				resp, err := client.Do(req)
+				if err != nil {
+					continue
+				}
+				body, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if err != nil {
+					continue
+				}
+				if resp.StatusCode == http.StatusOK {
+					w.Header().Set("Content-Type", "text/plain")
+					_, _ = w.Write(body)
+					return
+				}
+			}
+		}
+	}
 	http.NotFound(w, r)
 }
 
