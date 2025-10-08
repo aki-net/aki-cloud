@@ -106,6 +106,7 @@ func (s *Server) Routes() http.Handler {
 
 	r.Get("/healthz", s.handleHealthz)
 	r.Get("/readyz", s.handleReadyz)
+	r.Get("/.well-known/acme-challenge/{token}", s.handleACMEChallenge)
 
 	r.Post("/auth/login", s.handleLogin)
 
@@ -215,6 +216,40 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		code = http.StatusServiceUnavailable
 	}
 	writeJSON(w, code, payload)
+}
+
+func (s *Server) handleACMEChallenge(w http.ResponseWriter, r *http.Request) {
+	host := strings.ToLower(r.Host)
+	if idx := strings.Index(host, ":"); idx != -1 {
+		host = host[:idx]
+	}
+	if host == "" {
+		http.NotFound(w, r)
+		return
+	}
+	token := chi.URLParam(r, "token")
+	if token == "" {
+		http.NotFound(w, r)
+		return
+	}
+	record, err := s.Store.GetDomain(host)
+	if err != nil || record == nil {
+		http.NotFound(w, r)
+		return
+	}
+	now := time.Now().UTC()
+	for _, challenge := range record.TLS.Challenges {
+		if challenge.Token != token {
+			continue
+		}
+		if !challenge.ExpiresAt.IsZero() && challenge.ExpiresAt.Before(now.Add(-1*time.Minute)) {
+			continue
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = io.WriteString(w, challenge.KeyAuth)
+		return
+	}
+	http.NotFound(w, r)
 }
 
 type loginRequest struct {
