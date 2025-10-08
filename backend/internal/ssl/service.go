@@ -137,6 +137,9 @@ func (s *Service) ensureRecommendation(ctx context.Context, rec models.DomainRec
 	if !s.cfg.TLSRecommender {
 		return nil, nil
 	}
+	if !rec.TLS.UseRecommended {
+		return nil, nil
+	}
 	now := time.Now().UTC()
 	if !rec.TLS.RecommendedAt.IsZero() && now.Sub(rec.TLS.RecommendedAt) < recomputeRecommendationAfter {
 		return nil, nil
