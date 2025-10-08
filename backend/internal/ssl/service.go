@@ -299,6 +299,7 @@ func (s *Service) markError(domain, lockID string, keepAuto bool, issueErr error
 		rec.TLS.Status = models.CertificateStatusErrored
 		rec.TLS.LastError = issueErr.Error()
 		rec.TLS.RetryAfter = retry
+		rec.TLS.Challenges = nil
 		rec.TLS.UpdatedAt = now
 		rec.UpdatedAt = now
 		rec.Version.Counter++
