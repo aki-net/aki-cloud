@@ -460,6 +460,13 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		}
 		if payload.TLS.UseRecommended != nil {
 			existing.TLS.UseRecommended = *payload.TLS.UseRecommended
+			existing.TLS.RetryAfter = time.Time{}
+			existing.TLS.LastError = ""
+			existing.TLS.Status = models.CertificateStatusNone
+			existing.TLS.Challenges = nil
+			existing.TLS.LockID = ""
+			existing.TLS.LockNodeID = ""
+			existing.TLS.LockExpiresAt = time.Time{}
 		}
 		existing.TLS.UpdatedAt = time.Now().UTC()
 		if !existing.TLS.UseRecommended && existing.TLS.Mode == "" {
