@@ -306,6 +306,14 @@ func (g *OpenRestyGenerator) Render() error {
 	if err != nil {
 		return err
 	}
+	nodes, err := g.Store.GetNodes()
+	if err != nil {
+		return err
+	}
+	nodeMap := make(map[string]models.Node, len(nodes))
+	for _, node := range nodes {
+		nodeMap[node.ID] = node
+	}
 	edges, err := g.Infra.EdgeIPs()
 	if err != nil {
 		return err
@@ -444,6 +452,14 @@ func (g *OpenRestyGenerator) Render() error {
 			if _, isNS := nsIPs[edgeIP]; isNS {
 				continue
 			}
+			challengeUpstream := "http://127.0.0.1:8080"
+			if domain.TLS.LockNodeID != "" && domain.TLS.LockNodeID != localInfo.NodeID {
+				if node, ok := nodeMap[domain.TLS.LockNodeID]; ok {
+					if endpoint := strings.TrimSuffix(node.APIEndpoint, "/"); endpoint != "" {
+						challengeUpstream = endpoint
+					}
+				}
+			}
 			data := map[string]interface{}{
 				"Domain":            domain.Domain,
 				"EdgeIP":            edgeIP,
@@ -463,6 +479,7 @@ func (g *OpenRestyGenerator) Render() error {
 				"StrictOriginPull":  strictOrigin,
 				"OriginPullCert":    originPullCert,
 				"OriginPullKey":     originPullKey,
+				"ChallengeProxy":    challengeUpstream,
 			}
 			buf := bytes.Buffer{}
 			if err := tmpl.Execute(&buf, data); err != nil {
