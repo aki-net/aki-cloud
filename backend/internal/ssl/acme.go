@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
+	"strings"
 	"time"
 
 	"aki-cloud/backend/internal/models"
@@ -58,6 +60,7 @@ func (s *Service) newACMEClient() (*lego.Client, *acmeUser, error) {
 }
 
 func (s *Service) obtainCertificate(client *lego.Client, rec models.DomainRecord) (*certificate.Resource, error) {
+	domains := uniqueDomains(rec.Domain)
 	if rec.TLS.Certificate != nil && rec.TLS.Certificate.CertChainPEM != "" {
 		resource := certificate.Resource{
 			Domain:            rec.Domain,
@@ -73,7 +76,31 @@ func (s *Service) obtainCertificate(client *lego.Client, rec models.DomainRecord
 		}
 		log.Printf("tls: renew failed for %s, requesting fresh order: %v", rec.Domain, err)
 	}
-	return client.Certificate.Obtain(certificate.ObtainRequest{Domains: []string{rec.Domain}, Bundle: true})
+	return client.Certificate.Obtain(certificate.ObtainRequest{Domains: domains, Bundle: true})
+}
+
+func uniqueDomains(root string) []string {
+	base := strings.TrimSpace(root)
+	set := map[string]struct{}{}
+	add := func(name string) {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name == "" {
+			return
+		}
+		if _, ok := set[name]; !ok {
+			set[name] = struct{}{}
+		}
+	}
+	add(base)
+	if !strings.HasPrefix(base, "*.") {
+		add("www." + base)
+	}
+	result := make([]string, 0, len(set))
+	for name := range set {
+		result = append(result, name)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func (s *Service) persistCertificate(domain string, res *certificate.Resource, lockID string) error {
