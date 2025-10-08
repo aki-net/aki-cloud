@@ -104,8 +104,15 @@ Data persistence: All state lives under `./data`. Keep regular backups of this d
 
 - **Backend** (`backend/`) mounts `./data`, `./scripts`, `./coredns`, and `./openresty`. It renders configs via `/app/bin/generate` and triggers reloads by touching sentinel files.
 - **CoreDNS** listens only on declared NS IPs using host networking; config resides in `data/dns/Corefile` and zone files under `data/dns/zones/`.
-- **OpenResty** listens on non-NS IPs, with config in `data/openresty`. An inotify loop reloads NGINX when configs change.
+- **OpenResty** listens on non-NS IPs, with config in `data/openresty`. An inotify loop reloads NGINX when configs change. Auto-issued edge certificates live under `data/openresty/certs`, ACME challenges under `data/openresty/challenges`, and origin-pull client material under `data/openresty/origin-pull`.
 - **Frontend** is served by `nginx` (static build) on the host port specified in `.env`.
+
+## TLS automation
+
+- Supported encryption modes mirror Cloudflare: `off`, `flexible`, `full`, `full_strict`, and `strict_origin_pull`.
+- HTTP-01 ACME challenges are published across nodes and answered from `/data/openresty/challenges`.
+- Certificates are renewed automatically ~30 days before expiry with configurable retry back-off.
+- Strict origin pull mode provisions mutual TLS material so origins can require client authentication from the edge.
 
 ## Backend API highlights
 
@@ -162,6 +169,7 @@ Manual validation checklist (local or staging):
 - Passwords are hashed using bcrypt before storage.
 - Sync traffic is authorised using the cluster secret (Authorization bearer header).
 - Host network binding means the host firewall must restrict unwanted access on 53/80/443.
+- ACME account keys live in `data/cluster/acme_account.json`, and edge API responses redact private key material before returning domain records.
 
 ## Contributing workflow (local)
 

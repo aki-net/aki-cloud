@@ -12,7 +12,15 @@ import {
   rebuildServices,
   upsertNode,
 } from '../services/api';
-import { DomainOverview, NameServerEntry, NameServerStatus, NodeRecord, UserRecord } from '../types';
+import {
+  CertificateStatus,
+  DomainOverview,
+  EncryptionMode,
+  NameServerEntry,
+  NameServerStatus,
+  NodeRecord,
+  UserRecord,
+} from '../types';
 
 interface NodeFormState {
   id?: string;
@@ -50,6 +58,44 @@ export const AdminDashboard = () => {
   });
   const [pending, setPending] = useState(false);
   const [nsPending, setNsPending] = useState(false);
+
+  const tlsModeText = (mode?: EncryptionMode, useRecommended?: boolean, recommended?: EncryptionMode): string => {
+    const label = (value: EncryptionMode | 'auto'): string => {
+      switch (value) {
+        case 'off':
+          return 'Off';
+        case 'flexible':
+          return 'Flexible';
+        case 'full':
+          return 'Full';
+        case 'full_strict':
+          return 'Full (Strict)';
+        case 'strict_origin_pull':
+          return 'Strict (Origin Pull)';
+        case 'auto':
+          return 'Auto (Recommended)';
+        default:
+          return value;
+      }
+    };
+    if (useRecommended) {
+      return recommended ? `${label('auto')} → ${label(recommended)}` : label('auto');
+    }
+    return label(mode ?? 'flexible');
+  };
+
+  const tlsStatusClass = (status?: CertificateStatus): string => {
+    switch (status) {
+      case 'active':
+        return 'success';
+      case 'pending':
+        return 'info';
+      case 'errored':
+        return 'danger';
+      default:
+        return 'secondary';
+    }
+  };
 
   const load = async () => {
     try {
@@ -443,7 +489,9 @@ export const AdminDashboard = () => {
                   <tr>
                     <th>Domain</th>
                     <th>Origin</th>
-                    <th>Mode</th>
+                    <th>Proxy</th>
+                    <th>TLS</th>
+                    <th>Status</th>
                     <th>Updated</th>
                   </tr>
                 </thead>
@@ -456,6 +504,14 @@ export const AdminDashboard = () => {
                         <span className={`badge ${domain.proxied ? 'info' : 'secondary'}`}>
                           {domain.proxied ? 'proxied' : 'direct'}
                         </span>
+                      </td>
+                      <td>{tlsModeText(domain.tls_mode, domain.tls_use_recommended, domain.tls_recommended_mode)}</td>
+                      <td>
+                        <span className={`badge ${tlsStatusClass(domain.tls_status)}`}>{domain.tls_status ?? 'none'}</span>
+                        {domain.tls_expires_at && (
+                          <div className="text-muted">exp. {formatDate(domain.tls_expires_at)}</div>
+                        )}
+                        {domain.tls_last_error && <div className="text-muted">{domain.tls_last_error}</div>}
                       </td>
                       <td>{formatDate(domain.updated_at)}</td>
                     </tr>

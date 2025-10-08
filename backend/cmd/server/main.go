@@ -16,6 +16,7 @@ import (
 	"aki-cloud/backend/internal/health"
 	"aki-cloud/backend/internal/infra"
 	"aki-cloud/backend/internal/orchestrator"
+	"aki-cloud/backend/internal/ssl"
 	"aki-cloud/backend/internal/store"
 	syncsvc "aki-cloud/backend/internal/sync"
 )
@@ -47,6 +48,7 @@ func main() {
 	})
 
 	healthMonitor := health.New(st, infraCtl, orch, cfg.NodeID, cfg.HealthInterval, cfg.HealthDialTimeout, cfg.HealthFailureThreshold, cfg.HealthFailureDecay)
+	slSvc := ssl.New(cfg, st, orch)
 
 	server := &api.Server{
 		Config:       cfg,
@@ -77,6 +79,7 @@ func main() {
 	syncCtx, syncCancel := context.WithCancel(ctx)
 	go syncSvc.Start(syncCtx, cfg.SyncInterval)
 	go healthMonitor.Start(syncCtx)
+	go slSvc.Start(syncCtx)
 
 	go func() {
 		log.Printf("backend listening on %s", httpServer.Addr)

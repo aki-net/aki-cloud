@@ -439,6 +439,13 @@ write_env_file() {
   local health_timeout="${HEALTH_DIAL_TIMEOUT_MS:-2500}"
   local health_threshold="${HEALTH_FAILURE_THRESHOLD:-3}"
   local health_decay="${HEALTH_FAILURE_DECAY_SECONDS:-300}"
+  local acme_enabled="${SSL_ACME_ENABLED:-true}"
+  local acme_directory="${SSL_ACME_DIRECTORY:-https://acme-v02.api.letsencrypt.org/directory}"
+  local acme_email="${SSL_ACME_EMAIL:-$ADMIN_EMAIL}"
+  local acme_retry="${SSL_ACME_RETRY_SECONDS:-900}"
+  local acme_lock="${SSL_ACME_LOCK_TTL_SECONDS:-600}"
+  local acme_renew="${SSL_ACME_RENEW_BEFORE_DAYS:-30}"
+  local tls_recommender="${SSL_RECOMMENDER_ENABLED:-true}"
   cat > "$PROJECT_DIR/.env" <<EOF
 BACKEND_PORT=$BACKEND_PORT
 FRONTEND_PORT=$FRONTEND_PORT
@@ -455,6 +462,13 @@ HEALTH_FAILURE_THRESHOLD=$health_threshold
 HEALTH_FAILURE_DECAY_SECONDS=$health_decay
 JWT_SECRET_FILE=/data/cluster/jwt_secret
 CLUSTER_SECRET_FILE=/data/cluster/secret
+SSL_ACME_ENABLED=$acme_enabled
+SSL_ACME_DIRECTORY=$acme_directory
+SSL_ACME_EMAIL=$acme_email
+SSL_ACME_RETRY_SECONDS=$acme_retry
+SSL_ACME_LOCK_TTL_SECONDS=$acme_lock
+SSL_ACME_RENEW_BEFORE_DAYS=$acme_renew
+SSL_RECOMMENDER_ENABLED=$tls_recommender
 EOF
 }
 

@@ -236,6 +236,7 @@ func (s *Store) GetDomains() ([]models.DomainRecord, error) {
 			}
 			return nil, fmt.Errorf("reading domain %s: %w", domain, err)
 		}
+		rec.EnsureTLSDefaults()
 		records = append(records, rec)
 	}
 	return records, nil
@@ -245,6 +246,7 @@ func (s *Store) GetDomains() ([]models.DomainRecord, error) {
 func (s *Store) SaveDomain(record models.DomainRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	record.EnsureTLSDefaults()
 	return writeJSONAtomic(s.domainRecordFile(record.Domain), record)
 }
 
@@ -265,6 +267,38 @@ func (s *Store) GetDomain(domain string) (*models.DomainRecord, error) {
 	}
 	var rec models.DomainRecord
 	if err := readJSON(file, &rec); err != nil {
+		return nil, err
+	}
+	rec.EnsureTLSDefaults()
+	return &rec, nil
+}
+
+// MutateDomain reads, applies the provided mutation, and persists the domain atomically.
+func (s *Store) MutateDomain(domain string, mutate func(rec *models.DomainRecord) error) (*models.DomainRecord, error) {
+	domain = strings.ToLower(domain)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	file := s.domainRecordFile(domain)
+	var rec models.DomainRecord
+	if data, err := os.ReadFile(file); err == nil {
+		if err := json.Unmarshal(data, &rec); err != nil {
+			return nil, err
+		}
+		rec.EnsureTLSDefaults()
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	} else {
+		rec.Domain = domain
+		rec.EnsureTLSDefaults()
+	}
+	rec.Domain = domain
+
+	if err := mutate(&rec); err != nil {
+		return nil, err
+	}
+	rec.EnsureTLSDefaults()
+	if err := writeJSONAtomic(file, rec); err != nil {
 		return nil, err
 	}
 	return &rec, nil

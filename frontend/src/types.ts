@@ -19,6 +19,39 @@ export interface LoginPayload {
   password: string;
 }
 
+export type EncryptionMode = 'off' | 'flexible' | 'full' | 'full_strict' | 'strict_origin_pull';
+export type CertificateStatus = 'none' | 'pending' | 'active' | 'errored';
+
+export interface DomainTLSCertificate {
+  cert_chain_pem?: string;
+  issuer?: string;
+  not_before?: string;
+  not_after?: string;
+  serial_number?: string;
+  cert_url?: string;
+  cert_stable_url?: string;
+}
+
+export interface OriginPullMaterial {
+  certificate_pem?: string;
+  ca_pem?: string;
+  not_before?: string;
+  not_after?: string;
+  fingerprint?: string;
+}
+
+export interface DomainTLS {
+  mode: EncryptionMode;
+  use_recommended: boolean;
+  recommended_mode?: EncryptionMode;
+  recommended_at?: string;
+  status: CertificateStatus;
+  last_error?: string;
+  retry_after?: string;
+  certificate?: DomainTLSCertificate;
+  origin_pull_secret?: OriginPullMaterial;
+}
+
 export interface DomainRecord {
   domain: string;
   owner: string;
@@ -26,6 +59,12 @@ export interface DomainRecord {
   proxied: boolean;
   ttl: number;
   updated_at: string;
+  tls: DomainTLS;
+}
+
+export interface DomainTLSPayload {
+  mode?: EncryptionMode;
+  use_recommended?: boolean;
 }
 
 export interface CreateDomainPayload {
@@ -34,6 +73,7 @@ export interface CreateDomainPayload {
   origin_ip: string;
   proxied: boolean;
   ttl?: number;
+  tls?: DomainTLSPayload;
 }
 
 export interface UpsertDomainPayload {
@@ -41,6 +81,7 @@ export interface UpsertDomainPayload {
   proxied: boolean;
   ttl?: number;
   owner?: string;
+  tls?: DomainTLSPayload;
 }
 
 export interface UserRecord {
@@ -81,6 +122,12 @@ export interface DomainOverview {
   origin_ip: string;
   proxied: boolean;
   updated_at: string;
+  tls_mode?: EncryptionMode;
+  tls_status?: CertificateStatus;
+  tls_use_recommended?: boolean;
+  tls_recommended_mode?: EncryptionMode;
+  tls_expires_at?: string;
+  tls_last_error?: string;
 }
 
 export interface NameServerStatus {

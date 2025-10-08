@@ -359,6 +359,19 @@ func (g *OpenRestyGenerator) Render() error {
 		}
 	}
 
+	certsDir := filepath.Join(g.OutputDir, "certs")
+	if err := os.MkdirAll(certsDir, 0o750); err != nil {
+		return err
+	}
+	challengesRoot := filepath.Join(g.OutputDir, "challenges")
+	if err := os.MkdirAll(challengesRoot, 0o755); err != nil {
+		return err
+	}
+	originPullDir := filepath.Join(g.OutputDir, "origin-pull")
+	if err := os.MkdirAll(originPullDir, 0o750); err != nil {
+		return err
+	}
+
 	tmpl, err := template.ParseFiles(g.SitesTmpl)
 	if err != nil {
 		return err
@@ -368,14 +381,82 @@ func (g *OpenRestyGenerator) Render() error {
 		if !domain.Proxied {
 			continue
 		}
+		mode := domain.TLS.Mode
+		if domain.TLS.UseRecommended && domain.TLS.RecommendedMode != "" {
+			mode = domain.TLS.RecommendedMode
+		}
+		if mode == "" {
+			mode = models.EncryptionFlexible
+		}
+		hasCert := domain.TLS.Certificate != nil && domain.TLS.Certificate.CertChainPEM != ""
+		baseName := sanitizeFileName(domain.Domain)
+		certPath := filepath.Join(certsDir, fmt.Sprintf("%s.crt", baseName))
+		keyPath := filepath.Join(certsDir, fmt.Sprintf("%s.key", baseName))
+		if hasCert {
+			if err := os.WriteFile(certPath, []byte(domain.TLS.Certificate.CertChainPEM), 0o644); err != nil {
+				return err
+			}
+			if err := os.WriteFile(keyPath, []byte(domain.TLS.Certificate.PrivateKeyPEM), 0o600); err != nil {
+				return err
+			}
+		} else {
+			_ = os.Remove(certPath)
+			_ = os.Remove(keyPath)
+		}
+		challengeDir := filepath.Join(challengesRoot, baseName)
+		if err := syncChallenges(challengeDir, domain.TLS.Challenges); err != nil {
+			return err
+		}
+		originPullCert := ""
+		originPullKey := ""
+		if domain.TLS.OriginPullSecret != nil {
+			originPullCertPath := filepath.Join(originPullDir, fmt.Sprintf("%s-origin.crt", baseName))
+			originPullKeyPath := filepath.Join(originPullDir, fmt.Sprintf("%s-origin.key", baseName))
+			if err := os.WriteFile(originPullCertPath, []byte(domain.TLS.OriginPullSecret.CertificatePEM), 0o644); err != nil {
+				return err
+			}
+			if err := os.WriteFile(originPullKeyPath, []byte(domain.TLS.OriginPullSecret.PrivateKeyPEM), 0o600); err != nil {
+				return err
+			}
+			originPullCert = originPullCertPath
+			originPullKey = originPullKeyPath
+		} else {
+			_ = os.Remove(filepath.Join(originPullDir, fmt.Sprintf("%s-origin.crt", baseName)))
+			_ = os.Remove(filepath.Join(originPullDir, fmt.Sprintf("%s-origin.key", baseName)))
+		}
+
+		originScheme := "http"
+		verifyOrigin := false
+		if mode == models.EncryptionFull || mode == models.EncryptionFullStrict || mode == models.EncryptionStrictOriginPull {
+			originScheme = "https"
+		}
+		if mode == models.EncryptionFullStrict || mode == models.EncryptionStrictOriginPull {
+			verifyOrigin = true
+		}
+		strictOrigin := mode == models.EncryptionStrictOriginPull && originPullCert != "" && originPullKey != ""
+		redirectHTTP := hasCert && mode != models.EncryptionFlexible
+		proxyPass := fmt.Sprintf("%s://%s", originScheme, domain.OriginIP)
 		for _, edgeIP := range edgeIPs {
 			if _, isNS := nsIPs[edgeIP]; isNS {
 				continue
 			}
 			data := map[string]interface{}{
-				"Domain":   domain.Domain,
-				"EdgeIP":   edgeIP,
-				"OriginIP": domain.OriginIP,
+				"Domain":           domain.Domain,
+				"EdgeIP":           edgeIP,
+				"OriginIP":         domain.OriginIP,
+				"ProxyPass":        proxyPass,
+				"Mode":             mode,
+				"HasCertificate":   hasCert,
+				"CertPath":         certPath,
+				"KeyPath":          keyPath,
+				"ChallengeDir":     challengeDir,
+				"RedirectHTTP":     redirectHTTP,
+				"OriginIsHTTPS":    originScheme == "https",
+				"VerifyOrigin":     verifyOrigin,
+				"OriginServerName": domain.Domain,
+				"StrictOriginPull": strictOrigin,
+				"OriginPullCert":   originPullCert,
+				"OriginPullKey":    originPullKey,
 			}
 			buf := bytes.Buffer{}
 			if err := tmpl.Execute(&buf, data); err != nil {
@@ -414,6 +495,42 @@ func (g *OpenRestyGenerator) localNodeInfo() localEdgeNode {
 
 func (g *CoreDNSGenerator) localNodeInfo() localEdgeNode {
 	return loadLocalNodeInfo(g.DataDir)
+}
+
+func syncChallenges(dir string, challenges []models.ACMEChallenge) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	valid := make(map[string]string, len(challenges))
+	now := time.Now().UTC()
+	for _, ch := range challenges {
+		if ch.Token == "" || ch.KeyAuth == "" {
+			continue
+		}
+		if !ch.ExpiresAt.IsZero() && ch.ExpiresAt.Before(now.Add(-time.Minute)) {
+			continue
+		}
+		valid[ch.Token] = ch.KeyAuth
+	}
+	entries, err := os.ReadDir(dir)
+	if err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				_ = os.RemoveAll(filepath.Join(dir, entry.Name()))
+				continue
+			}
+			name := entry.Name()
+			if _, ok := valid[name]; !ok {
+				_ = os.Remove(filepath.Join(dir, name))
+			}
+		}
+	}
+	for token, keyAuth := range valid {
+		if err := os.WriteFile(filepath.Join(dir, token), []byte(keyAuth), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func loadLocalNodeInfo(dataDir string) localEdgeNode {

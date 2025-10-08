@@ -42,6 +42,7 @@ type DomainRecord struct {
 	Proxied   bool         `json:"proxied"`
 	TTL       int          `json:"ttl"`
 	UpdatedAt time.Time    `json:"updated_at"`
+	TLS       DomainTLS    `json:"tls,omitempty"`
 	Version   ClockVersion `json:"version"`
 }
 
@@ -56,7 +57,138 @@ func (d *DomainRecord) Validate() error {
 	if d.TTL <= 0 {
 		d.TTL = 60
 	}
+	if err := d.TLS.Validate(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// EnsureTLSDefaults normalises TLS defaults for backwards compatibility.
+func (d *DomainRecord) EnsureTLSDefaults() {
+	if d.TLS.Status == "" {
+		d.TLS.Status = CertificateStatusNone
+	}
+	if d.TLS.Mode == "" {
+		d.TLS.Mode = EncryptionOff
+	}
+	if d.TLS.UseRecommended && d.TLS.RecommendedMode == "" {
+		d.TLS.RecommendedMode = EncryptionFlexible
+	}
+}
+
+// Sanitize redacts sensitive TLS material before returning records via API.
+func (d DomainRecord) Sanitize() DomainRecord {
+	if d.TLS.Certificate != nil {
+		cert := *d.TLS.Certificate
+		cert.PrivateKeyPEM = ""
+		d.TLS.Certificate = &cert
+	}
+	if d.TLS.OriginPullSecret != nil {
+		secret := *d.TLS.OriginPullSecret
+		secret.PrivateKeyPEM = ""
+		d.TLS.OriginPullSecret = &secret
+	}
+	d.TLS.LockID = ""
+	d.TLS.LockNodeID = ""
+	d.TLS.LockExpiresAt = time.Time{}
+	return d
+}
+
+// EncryptionMode describes client<->edge and edge<->origin TLS behaviour.
+type EncryptionMode string
+
+const (
+	// EncryptionOff disables TLS at the edge.
+	EncryptionOff EncryptionMode = "off"
+	// EncryptionFlexible terminates TLS at the edge and talks plaintext to the origin.
+	EncryptionFlexible EncryptionMode = "flexible"
+	// EncryptionFull terminates TLS at the edge and speaks TLS to the origin without validation.
+	EncryptionFull EncryptionMode = "full"
+	// EncryptionFullStrict terminates TLS at the edge and enforces CA validation for origin TLS.
+	EncryptionFullStrict EncryptionMode = "full_strict"
+	// EncryptionStrictOriginPull enforces mutual TLS against the origin using generated client certs.
+	EncryptionStrictOriginPull EncryptionMode = "strict_origin_pull"
+)
+
+// CertificateStatus captures lifecycle state for edge certificates.
+type CertificateStatus string
+
+const (
+	// CertificateStatusNone indicates no certificate is provisioned.
+	CertificateStatusNone CertificateStatus = "none"
+	// CertificateStatusPending indicates an issuance or renewal is in-flight.
+	CertificateStatusPending CertificateStatus = "pending"
+	// CertificateStatusActive indicates a valid certificate is present.
+	CertificateStatusActive CertificateStatus = "active"
+	// CertificateStatusErrored indicates issuance failed and needs attention/backoff.
+	CertificateStatusErrored CertificateStatus = "errored"
+)
+
+// DomainTLS holds per-domain TLS configuration and runtime status.
+type DomainTLS struct {
+	Mode             EncryptionMode      `json:"mode"`
+	UseRecommended   bool                `json:"use_recommended"`
+	RecommendedMode  EncryptionMode      `json:"recommended_mode,omitempty"`
+	RecommendedAt    time.Time           `json:"recommended_at,omitempty"`
+	Status           CertificateStatus   `json:"status"`
+	Certificate      *TLSCertificate     `json:"certificate,omitempty"`
+	LastError        string              `json:"last_error,omitempty"`
+	LastAttemptAt    time.Time           `json:"last_attempt_at,omitempty"`
+	RetryAfter       time.Time           `json:"retry_after,omitempty"`
+	LockNodeID       string              `json:"lock_node_id,omitempty"`
+	LockID           string              `json:"lock_id,omitempty"`
+	LockExpiresAt    time.Time           `json:"lock_expires_at,omitempty"`
+	Challenges       []ACMEChallenge     `json:"challenges,omitempty"`
+	OriginPullSecret *OriginPullMaterial `json:"origin_pull_secret,omitempty"`
+	UpdatedAt        time.Time           `json:"updated_at,omitempty"`
+}
+
+// Validate ensures TLS configuration uses supported values.
+func (t *DomainTLS) Validate() error {
+	switch t.Mode {
+	case "", EncryptionOff, EncryptionFlexible, EncryptionFull, EncryptionFullStrict, EncryptionStrictOriginPull:
+	default:
+		return ErrValidation("invalid tls mode")
+	}
+	switch t.Status {
+	case "", CertificateStatusNone, CertificateStatusPending, CertificateStatusActive, CertificateStatusErrored:
+	default:
+		return ErrValidation("invalid tls status")
+	}
+	return nil
+}
+
+// TLSCertificate stores issued certificate material.
+type TLSCertificate struct {
+	PrivateKeyPEM string    `json:"private_key_pem"`
+	CertChainPEM  string    `json:"cert_chain_pem"`
+	IssuerPEM     string    `json:"issuer_pem,omitempty"`
+	NotBefore     time.Time `json:"not_before"`
+	NotAfter      time.Time `json:"not_after"`
+	Issuer        string    `json:"issuer,omitempty"`
+	SerialNumber  string    `json:"serial_number,omitempty"`
+	CertURL       string    `json:"cert_url,omitempty"`
+	CertStableURL string    `json:"cert_stable_url,omitempty"`
+}
+
+// ACMEChallenge represents a pending HTTP-01 challenge that must be published.
+type ACMEChallenge struct {
+	Token          string    `json:"token"`
+	KeyAuth        string    `json:"key_authorization"`
+	ExpiresAt      time.Time `json:"expires_at,omitempty"`
+	ChallengeType  string    `json:"challenge_type,omitempty"`
+	Authorization  string    `json:"authorization_url,omitempty"`
+	VerificationAt time.Time `json:"verification_at,omitempty"`
+}
+
+// OriginPullMaterial stores client certificate assets for strict origin pull.
+type OriginPullMaterial struct {
+	CertificatePEM string    `json:"certificate_pem"`
+	PrivateKeyPEM  string    `json:"private_key_pem"`
+	CAPEM          string    `json:"ca_pem"`
+	NotBefore      time.Time `json:"not_before"`
+	NotAfter       time.Time `json:"not_after"`
+	Fingerprint    string    `json:"fingerprint,omitempty"`
 }
 
 // UserRole describes supported account roles.
