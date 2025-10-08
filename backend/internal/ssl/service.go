@@ -215,8 +215,7 @@ func (s *Service) probeOriginHTTP(ctx context.Context, rec models.DomainRecord) 
 	getReq.Host = rec.Domain
 	getResp, err := s.httpClient.Do(getReq)
 	if err != nil {
-		dialer := &net.Dialer{Timeout: 5 * time.Second}
-		conn, dialErr := dialer.DialContext(ctx, "tcp", net.JoinHostPort(rec.OriginIP, "80"))
+		conn, dialErr := net.DialTimeout("tcp", net.JoinHostPort(rec.OriginIP, "80"), 5*time.Second)
 		if dialErr != nil {
 			return false
 		}
