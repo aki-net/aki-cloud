@@ -108,7 +108,8 @@ Install script behaviour is idempotent; re-running it safely reuses existing sec
 - CLI equivalent: `ansible-playbook ansible/playbooks/update.yml` or `ansible/playbooks/update-force.yml`.
 - Each run prompts for any missing root password, executes `git pull --ff-only`, and then `make up` / `make up-force` inside `project_root`.
 - Store credentials once in `ansible/credentials/root-passwords.yml` (YAML map of host name → password) or let the playbook write it after the first run when prompted.
-- Useful extra vars: `aki_target_group` (inventory group name), `aki_project_root_default` (default repo path), `aki_git_pull_cmd` (custom git command), `aki_nodes_state_file` (alternate path to `nodes.json`), `aki_root_password_file` (alternate credential store).
+- Long-running `make` calls run asynchronously across hosts by default; tune with `aki_make_async` (true/false), `aki_make_async_timeout` (seconds), and `aki_make_async_poll` (seconds between status checks).
+- Useful extra vars: `aki_target_group` (inventory group name), `aki_project_root_default` (default repo path), `aki_git_pull_cmd` (custom git command), `aki_nodes_state_file` (alternate path to `nodes.json`), `aki_root_password_file` (alternate credential store), plus the async knobs above.
 
 Data persistence: All state lives under `./data`. Keep regular backups of this directory (sans secrets if desired) to recover zones, users, infra definitions, and version clocks.
 

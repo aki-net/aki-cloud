@@ -205,13 +205,27 @@
 
 - name: Apply aki-cloud update
   hosts: aki_update_targets
+  strategy: free
   gather_facts: false
   vars:
     update_make_target: "{{ aki_make_target | default('up') }}"
     default_project_root: "{{ aki_project_root_default | default('/opt/aki-cloud') }}"
     project_root: "{{ hostvars[inventory_hostname].project_root | default(default_project_root) }}"
     git_pull_cmd: "{{ aki_git_pull_cmd | default('git pull --ff-only') }}"
+    make_async_enabled: "{{ aki_make_async | default(true) }}"
+    make_async_timeout: "{{ aki_make_async_timeout | default(1800) }}"
+    make_async_poll: "{{ aki_make_async_poll | default(10) }}"
   tasks:
+    - name: Validate async configuration
+      ansible.builtin.assert:
+        that:
+          - make_async_timeout | int > 0
+          - make_async_poll | int > 0
+        fail_msg: >-
+          When aki_make_async is enabled both aki_make_async_timeout and
+          aki_make_async_poll must be positive integers.
+      when: make_async_enabled
+
     - name: Verify repository exists on remote host
       ansible.builtin.stat:
         path: "{{ project_root }}/.git"
@@ -233,7 +247,26 @@
         'Already up to date' not in
         ((git_pull.stdout | default('')) ~ (git_pull.stderr | default('')))
 
-    - name: Run make {{ update_make_target }}
+    - name: Run make {{ update_make_target }} (async)
       ansible.builtin.command: "make {{ update_make_target }}"
       args:
         chdir: "{{ project_root }}"
+      async: "{{ make_async_timeout }}"
+      poll: 0
+      register: make_async_job
+      when: make_async_enabled
+
+    - name: Wait for make {{ update_make_target }} completion
+      ansible.builtin.async_status:
+        jid: "{{ make_async_job.ansible_job_id }}"
+      register: make_async_result
+      until: make_async_result.finished
+      retries: "{{ [ (make_async_timeout // make_async_poll) | int, 1 ] | max }}"
+      delay: "{{ make_async_poll }}"
+      when: make_async_enabled
+
+    - name: Run make {{ update_make_target }} (synchronous)
+      ansible.builtin.command: "make {{ update_make_target }}"
+      args:
+        chdir: "{{ project_root }}"
+      when: not make_async_enabled
