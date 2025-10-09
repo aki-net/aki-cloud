@@ -236,7 +236,8 @@ func TestRateLimitBackoffPersistsAcrossToggle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDomain: %v", err)
 	}
-	if err := svc.reconcileDomain(context.Background(), *current); err != nil {
+	issued := 0
+	if err := svc.reconcileDomain(context.Background(), *current, &issued); err != nil {
 		t.Fatalf("reconcileDomain: %v", err)
 	}
 
@@ -296,7 +297,8 @@ func TestRateLimitBackoffCarriesThroughRecreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDomain new: %v", err)
 	}
-	if err := svc.reconcileDomain(context.Background(), *current); err != nil {
+	issued := 0
+	if err := svc.reconcileDomain(context.Background(), *current, &issued); err != nil {
 		t.Fatalf("reconcileDomain: %v", err)
 	}
 

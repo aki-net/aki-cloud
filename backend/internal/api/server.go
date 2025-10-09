@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -84,6 +85,75 @@ type createDomainPayload struct {
 	TLS      *domainTLSPayload `json:"tls,omitempty"`
 }
 
+const maxBulkDomains = 1000
+
+var (
+	errForbiddenDomainOwner = errors.New("cannot create domain for another user")
+)
+
+type bulkDomainPayload struct {
+	Domains  []string          `json:"domains"`
+	Owner    string            `json:"owner,omitempty"`
+	OriginIP string            `json:"origin_ip"`
+	Proxied  *bool             `json:"proxied,omitempty"`
+	TTL      *int              `json:"ttl,omitempty"`
+	TLS      *domainTLSPayload `json:"tls,omitempty"`
+}
+
+type bulkUpdateDomainPayload struct {
+	Domains  []string          `json:"domains"`
+	OriginIP *string           `json:"origin_ip,omitempty"`
+	Proxied  *bool             `json:"proxied,omitempty"`
+	TTL      *int              `json:"ttl,omitempty"`
+	TLS      *domainTLSPayload `json:"tls,omitempty"`
+}
+
+type bulkDomainResult struct {
+	Domain string               `json:"domain"`
+	Status string               `json:"status"`
+	Error  string               `json:"error,omitempty"`
+	Record *models.DomainRecord `json:"record,omitempty"`
+}
+
+type bulkDomainResponse struct {
+	Results []bulkDomainResult `json:"results"`
+	Success int                `json:"success"`
+	Failed  int                `json:"failed"`
+	Skipped int                `json:"skipped"`
+}
+
+func disableTLSForDNS(rec *models.DomainRecord) {
+	rec.TLS.UseRecommended = false
+	rec.TLS.Mode = models.EncryptionOff
+	rec.TLS.Status = models.CertificateStatusNone
+	rec.TLS.RecommendedMode = ""
+	rec.TLS.RecommendedAt = time.Time{}
+	rec.TLS.LastError = ""
+	rec.TLS.RetryAfter = time.Time{}
+	rec.TLS.LockID = ""
+	rec.TLS.LockNodeID = ""
+	rec.TLS.LockExpiresAt = time.Time{}
+	rec.TLS.Challenges = nil
+	rec.TLS.UpdatedAt = time.Now().UTC()
+}
+
+func ensureTLSProxyCompatibility(rec *models.DomainRecord) error {
+	rec.EnsureTLSDefaults()
+	if rec.Proxied {
+		if !rec.TLS.UseRecommended && rec.TLS.Mode == "" {
+			rec.TLS.Mode = models.EncryptionFlexible
+		}
+		return nil
+	}
+	if rec.TLS.UseRecommended {
+		return models.ErrValidation("TLS automation requires proxying to be enabled")
+	}
+	if rec.TLS.Mode != "" && rec.TLS.Mode != models.EncryptionOff {
+		return models.ErrValidation("TLS must be set to off when proxying is disabled")
+	}
+	return nil
+}
+
 type updateDomainPayload struct {
 	OriginIP string            `json:"origin_ip,omitempty"`
 	Proxied  *bool             `json:"proxied,omitempty"`
@@ -126,6 +196,8 @@ func (s *Server) Routes() http.Handler {
 		r.Route("/api/v1", func(r chi.Router) {
 			r.Get("/domains", s.authorizeUser(s.handleListDomains))
 			r.Post("/domains", s.authorizeUser(s.handleCreateDomain))
+			r.Post("/domains/bulk", s.authorizeUser(s.handleBulkCreateDomains))
+			r.Patch("/domains/bulk", s.authorizeUser(s.handleBulkUpdateDomains))
 			r.Put("/domains/{domain}", s.authorizeUser(s.handleUpdateDomain))
 			r.Delete("/domains/{domain}", s.authorizeUser(s.handleDeleteDomain))
 
@@ -421,6 +493,67 @@ func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, records)
 }
 
+func (s *Server) prepareDomainRecord(user userContext, domain string, owner string, origin string, proxied *bool, ttl *int, tlsPayload *domainTLSPayload) (models.DomainRecord, error) {
+	record := models.DomainRecord{
+		Domain:   strings.ToLower(strings.TrimSpace(domain)),
+		Owner:    strings.TrimSpace(owner),
+		OriginIP: strings.TrimSpace(origin),
+		TTL:      60,
+		Proxied:  true,
+	}
+	if record.Domain == "" {
+		return models.DomainRecord{}, models.ErrValidation("domain must be provided")
+	}
+	if record.OriginIP == "" {
+		return models.DomainRecord{}, models.ErrValidation("origin_ip must be provided")
+	}
+	if record.Owner == "" {
+		record.Owner = user.ID
+	}
+	if user.Role != models.RoleAdmin && record.Owner != user.ID {
+		return models.DomainRecord{}, errForbiddenDomainOwner
+	}
+	if proxied != nil {
+		record.Proxied = *proxied
+	}
+	if ttl != nil && *ttl > 0 {
+		record.TTL = *ttl
+	}
+	if record.Proxied {
+		record.TLS.Mode = models.EncryptionFlexible
+		record.TLS.UseRecommended = true
+	} else {
+		record.TLS.Mode = models.EncryptionOff
+		record.TLS.UseRecommended = false
+	}
+	record.TLS.Status = models.CertificateStatusNone
+	record.TLS.Status = models.CertificateStatusNone
+	if tlsPayload != nil {
+		if tlsPayload.Mode != "" {
+			record.TLS.Mode = models.EncryptionMode(strings.ToLower(tlsPayload.Mode))
+		}
+		if tlsPayload.UseRecommended != nil {
+			record.TLS.UseRecommended = *tlsPayload.UseRecommended
+		}
+	}
+	if err := ensureTLSProxyCompatibility(&record); err != nil {
+		return models.DomainRecord{}, err
+	}
+	if !record.Proxied {
+		disableTLSForDNS(&record)
+	}
+	now := time.Now().UTC()
+	record.TLS.UpdatedAt = now
+	if err := record.Validate(); err != nil {
+		return models.DomainRecord{}, err
+	}
+	record.UpdatedAt = now
+	record.Version.Counter++
+	record.Version.NodeID = s.Config.NodeID
+	record.Version.Updated = now.Unix()
+	return record, nil
+}
+
 func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 	user := userFromContext(r.Context())
 	var payload createDomainPayload
@@ -432,57 +565,218 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "domain and origin_ip required")
 		return
 	}
-	record := models.DomainRecord{
-		Domain:   strings.ToLower(payload.Domain),
-		Owner:    payload.Owner,
-		OriginIP: payload.OriginIP,
-		TTL:      60,
-		Proxied:  true,
-	}
-	if record.Owner == "" {
-		record.Owner = user.ID
-	}
-	if user.Role != models.RoleAdmin && record.Owner != user.ID {
-		writeError(w, http.StatusForbidden, "cannot create domain for another user")
-		return
-	}
-	if payload.Proxied != nil {
-		record.Proxied = *payload.Proxied
-	}
-	if payload.TTL != nil {
-		record.TTL = *payload.TTL
-	}
-
-	record.TLS.Mode = models.EncryptionFlexible
-	record.TLS.UseRecommended = true
-	record.TLS.Status = models.CertificateStatusNone
-	if payload.TLS != nil {
-		if payload.TLS.Mode != "" {
-			record.TLS.Mode = models.EncryptionMode(strings.ToLower(payload.TLS.Mode))
+	record, err := s.prepareDomainRecord(user, payload.Domain, payload.Owner, payload.OriginIP, payload.Proxied, payload.TTL, payload.TLS)
+	if err != nil {
+		if errors.Is(err, errForbiddenDomainOwner) {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
 		}
-		if payload.TLS.UseRecommended != nil {
-			record.TLS.UseRecommended = *payload.TLS.UseRecommended
+		if ve, ok := err.(models.ErrValidation); ok {
+			writeError(w, http.StatusBadRequest, ve.Error())
+			return
 		}
-	}
-	if !record.TLS.UseRecommended && record.TLS.Mode == "" {
-		record.TLS.Mode = models.EncryptionFlexible
-	}
-	now := time.Now().UTC()
-	record.TLS.UpdatedAt = now
-	if err := record.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	record.UpdatedAt = now
-	record.Version.Counter++
-	record.Version.NodeID = s.Config.NodeID
-	record.Version.Updated = now.Unix()
 	if err := s.Store.UpsertDomain(record); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	go s.Orchestrator.Trigger(r.Context())
 	writeJSON(w, http.StatusCreated, record.Sanitize())
+}
+
+func (s *Server) handleBulkCreateDomains(w http.ResponseWriter, r *http.Request) {
+	user := userFromContext(r.Context())
+	var payload bulkDomainPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	if payload.OriginIP == "" {
+		writeError(w, http.StatusBadRequest, "origin_ip required")
+		return
+	}
+	if len(payload.Domains) == 0 {
+		writeError(w, http.StatusBadRequest, "domains required")
+		return
+	}
+	results := make([]bulkDomainResult, 0, len(payload.Domains))
+	seen := make(map[string]struct{})
+	normalized := make([]string, 0, len(payload.Domains))
+	skipped := 0
+	failed := 0
+	for _, raw := range payload.Domains {
+		domain := strings.ToLower(strings.TrimSpace(raw))
+		if domain == "" {
+			failed++
+			results = append(results, bulkDomainResult{Domain: raw, Status: "failed", Error: "domain required"})
+			continue
+		}
+		if _, ok := seen[domain]; ok {
+			skipped++
+			results = append(results, bulkDomainResult{Domain: domain, Status: "skipped", Error: "duplicate"})
+			continue
+		}
+		seen[domain] = struct{}{}
+		normalized = append(normalized, domain)
+	}
+	if len(normalized) > maxBulkDomains {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("too many domains (max %d)", maxBulkDomains))
+		return
+	}
+	success := 0
+	for _, domain := range normalized {
+		record, err := s.prepareDomainRecord(user, domain, payload.Owner, payload.OriginIP, payload.Proxied, payload.TTL, payload.TLS)
+		if err != nil {
+			failed++
+			errMsg := err.Error()
+			if errors.Is(err, errForbiddenDomainOwner) {
+				errMsg = errForbiddenDomainOwner.Error()
+			}
+			if ve, ok := err.(models.ErrValidation); ok {
+				errMsg = ve.Error()
+			}
+			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: errMsg})
+			continue
+		}
+		if err := s.Store.UpsertDomain(record); err != nil {
+			failed++
+			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: err.Error()})
+			continue
+		}
+		success++
+		sanitized := record.Sanitize()
+		recCopy := sanitized
+		results = append(results, bulkDomainResult{Domain: domain, Status: "created", Record: &recCopy})
+	}
+	if success > 0 {
+		go s.Orchestrator.Trigger(r.Context())
+	}
+	resp := bulkDomainResponse{Results: results, Success: success, Failed: failed, Skipped: skipped}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request) {
+	user := userFromContext(r.Context())
+	var payload bulkUpdateDomainPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	if len(payload.Domains) == 0 {
+		writeError(w, http.StatusBadRequest, "domains required")
+		return
+	}
+	results := make([]bulkDomainResult, 0, len(payload.Domains))
+	seen := make(map[string]struct{})
+	normalized := make([]string, 0, len(payload.Domains))
+	skipped := 0
+	failed := 0
+	for _, raw := range payload.Domains {
+		domain := strings.ToLower(strings.TrimSpace(raw))
+		if domain == "" {
+			failed++
+			results = append(results, bulkDomainResult{Domain: raw, Status: "failed", Error: "domain required"})
+			continue
+		}
+		if _, ok := seen[domain]; ok {
+			skipped++
+			results = append(results, bulkDomainResult{Domain: domain, Status: "skipped", Error: "duplicate"})
+			continue
+		}
+		seen[domain] = struct{}{}
+		normalized = append(normalized, domain)
+	}
+	if len(normalized) > maxBulkDomains {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("too many domains (max %d)", maxBulkDomains))
+		return
+	}
+	success := 0
+	for _, domain := range normalized {
+		existing, err := s.Store.GetDomain(domain)
+		if err != nil {
+			failed++
+			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: "domain not found"})
+			continue
+		}
+		if user.Role != models.RoleAdmin && existing.Owner != user.ID {
+			failed++
+			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: "forbidden"})
+			continue
+		}
+		if payload.OriginIP != nil && *payload.OriginIP != "" {
+			existing.OriginIP = *payload.OriginIP
+		}
+		if payload.Proxied != nil {
+			prevProxy := existing.Proxied
+			existing.Proxied = *payload.Proxied
+			if !existing.Proxied {
+				disableTLSForDNS(existing)
+			} else if !prevProxy && payload.TLS == nil {
+				existing.TLS.UseRecommended = true
+				existing.TLS.Mode = models.EncryptionFlexible
+				existing.TLS.Status = models.CertificateStatusNone
+				existing.TLS.LastError = ""
+				existing.TLS.UpdatedAt = time.Now().UTC()
+			}
+		}
+		if payload.TTL != nil && *payload.TTL > 0 {
+			existing.TTL = *payload.TTL
+		}
+		if payload.TLS != nil {
+			if payload.TLS.Mode != "" {
+				existing.TLS.Mode = models.EncryptionMode(strings.ToLower(payload.TLS.Mode))
+			}
+			if payload.TLS.UseRecommended != nil {
+				existing.TLS.UseRecommended = *payload.TLS.UseRecommended
+				existing.TLS.Challenges = nil
+				existing.TLS.LockID = ""
+				existing.TLS.LockNodeID = ""
+				existing.TLS.LockExpiresAt = time.Time{}
+				existing.TLS.RecommendedMode = ""
+				existing.TLS.RecommendedAt = time.Time{}
+				if existing.TLS.Certificate != nil && existing.TLS.Certificate.CertChainPEM != "" {
+					existing.TLS.Status = models.CertificateStatusActive
+				} else if !existing.TLS.UseRecommended {
+					existing.TLS.Status = models.CertificateStatusNone
+				}
+			}
+			existing.TLS.UpdatedAt = time.Now().UTC()
+		}
+		if err := ensureTLSProxyCompatibility(existing); err != nil {
+			failed++
+			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: err.Error()})
+			continue
+		}
+		if !existing.Proxied {
+			disableTLSForDNS(existing)
+		}
+		if err := existing.Validate(); err != nil {
+			failed++
+			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: err.Error()})
+			continue
+		}
+		now := time.Now().UTC()
+		existing.UpdatedAt = now
+		existing.Version.Counter++
+		existing.Version.NodeID = s.Config.NodeID
+		existing.Version.Updated = now.Unix()
+		if err := s.Store.UpsertDomain(*existing); err != nil {
+			failed++
+			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: err.Error()})
+			continue
+		}
+		success++
+		sanitized := existing.Sanitize()
+		recCopy := sanitized
+		results = append(results, bulkDomainResult{Domain: domain, Status: "updated", Record: &recCopy})
+	}
+	if success > 0 {
+		go s.Orchestrator.Trigger(r.Context())
+	}
+	resp := bulkDomainResponse{Results: results, Success: success, Failed: failed, Skipped: skipped}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
@@ -506,7 +800,17 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		existing.OriginIP = payload.OriginIP
 	}
 	if payload.Proxied != nil {
+		prevProxy := existing.Proxied
 		existing.Proxied = *payload.Proxied
+		if !existing.Proxied {
+			disableTLSForDNS(existing)
+		} else if !prevProxy && payload.TLS == nil {
+			existing.TLS.UseRecommended = true
+			existing.TLS.Mode = models.EncryptionFlexible
+			existing.TLS.Status = models.CertificateStatusNone
+			existing.TLS.LastError = ""
+			existing.TLS.UpdatedAt = time.Now().UTC()
+		}
 	}
 	if payload.TTL != nil && *payload.TTL > 0 {
 		existing.TTL = *payload.TTL
@@ -530,9 +834,13 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		existing.TLS.UpdatedAt = time.Now().UTC()
-		if !existing.TLS.UseRecommended && existing.TLS.Mode == "" {
-			existing.TLS.Mode = models.EncryptionFlexible
-		}
+	}
+	if err := ensureTLSProxyCompatibility(existing); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !existing.Proxied {
+		disableTLSForDNS(existing)
 	}
 	if err := existing.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

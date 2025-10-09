@@ -25,6 +25,9 @@ import (
 const (
 	recomputeRecommendationAfter = 12 * time.Hour
 	reconcileInterval            = 1 * time.Minute
+	awaitingDelegationMessage    = "awaiting DNS delegation"
+	rateWindowMessage            = "issuance throttled by rate window"
+	lookupTimeout                = 5 * time.Second
 )
 
 var (
@@ -39,6 +42,7 @@ type Service struct {
 	orch       *orchestrator.Service
 	account    *accountStore
 	backoffs   *backoffStore
+	ledger     *issuanceLedger
 	httpClient *http.Client
 }
 
@@ -50,6 +54,7 @@ func New(cfg *config.Config, st *store.Store, orch *orchestrator.Service) *Servi
 		orch:       orch,
 		account:    newAccountStore(cfg.DataDir),
 		backoffs:   newBackoffStore(cfg.DataDir),
+		ledger:     newIssuanceLedger(cfg.DataDir),
 		httpClient: &http.Client{Timeout: 5 * time.Second},
 	}
 }
@@ -80,17 +85,22 @@ func (s *Service) reconcile(ctx context.Context) {
 		log.Printf("tls: list domains failed: %v", err)
 		return
 	}
+	issued := 0
+	maxPerCycle := s.cfg.ACMEMaxPerCycle
 	for _, rec := range domains {
 		if ctx.Err() != nil {
 			return
 		}
-		if err := s.reconcileDomain(ctx, rec); err != nil {
+		if maxPerCycle > 0 && issued >= maxPerCycle {
+			return
+		}
+		if err := s.reconcileDomain(ctx, rec, &issued); err != nil {
 			log.Printf("tls: domain %s reconciliation error: %v", rec.Domain, err)
 		}
 	}
 }
 
-func (s *Service) reconcileDomain(ctx context.Context, rec models.DomainRecord) error {
+func (s *Service) reconcileDomain(ctx context.Context, rec models.DomainRecord, issued *int) error {
 	rec.EnsureTLSDefaults()
 	if !rec.Proxied {
 		return nil
@@ -113,6 +123,12 @@ func (s *Service) reconcileDomain(ctx context.Context, rec models.DomainRecord) 
 		return nil
 	}
 
+	if !s.domainReadyForIssuance(ctx, rec) {
+		s.markAwaitingDelegation(rec.Domain)
+		return nil
+	}
+	s.clearAwaitingDelegation(rec.Domain)
+
 	if !s.needsCertificate(rec, mode) {
 		return nil
 	}
@@ -130,6 +146,21 @@ func (s *Service) reconcileDomain(ctx context.Context, rec models.DomainRecord) 
 	}
 	if lockID == "" || lockedRec == nil {
 		return nil
+	}
+
+	now := time.Now().UTC()
+	allowed, next, err := s.ledger.reserve(s.cfg.ACMEWindowLimit, s.cfg.ACMEWindow, now)
+	if err != nil {
+		s.releaseLock(rec.Domain, lockID)
+		return err
+	}
+	if !allowed {
+		s.releaseLock(rec.Domain, lockID)
+		s.deferForRateWindow(rec.Domain, next)
+		return nil
+	}
+	if issued != nil {
+		*issued++
 	}
 
 	keepAuto := lockedRec.TLS.UseRecommended
@@ -260,6 +291,141 @@ func (s *Service) needsCertificate(rec models.DomainRecord, mode models.Encrypti
 		renewBefore = 30 * 24 * time.Hour
 	}
 	return rec.TLS.Certificate.NotAfter.Sub(now) <= renewBefore
+}
+
+func (s *Service) domainReadyForIssuance(ctx context.Context, rec models.DomainRecord) bool {
+	nodes, err := s.store.GetNodes()
+	if err != nil {
+		log.Printf("tls: unable to list nodes for readiness: %v", err)
+		return true
+	}
+	edges := make(map[string]struct{})
+	for _, node := range nodes {
+		node.ComputeEdgeIPs()
+		for _, ip := range node.EdgeIPs {
+			if ip == "" {
+				continue
+			}
+			edges[ip] = struct{}{}
+		}
+	}
+	if len(edges) == 0 {
+		return true
+	}
+	parent := ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	lookupCtx, cancel := context.WithTimeout(parent, lookupTimeout)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(lookupCtx, rec.Domain)
+	if err != nil {
+		return false
+	}
+	for _, addr := range addrs {
+		ip := addr.IP
+		if ip == nil {
+			continue
+		}
+		if v4 := ip.To4(); v4 != nil {
+			if _, ok := edges[v4.String()]; ok {
+				return true
+			}
+			continue
+		}
+		if _, ok := edges[ip.String()]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) markAwaitingDelegation(domain string) {
+	existing, err := s.store.GetDomain(domain)
+	if err == nil && existing != nil {
+		existing.EnsureTLSDefaults()
+		if existing.TLS.Status == models.CertificateStatusAwaitingDNS && existing.TLS.LastError == awaitingDelegationMessage {
+			return
+		}
+	} else if err != nil {
+		return
+	}
+	now := time.Now().UTC()
+	_, err = s.store.MutateDomain(domain, func(rec *models.DomainRecord) error {
+		rec.EnsureTLSDefaults()
+		if rec.TLS.Status == models.CertificateStatusAwaitingDNS && rec.TLS.LastError == awaitingDelegationMessage {
+			return nil
+		}
+		rec.TLS.Status = models.CertificateStatusAwaitingDNS
+		rec.TLS.LastError = awaitingDelegationMessage
+		rec.TLS.UpdatedAt = now
+		rec.UpdatedAt = now
+		rec.Version.Counter++
+		rec.Version.NodeID = s.cfg.NodeID
+		rec.Version.Updated = now.Unix()
+		return nil
+	})
+	if err != nil {
+		log.Printf("tls: mark awaiting delegation for %s failed: %v", domain, err)
+	}
+}
+
+func (s *Service) clearAwaitingDelegation(domain string) {
+	existing, err := s.store.GetDomain(domain)
+	if err != nil || existing == nil {
+		return
+	}
+	existing.EnsureTLSDefaults()
+	if existing.TLS.Status != models.CertificateStatusAwaitingDNS {
+		return
+	}
+	now := time.Now().UTC()
+	_, err = s.store.MutateDomain(domain, func(rec *models.DomainRecord) error {
+		rec.EnsureTLSDefaults()
+		if rec.TLS.Status != models.CertificateStatusAwaitingDNS {
+			return nil
+		}
+		rec.TLS.Status = models.CertificateStatusNone
+		if rec.TLS.LastError == awaitingDelegationMessage {
+			rec.TLS.LastError = ""
+		}
+		rec.TLS.UpdatedAt = now
+		rec.UpdatedAt = now
+		rec.Version.Counter++
+		rec.Version.NodeID = s.cfg.NodeID
+		rec.Version.Updated = now.Unix()
+		return nil
+	})
+	if err != nil {
+		log.Printf("tls: clear awaiting delegation for %s failed: %v", domain, err)
+	}
+}
+
+func (s *Service) deferForRateWindow(domain string, next time.Time) {
+	if next.IsZero() {
+		return
+	}
+	now := time.Now().UTC()
+	_, err := s.store.MutateDomain(domain, func(rec *models.DomainRecord) error {
+		rec.EnsureTLSDefaults()
+		if rec.TLS.RetryAfter.After(next) {
+			return nil
+		}
+		rec.TLS.RetryAfter = next
+		if rec.TLS.Status == models.CertificateStatusNone {
+			rec.TLS.Status = models.CertificateStatusPending
+		}
+		rec.TLS.LastError = fmt.Sprintf("%s: retry at %s", rateWindowMessage, next.Format(time.RFC3339))
+		rec.TLS.UpdatedAt = now
+		rec.UpdatedAt = now
+		rec.Version.Counter++
+		rec.Version.NodeID = s.cfg.NodeID
+		rec.Version.Updated = now.Unix()
+		return nil
+	})
+	if err != nil {
+		log.Printf("tls: schedule issuance retry for %s failed: %v", domain, err)
+	}
 }
 
 func (s *Service) acquireLock(domain string) (string, *models.DomainRecord, error) {

@@ -92,6 +92,8 @@ export const AdminDashboard = () => {
         return 'info';
       case 'errored':
         return 'danger';
+      case 'awaiting_dns':
+        return 'warning';
       default:
         return 'secondary';
     }
@@ -508,6 +510,10 @@ export const AdminDashboard = () => {
                       <td>{tlsModeText(domain.tls_mode, domain.tls_use_recommended, domain.tls_recommended_mode)}</td>
                       <td>
                         <span className={`badge ${tlsStatusClass(domain.tls_status)}`}>{domain.tls_status ?? 'none'}</span>
+                        {domain.tls_status === 'awaiting_dns' && (
+                          <div className="text-muted">Awaiting DNS delegation</div>
+                        )}
+                        {!domain.proxied && <div className="text-muted">TLS automation paused (DNS only)</div>}
                         {domain.tls_expires_at && (
                           <div className="text-muted">exp. {formatDate(domain.tls_expires_at)}</div>
                         )}

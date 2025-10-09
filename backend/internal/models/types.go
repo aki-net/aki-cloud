@@ -122,6 +122,8 @@ const (
 	CertificateStatusActive CertificateStatus = "active"
 	// CertificateStatusErrored indicates issuance failed and needs attention/backoff.
 	CertificateStatusErrored CertificateStatus = "errored"
+	// CertificateStatusAwaitingDNS indicates the domain has not yet delegated to the edge.
+	CertificateStatusAwaitingDNS CertificateStatus = "awaiting_dns"
 )
 
 // DomainTLS holds per-domain TLS configuration and runtime status.
@@ -151,7 +153,7 @@ func (t *DomainTLS) Validate() error {
 		return ErrValidation("invalid tls mode")
 	}
 	switch t.Status {
-	case "", CertificateStatusNone, CertificateStatusPending, CertificateStatusActive, CertificateStatusErrored:
+	case "", CertificateStatusNone, CertificateStatusPending, CertificateStatusActive, CertificateStatusErrored, CertificateStatusAwaitingDNS:
 	default:
 		return ErrValidation("invalid tls status")
 	}

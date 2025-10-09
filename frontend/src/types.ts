@@ -20,7 +20,7 @@ export interface LoginPayload {
 }
 
 export type EncryptionMode = 'off' | 'flexible' | 'full' | 'full_strict' | 'strict_origin_pull';
-export type CertificateStatus = 'none' | 'pending' | 'active' | 'errored';
+export type CertificateStatus = 'none' | 'pending' | 'active' | 'errored' | 'awaiting_dns';
 
 export interface DomainTLSCertificate {
   cert_chain_pem?: string;
@@ -82,6 +82,39 @@ export interface UpsertDomainPayload {
   ttl?: number;
   owner?: string;
   tls?: DomainTLSPayload;
+}
+
+export interface BulkDomainPayload {
+  domains: string[];
+  origin_ip: string;
+  owner?: string;
+  proxied?: boolean;
+  ttl?: number;
+  tls?: DomainTLSPayload;
+}
+
+export interface BulkUpdateDomainPayload {
+  domains: string[];
+  origin_ip?: string;
+  proxied?: boolean;
+  ttl?: number;
+  tls?: DomainTLSPayload;
+}
+
+export type BulkDomainStatus = 'created' | 'updated' | 'skipped' | 'failed';
+
+export interface BulkDomainResult {
+  domain: string;
+  status: BulkDomainStatus;
+  error?: string;
+  record?: DomainRecord;
+}
+
+export interface BulkDomainResponse {
+  results: BulkDomainResult[];
+  success: number;
+  failed: number;
+  skipped: number;
 }
 
 export interface UserRecord {

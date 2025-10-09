@@ -403,11 +403,11 @@ func (g *OpenRestyGenerator) Render() error {
 		if mode == "" {
 			mode = models.EncryptionFlexible
 		}
-		hasCert := domain.TLS.Certificate != nil && domain.TLS.Certificate.CertChainPEM != ""
+		hasCertMaterial := domain.TLS.Certificate != nil && domain.TLS.Certificate.CertChainPEM != ""
 		baseName := sanitizeFileName(domain.Domain)
 		certPath := filepath.Join(certsDir, fmt.Sprintf("%s.crt", baseName))
 		keyPath := filepath.Join(certsDir, fmt.Sprintf("%s.key", baseName))
-		if hasCert {
+		if hasCertMaterial {
 			if err := os.WriteFile(certPath, []byte(domain.TLS.Certificate.CertChainPEM), 0o644); err != nil {
 				return err
 			}
@@ -449,9 +449,10 @@ func (g *OpenRestyGenerator) Render() error {
 			verifyOrigin = true
 		}
 		strictOrigin := mode == models.EncryptionStrictOriginPull && originPullCert != "" && originPullKey != ""
-		redirectHTTP := hasCert && mode != models.EncryptionFlexible
+		serveTLS := hasCertMaterial && mode != models.EncryptionOff
+		redirectHTTP := serveTLS && mode != models.EncryptionFlexible
 		needsTLS := mode != models.EncryptionOff
-		pendingTLS := needsTLS && !hasCert
+		pendingTLS := needsTLS && !hasCertMaterial
 
 		placeholderCert := ""
 		placeholderKey := ""
@@ -483,7 +484,7 @@ func (g *OpenRestyGenerator) Render() error {
 				"OriginIP":         domain.OriginIP,
 				"ProxyPass":        proxyPass,
 				"Mode":             mode,
-				"HasCertificate":   hasCert,
+				"HasCertificate":   serveTLS,
 				"CertPath":         certPath,
 				"KeyPath":          keyPath,
 				"ChallengeDir":     challengeDir,

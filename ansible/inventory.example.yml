@@ -1,0 +1,10 @@
+# Copy this file to inventory.yml and adjust hosts per environment.
+all:
+  children:
+    aki_nodes:
+      hosts:
+        edge-1.example.com:
+          # ansible_host: 203.0.113.10  # Uncomment to override SSH endpoint
+          project_root: /opt/aki-cloud
+        edge-2.example.com:
+          project_root: /opt/aki-cloud

@@ -90,13 +90,25 @@ Install script behaviour is idempotent; re-running it safely reuses existing sec
 
 ## Operations
 
-- `make up` – start / refresh containers in detached mode.
+- `make up` – rebuild images when needed (with cache) and start / refresh containers in detached mode.
 - `make down` – stop the stack.
 - `make logs` – follow aggregated service logs.
 - `make up-force` – rebuild images without cache and restart.
+- `make update` – run the Ansible rollout with cached rebuilds (`ansible/playbooks/update.yml`).
+- `make update-force` – same as above but with `make up-force` on the nodes.
 - `make test` – backend unit tests + frontend vitest suite.
 - `scripts/healthcheck.sh` – quick backend health probe.
 - `docker compose logs -f <service>` – individual service logs (CoreDNS/OpenResty/backend/frontend).
+
+### Remote updates via Ansible
+
+- The playbooks read `data/infra/nodes.json` by default, picking the first available connection IP (`ssh_host`, `ips`, `edge_ips`, `ns_ips`) and `project_root` (defaults to `/opt/aki-cloud`). You can override this with your own inventory if needed.
+- For a handwritten inventory, copy `ansible/inventory.example.yml`, list hosts under the `aki_nodes` group, and pass `-i ansible/inventory.yml`.
+- Run `make update` (or `ANSIBLE_FLAGS="-i ansible/inventory.yml" make update`) for the cached rollout; use `make update-force` for the no-cache variant.
+- CLI equivalent: `ansible-playbook ansible/playbooks/update.yml` or `ansible/playbooks/update-force.yml`.
+- Each run prompts for any missing root password, executes `git pull --ff-only`, and then `make up` / `make up-force` inside `project_root`.
+- Store credentials once in `ansible/credentials/root-passwords.yml` (YAML map of host name → password) or let the playbook write it after the first run when prompted.
+- Useful extra vars: `aki_target_group` (inventory group name), `aki_project_root_default` (default repo path), `aki_git_pull_cmd` (custom git command), `aki_nodes_state_file` (alternate path to `nodes.json`), `aki_root_password_file` (alternate credential store).
 
 Data persistence: All state lives under `./data`. Keep regular backups of this directory (sans secrets if desired) to recover zones, users, infra definitions, and version clocks.
 
@@ -113,6 +125,9 @@ Data persistence: All state lives under `./data`. Keep regular backups of this d
 - HTTP-01 ACME challenges are published across nodes and answered from `/data/openresty/challenges`.
 - Certificates are renewed automatically ~30 days before expiry with configurable retry back-off.
 - Strict origin pull mode provisions mutual TLS material so origins can require client authentication from the edge.
+- Issuance is deferred until delegated DNS records resolve to the edge IPs; domains show an `awaiting_dns` status in this interim.
+- Issuance attempts are throttled via `SSL_ACME_MAX_PER_CYCLE`, `SSL_ACME_WINDOW_LIMIT`, and `SSL_ACME_WINDOW_SECONDS` to avoid exhausting ACME rate limits during large imports.
+- TLS automation only runs for proxied domains; DNS-only zones are forced to `off` mode automatically.
 
 ## Backend API highlights
 
@@ -143,6 +158,7 @@ Manual validation checklist (local or staging):
 6. `curl -H 'Host: example.test' -H 'User-Agent: aki-probe/1.0' http://<edge-ip>` – expect origin response.
 7. Restart stack (`make down && make up`) – state must persist.
 8. Provision a second node with `install.sh --mode join ...` – records converge within sync interval.
+9. For large batches, use the UI bulk add/update forms; domains will report `awaiting_dns` until public resolvers return the edge IPs.
 
 ## Production cutover checklist
 

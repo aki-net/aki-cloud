@@ -20,6 +20,9 @@ Environment variables (typically injected via `.env`):
 | `JWT_SECRET_FILE` | Path to JWT secret | `/data/cluster/jwt_secret` |
 | `SYNC_INTERVAL_SECONDS` | Peer sync cadence | `15` |
 | `RELOAD_DEBOUNCE_MS` | Config regen debounce | `1500` |
+| `SSL_ACME_MAX_PER_CYCLE` | Max certificate issuance attempts per reconcile sweep | `25` |
+| `SSL_ACME_WINDOW_LIMIT` | Max certificate issuance attempts inside the rate-limiting window | `200` |
+| `SSL_ACME_WINDOW_SECONDS` | Length of the rolling issuance window in seconds | `3600` |
 
 ### Local build & run
 
@@ -59,6 +62,8 @@ Targets:
 
 - `POST /auth/login`
 - `/api/v1/domains` – CRUD (admin sees all, user limited to own domains).
+- `/api/v1/domains/bulk` – bulk create (POST) and bulk update (PATCH) for domains owned by the caller.
+- TLS automation requires `proxied=true`; requests that disable proxying automatically force TLS mode to `off`.
 - `/api/v1/admin/users` – admin-only user management.
 - `/api/v1/admin/nodes` – admin-only node metadata.
 - `/api/v1/infra/nameservers` & `/infra/edges` – computed views.

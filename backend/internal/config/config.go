@@ -29,6 +29,9 @@ type Config struct {
 	ACMELockTTL            time.Duration
 	ACMERenewBefore        time.Duration
 	TLSRecommender         bool
+	ACMEMaxPerCycle        int
+	ACMEWindowLimit        int
+	ACMEWindow             time.Duration
 }
 
 // Load reads configuration values from environment variables with sensible defaults.
@@ -108,6 +111,18 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid SSL_RECOMMENDER_ENABLED: %w", err)
 	}
+	acmeMaxPerCycle, err := getEnvInt("SSL_ACME_MAX_PER_CYCLE", 25)
+	if err != nil {
+		return nil, fmt.Errorf("invalid SSL_ACME_MAX_PER_CYCLE: %w", err)
+	}
+	acmeWindowLimit, err := getEnvInt("SSL_ACME_WINDOW_LIMIT", 200)
+	if err != nil {
+		return nil, fmt.Errorf("invalid SSL_ACME_WINDOW_LIMIT: %w", err)
+	}
+	acmeWindowSeconds, err := getEnvInt("SSL_ACME_WINDOW_SECONDS", 3600)
+	if err != nil {
+		return nil, fmt.Errorf("invalid SSL_ACME_WINDOW_SECONDS: %w", err)
+	}
 
 	return &Config{
 		DataDir:                dataDir,
@@ -129,6 +144,9 @@ func Load() (*Config, error) {
 		ACMELockTTL:            time.Duration(acmeLockSeconds) * time.Second,
 		ACMERenewBefore:        time.Duration(acmeRenewDays) * 24 * time.Hour,
 		TLSRecommender:         tlsRecommender,
+		ACMEMaxPerCycle:        acmeMaxPerCycle,
+		ACMEWindowLimit:        acmeWindowLimit,
+		ACMEWindow:             time.Duration(acmeWindowSeconds) * time.Second,
 	}, nil
 }
 

@@ -1,5 +1,8 @@
 import axios from 'axios';
 import {
+  BulkDomainPayload,
+  BulkDomainResponse,
+  BulkUpdateDomainPayload,
   CreateDomainPayload,
   CreateUserPayload,
   DomainRecord,
@@ -73,6 +76,16 @@ export const createDomain = async (payload: CreateDomainPayload): Promise<Domain
 
 export const updateDomain = async (domain: string, payload: UpsertDomainPayload): Promise<DomainRecord> => {
   const res = await client.put<DomainRecord>(`/domains/${domain}`, payload);
+  return res.data;
+};
+
+export const bulkCreateDomains = async (payload: BulkDomainPayload): Promise<BulkDomainResponse> => {
+  const res = await client.post<BulkDomainResponse>('/domains/bulk', payload);
+  return res.data;
+};
+
+export const bulkUpdateDomains = async (payload: BulkUpdateDomainPayload): Promise<BulkDomainResponse> => {
+  const res = await client.patch<BulkDomainResponse>('/domains/bulk', payload);
   return res.data;
 };
 
