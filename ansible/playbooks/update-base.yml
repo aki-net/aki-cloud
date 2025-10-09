@@ -212,9 +212,10 @@
     default_project_root: "{{ aki_project_root_default | default('/opt/aki-cloud') }}"
     project_root: "{{ hostvars[inventory_hostname].project_root | default(default_project_root) }}"
     git_pull_cmd: "{{ aki_git_pull_cmd | default('git pull --ff-only') }}"
-    make_async_enabled: "{{ aki_make_async | default(true) }}"
-    make_async_timeout: "{{ aki_make_async_timeout | default(1800) }}"
-    make_async_poll: "{{ aki_make_async_poll | default(10) }}"
+    make_async_enabled: "{{ (aki_make_async | default(true)) | bool }}"
+    make_async_timeout: "{{ (aki_make_async_timeout | default(1800)) | int }}"
+    make_async_poll: "{{ (aki_make_async_poll | default(10)) | int }}"
+    make_async_retries: "{{ [ ((make_async_timeout | int) // (make_async_poll | int)), 1 ] | max | int }}"
   tasks:
     - name: Validate async configuration
       ansible.builtin.assert:
@@ -261,9 +262,12 @@
         jid: "{{ make_async_job.ansible_job_id }}"
       register: make_async_result
       until: make_async_result.finished
-      retries: "{{ [ (make_async_timeout // make_async_poll) | int, 1 ] | max }}"
+      retries: "{{ make_async_retries }}"
       delay: "{{ make_async_poll }}"
       when: make_async_enabled
+      failed_when: >
+        make_async_result.finished and
+        (make_async_result.rc is defined and make_async_result.rc != 0)
 
     - name: Run make {{ update_make_target }} (synchronous)
       ansible.builtin.command: "make {{ update_make_target }}"
