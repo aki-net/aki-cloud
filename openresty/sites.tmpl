@@ -13,10 +13,12 @@ server {
         default_type text/plain;
         proxy_pass {{ or .ChallengeProxy "http://127.0.0.1:8080" }}$request_uri;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $client_real_ip;
+        proxy_set_header X-Forwarded-For $edge_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header CF-Connecting-IP $client_real_ip;
+        proxy_set_header True-Client-IP $client_real_ip;
     }
 
     {{- if .RedirectHTTP }}
@@ -27,14 +29,16 @@ server {
     location / {
         proxy_pass {{ .ProxyPass }};
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $client_real_ip;
+        proxy_set_header X-Forwarded-For $edge_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header Connection "";
         proxy_http_version 1.1;
         proxy_intercept_errors off;
         proxy_buffering on;
+        proxy_set_header CF-Connecting-IP $client_real_ip;
+        proxy_set_header True-Client-IP $client_real_ip;
     }
     {{- end }}
 }
@@ -61,23 +65,27 @@ server {
         default_type text/plain;
         proxy_pass {{ or .ChallengeProxy "http://127.0.0.1:8080" }}$request_uri;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $client_real_ip;
+        proxy_set_header X-Forwarded-For $edge_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header CF-Connecting-IP $client_real_ip;
+        proxy_set_header True-Client-IP $client_real_ip;
     }
 
     location / {
         proxy_pass {{ .ProxyPass }};
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $client_real_ip;
+        proxy_set_header X-Forwarded-For $edge_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header Connection "";
         proxy_http_version 1.1;
         proxy_intercept_errors off;
         proxy_buffering on;
+        proxy_set_header CF-Connecting-IP $client_real_ip;
+        proxy_set_header True-Client-IP $client_real_ip;
         {{- if .OriginIsHTTPS }}
         proxy_ssl_server_name on;
         proxy_ssl_name {{ .OriginServerName }};

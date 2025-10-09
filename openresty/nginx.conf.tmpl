@@ -9,6 +9,16 @@ http {
     include       /usr/local/openresty/nginx/conf/mime.types;
     default_type  application/octet-stream;
 
+    map $http_x_forwarded_for $client_real_ip {
+        ""                         $remote_addr;
+        ~^\s*(?P<first>[^,\s]+).*  $first;
+    }
+
+    map $http_x_forwarded_for $edge_forwarded_for {
+        ""      $client_real_ip;
+        default $http_x_forwarded_for;
+    }
+
     sendfile        on;
     tcp_nopush      on;
     tcp_nodelay     on;
