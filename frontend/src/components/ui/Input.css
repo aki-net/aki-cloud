@@ -1,0 +1,115 @@
+.input-wrapper {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 6px;
+  width: auto;
+  min-width: 240px;
+}
+
+.input-full {
+  width: 100%;
+  min-width: 0;
+}
+
+.input-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  margin-left: 2px;
+}
+
+.input-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  transition: all 0.15s ease;
+}
+
+.input-container:focus-within {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px rgba(88, 101, 242, 0.15);
+}
+
+.input-container.input-error {
+  border-color: var(--color-danger);
+}
+
+.input-container.input-error:focus-within {
+  box-shadow: 0 0 0 3px rgba(237, 66, 69, 0.15);
+}
+
+.input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--color-text-primary);
+  outline: none;
+  width: 100%;
+}
+
+.input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.input-with-icon-left {
+  padding-left: 36px;
+}
+
+.input-with-icon-right {
+  padding-right: 36px;
+}
+
+.input-icon {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--color-text-tertiary);
+  pointer-events: none;
+}
+
+.input-icon-left {
+  left: 12px;
+}
+
+.input-icon-right {
+  right: 12px;
+}
+
+.input-message {
+  font-size: 12px;
+  margin-left: 2px;
+}
+
+.input-message-error {
+  color: var(--color-danger);
+}
+
+.input-message-hint {
+  color: var(--color-text-tertiary);
+}
+
+/* Number input arrows */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+input[type="number"]:hover::-webkit-inner-spin-button,
+input[type="number"]:hover::-webkit-outer-spin-button {
+  opacity: 1;
+}

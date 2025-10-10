@@ -1,0 +1,118 @@
+.table-container {
+  width: 100%;
+  overflow-x: auto;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.table-head {
+  background: var(--color-bg-tertiary);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.table-body {
+  background: var(--color-bg-secondary);
+}
+
+.table-cell {
+  padding: 12px 16px;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+.table-head .table-cell {
+  font-weight: 500;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--color-text-tertiary);
+}
+
+.table-body .table-cell {
+  color: var(--color-text-primary);
+}
+
+.table-align-center {
+  text-align: center;
+}
+
+.table-align-right {
+  text-align: right;
+}
+
+.table-header-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.table-sort-icon {
+  display: inline-flex;
+  cursor: pointer;
+}
+
+.table-row {
+  transition: background-color 0.1s ease;
+}
+
+.table-body .table-row:last-child .table-cell {
+  border-bottom: none;
+}
+
+.table-row:hover {
+  background: var(--color-bg-hover);
+}
+
+.table-row-clickable {
+  cursor: pointer;
+}
+
+.table-row-selected {
+  background: rgba(88, 101, 242, 0.1) !important;
+}
+
+.table-cell-checkbox {
+  width: 40px;
+  padding: 12px 8px 12px 16px;
+}
+
+.checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--color-accent);
+}
+
+.table-empty,
+.table-loading {
+  text-align: center;
+  padding: 48px 16px;
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+.table-loader {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--color-text-secondary);
+}
+
+.loader-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}

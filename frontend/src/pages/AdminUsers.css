@@ -1,0 +1,114 @@
+.admin-users {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 20px;
+}
+
+.stat-card {
+  background: linear-gradient(135deg, var(--color-bg-tertiary), var(--color-bg-secondary));
+  padding: 20px;
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  line-height: 1;
+  margin-bottom: 8px;
+}
+
+.stat-label {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.user-email-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-email {
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.user-id {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.action-btn-danger:hover {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.form-group label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+.role-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.role-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.role-option:hover {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-accent);
+}
+
+.role-option input[type="radio"] {
+  margin-top: 4px;
+  accent-color: var(--color-accent);
+}
+
+.role-option input[type="radio"]:checked + .role-label {
+  color: var(--color-accent);
+}
+
+.role-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.role-label strong {
+  font-weight: 600;
+  color: var(--color-text-primary);
+  font-size: 14px;
+}
+
+.role-label small {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}

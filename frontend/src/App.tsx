@@ -1,77 +1,53 @@
-import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { useEffect } from 'react';
-import { LoginForm } from './components/LoginForm';
-import { useAuth } from './providers/AuthProvider';
-import { UserDashboard } from './pages/UserDashboard';
-import { AdminDashboard } from './pages/AdminDashboard';
-import { setToken } from './services/api';
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { useAuth } from './contexts/AuthContext';
+import Layout from './components/Layout';
+import Login from './pages/Login';
+import UserDashboard from './pages/UserDashboard';
+import AdminDashboard from './pages/AdminDashboard';
+import AdminDomains from './pages/AdminDomains';
+import AdminUsers from './pages/AdminUsers';
+import AdminInfrastructure from './pages/AdminInfrastructure';
+import AdminExtensions from './pages/AdminExtensions';
 
-const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
-  const location = useLocation();
+  
   if (!isAuthenticated) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
+    return <Navigate to="/login" replace />;
   }
-  return children;
-};
+  
+  return <>{children}</>;
+}
 
-const Dashboard = () => {
+function App() {
   const { user } = useAuth();
-  if (!user) {
-    return null;
-  }
-  return user.role === 'admin' ? <AdminDashboard /> : <UserDashboard />;
-};
-
-const Header = () => {
-  const { user, logout, token } = useAuth();
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    setToken(token ?? null);
-  }, [token]);
 
   return (
-    <header className="app-header">
-      <div>
-        <strong>aki-cloud control plane</strong>
-        {user && <p style={{ margin: 0, fontSize: '0.85rem' }}>signed in as {user.email}</p>}
-      </div>
-      {user && (
-        <button
-          className="button secondary"
-          onClick={() => {
-            logout();
-            navigate('/login');
-          }}
-        >
-          Sign out
-        </button>
-      )}
-    </header>
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <Layout />
+          </ProtectedRoute>
+        }
+      >
+        {user?.role === 'admin' ? (
+          <>
+            <Route index element={<AdminDashboard />} />
+            <Route path="domains" element={<AdminDomains />} />
+            <Route path="users" element={<AdminUsers />} />
+            <Route path="infrastructure" element={<AdminInfrastructure />} />
+            <Route path="extensions/*" element={<AdminExtensions />} />
+          </>
+        ) : (
+          <Route index element={<UserDashboard />} />
+        )}
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
-};
-
-const App = () => {
-  return (
-    <div className="app-shell">
-      <Header />
-      <main className="app-main">
-        <Routes>
-          <Route path="/login" element={<LoginForm />} />
-          <Route
-            path="/*"
-            element={
-              <ProtectedRoute>
-                <Dashboard />
-              </ProtectedRoute>
-            }
-          />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </main>
-    </div>
-  );
-};
+}
 
 export default App;

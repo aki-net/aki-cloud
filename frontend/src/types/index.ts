@@ -1,20 +1,12 @@
 export type UserRole = 'admin' | 'user';
 
-export interface SessionUser {
+export interface User {
   id: string;
   email: string;
   role: UserRole;
 }
 
-export interface AuthContextValue {
-  token: string | null;
-  user: SessionUser | null;
-  isAuthenticated: boolean;
-  login: (payload: LoginPayload) => Promise<SessionUser>;
-  logout: () => void;
-}
-
-export interface LoginPayload {
+export interface LoginCredentials {
   email: string;
   password: string;
 }
@@ -52,7 +44,7 @@ export interface DomainTLS {
   origin_pull_secret?: OriginPullMaterial;
 }
 
-export interface DomainRecord {
+export interface Domain {
   domain: string;
   owner: string;
   origin_ip: string;
@@ -76,7 +68,7 @@ export interface CreateDomainPayload {
   tls?: DomainTLSPayload;
 }
 
-export interface UpsertDomainPayload {
+export interface UpdateDomainPayload {
   origin_ip: string;
   proxied: boolean;
   ttl?: number;
@@ -107,7 +99,7 @@ export interface BulkDomainResult {
   domain: string;
   status: BulkDomainStatus;
   error?: string;
-  record?: DomainRecord;
+  record?: Domain;
 }
 
 export interface BulkDomainResponse {
@@ -117,19 +109,13 @@ export interface BulkDomainResponse {
   skipped: number;
 }
 
-export interface UserRecord {
-  id: string;
-  email: string;
-  role: UserRole;
-}
-
 export interface CreateUserPayload {
   email: string;
   password: string;
   role: UserRole;
 }
 
-export interface NodeRecord {
+export interface Node {
   id: string;
   name: string;
   ips: string[];
@@ -171,4 +157,17 @@ export interface NameServerStatus {
   healthy: boolean;
   latency_ms: number;
   message?: string;
+}
+
+export interface AnalyticsData {
+  totalDomains: number;
+  activeDomains: number;
+  totalUsers: number;
+  activeNodes: number;
+  tlsEnabled: number;
+  proxiedDomains: number;
+  domainsOverTime: Array<{ date: string; count: number }>;
+  tlsStatusDistribution: Array<{ status: string; count: number; percentage: number }>;
+  nodeHealth: Array<{ node: string; status: 'healthy' | 'degraded' | 'down'; latency: number }>;
+  recentActivity: Array<{ timestamp: string; action: string; details: string }>;
 }
