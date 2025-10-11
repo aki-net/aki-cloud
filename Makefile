@@ -4,6 +4,7 @@ COMPOSE ?= docker compose
 
 up:
 	$(COMPOSE) up --build -d
+	@$(MAKE) firewall
 
 down:
 	$(COMPOSE) down
@@ -15,6 +16,9 @@ up-force:
 	$(MAKE) down
 	$(COMPOSE) build --no-cache
 	$(MAKE) up
+
+firewall:
+	@sudo DATA_DIR=$(PWD)/data AUTO_FIREWALL=$${AUTO_FIREWALL:-auto} ./scripts/configure_firewall.sh
 
 update:
 	ansible-playbook $(ANSIBLE_FLAGS) ansible/playbooks/update.yml
