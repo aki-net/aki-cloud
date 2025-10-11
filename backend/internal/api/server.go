@@ -1308,6 +1308,11 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if node.ID == s.Config.NodeID {
+		if err := s.Store.SaveLocalNodeSnapshot(node); err != nil {
+			log.Printf("sync local node snapshot: %v", err)
+		}
+	}
 	s.bootstrapEdgeHealth(node)
 	if err := s.syncPeersFromNodes(); err != nil {
 		log.Printf("sync peers after create node: %v", err)
@@ -1383,6 +1388,11 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	if err := s.Store.UpsertNode(*existing); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if existing.ID == s.Config.NodeID {
+		if err := s.Store.SaveLocalNodeSnapshot(*existing); err != nil {
+			log.Printf("sync local node snapshot: %v", err)
+		}
 	}
 	s.bootstrapEdgeHealth(*existing)
 	if err := s.syncPeersFromNodes(); err != nil {

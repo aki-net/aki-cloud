@@ -393,6 +393,24 @@ func (s *Store) SaveNodes(nodes []models.Node) error {
 	return writeJSONAtomic(s.nodesFile(), nodes)
 }
 
+// SaveLocalNodeSnapshot persists the simplified local node metadata for helper scripts.
+func (s *Store) SaveLocalNodeSnapshot(node models.Node) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snapshot := map[string]interface{}{
+		"name":          node.Name,
+		"node_id":       node.ID,
+		"ips":           node.IPs,
+		"ns_ips":        node.NSIPs,
+		"edge_ips":      node.EdgeIPs,
+		"ns_label":      node.NSLabel,
+		"ns_base_domain": node.NSBase,
+		"api_endpoint":  node.APIEndpoint,
+	}
+	path := filepath.Join(s.dataDir, "cluster", "node.json")
+	return writeJSONAtomic(path, snapshot)
+}
+
 // WalkData executes fn for every file under the data dir.
 func (s *Store) WalkData(fn func(path string, info fs.FileInfo) error) error {
 	s.mu.RLock()

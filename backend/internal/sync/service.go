@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"log"
 
 	"aki-cloud/backend/internal/models"
 	"aki-cloud/backend/internal/store"
@@ -194,6 +195,14 @@ func (s *Service) ApplySnapshot(snapshot Snapshot) error {
 		return err
 	}
 	activeNodes := filterActiveNodes(mergedNodes)
+	for _, node := range mergedNodes {
+		if node.ID == s.nodeID {
+			if err := s.store.SaveLocalNodeSnapshot(node); err != nil {
+				log.Printf("sync: save local node snapshot failed: %v", err)
+			}
+			break
+		}
+	}
 	s.bootstrapPendingEdgeHealth(activeNodes)
 	if err := s.updatePeers(activeNodes); err != nil {
 		return err
