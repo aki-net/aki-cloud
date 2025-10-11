@@ -406,9 +406,7 @@ func (s *Store) SaveLocalNodeSnapshot(node models.Node) error {
 		"ns_label":       node.NSLabel,
 		"ns_base_domain": node.NSBase,
 		"api_endpoint":   node.APIEndpoint,
-	}
-	if node.EdgeAuto != nil {
-		snapshot["edge_auto"] = node.EdgeAuto
+		"edge_manual":    node.EdgeManual,
 	}
 	path := filepath.Join(s.dataDir, "cluster", "node.json")
 	return writeJSONAtomic(path, snapshot)

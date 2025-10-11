@@ -269,6 +269,7 @@ type Node struct {
 	IPs          []string     `json:"ips"`
 	NSIPs        []string     `json:"ns_ips"`
 	EdgeIPs      []string     `json:"edge_ips,omitempty"`
+	EdgeManual   bool         `json:"edge_manual,omitempty"`
 	NSLabel      string       `json:"ns_label,omitempty"`
 	NSBase       string       `json:"ns_base_domain,omitempty"`
 	APIEndpoint  string       `json:"api_endpoint,omitempty"`
@@ -276,7 +277,6 @@ type Node struct {
 	Labels       []string     `json:"labels,omitempty"`
 	CreatedAt    time.Time    `json:"created_at"`
 	UpdatedAt    time.Time    `json:"updated_at"`
-	EdgeAuto     *bool        `json:"edge_auto,omitempty"`
 	DeletedAt    time.Time    `json:"deleted_at,omitempty"`
 	Version      ClockVersion `json:"version"`
 	ManagedNS    []string     `json:"managed_ns,omitempty"`
@@ -300,10 +300,7 @@ func (n *Node) ComputeEdgeIPs() {
 	n.EdgeIPs = normalizeIPs(n.EdgeIPs)
 	n.Labels = normalizeLabels(n.Labels)
 	n.Roles = nil
-	autoEdges := true
-	if n.EdgeAuto != nil {
-		autoEdges = *n.EdgeAuto
-	}
+	manual := n.EdgeManual
 
 	// Ensure NS and Edge IPs are part of the general IP list.
 	for _, ip := range append(append([]string{}, n.NSIPs...), n.EdgeIPs...) {
@@ -317,7 +314,7 @@ func (n *Node) ComputeEdgeIPs() {
 	n.IPs = normalizeIPs(n.IPs)
 
 	if len(n.EdgeIPs) == 0 {
-		if !autoEdges {
+		if manual {
 			n.EdgeIPs = []string{}
 		} else {
 			nsSet := make(map[string]struct{}, len(n.NSIPs))
