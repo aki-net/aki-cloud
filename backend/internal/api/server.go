@@ -152,11 +152,15 @@ func queueTLSAutomation(rec *models.DomainRecord, ts time.Time) {
 	if ts.IsZero() {
 		ts = time.Now().UTC()
 	}
+	if rec.TLS.RetryAfter.After(ts) {
+		// Respect existing retry/backoff window: leave status/error untouched.
+		return
+	}
 	rec.TLS.Status = models.CertificateStatusPending
-	rec.TLS.LastError = automationQueuedMessage
-	rec.TLS.RetryAfter = time.Time{}
 	rec.TLS.LastAttemptAt = time.Time{}
 	rec.TLS.UpdatedAt = ts
+	rec.TLS.RetryAfter = time.Time{}
+	rec.TLS.LastError = automationQueuedMessage
 }
 
 func ensureTLSProxyCompatibility(rec *models.DomainRecord) error {
