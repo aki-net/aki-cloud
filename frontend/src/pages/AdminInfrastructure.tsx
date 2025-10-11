@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { formatDistanceToNow } from 'date-fns';
 import { nodes as nodesApi, infra } from '../api/client';
 import { Node, NameServerEntry, NameServerStatus } from '../types';
+import Input from '../components/ui/Input';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
@@ -16,6 +18,17 @@ export default function AdminInfrastructure() {
   const [loading, setLoading] = useState(true);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [checkingHealth, setCheckingHealth] = useState(false);
+  const [nodeFormMode, setNodeFormMode] = useState<'idle' | 'create' | 'edit'>('idle');
+  const [nodeForm, setNodeForm] = useState({
+    name: '',
+    ips: '',
+    nsIps: '',
+    nsLabel: '',
+    nsBaseDomain: '',
+    apiEndpoint: '',
+  });
+  const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
+  const [savingNode, setSavingNode] = useState(false);
 
   useEffect(() => {
     loadInfrastructure();
@@ -23,14 +36,16 @@ export default function AdminInfrastructure() {
 
   const loadInfrastructure = async () => {
     try {
-      const [nodesData, nsData, edgeData] = await Promise.all([
+      const [nodesData, nsData, edgeData, statusData] = await Promise.all([
         nodesApi.list(),
         infra.nameservers(),
         infra.edges(),
+        infra.nameserverStatus().catch(() => [] as NameServerStatus[]),
       ]);
       setNodes(nodesData);
       setNameservers(nsData);
       setEdges(edgeData);
+      setNsStatus(statusData || []);
     } catch (error) {
       toast.error('Failed to load infrastructure data');
     } finally {
@@ -48,6 +63,115 @@ export default function AdminInfrastructure() {
       toast.error('Health check failed');
     } finally {
       setCheckingHealth(false);
+    }
+  };
+
+  const parseList = (value: string) =>
+    value
+      .split(/[,\n]/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+  const resetNodeForm = () => {
+    setNodeForm({
+      name: '',
+      ips: '',
+      nsIps: '',
+      nsLabel: '',
+      nsBaseDomain: '',
+      apiEndpoint: '',
+    });
+    setEditingNodeId(null);
+    setNodeFormMode('idle');
+  };
+
+  const openCreateNode = () => {
+    resetNodeForm();
+    setNodeFormMode('create');
+  };
+
+  const openEditNode = (node: Node) => {
+    setNodeFormMode('edit');
+    setEditingNodeId(node.id);
+    setNodeForm({
+      name: node.name,
+      ips: node.ips.join(', '),
+      nsIps: (node.ns_ips || []).join(', '),
+      nsLabel: node.ns_label || '',
+      nsBaseDomain: node.ns_base_domain || '',
+      apiEndpoint: node.api_endpoint || '',
+    });
+  };
+
+  const handleNodeFormChange = (field: keyof typeof nodeForm, value: string) => {
+    setNodeForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSaveNode = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const name = nodeForm.name.trim();
+    const ips = parseList(nodeForm.ips);
+    if (!name) {
+      toast.error('Node name is required');
+      return;
+    }
+    if (ips.length === 0) {
+      toast.error('Provide at least one IP address');
+      return;
+    }
+    setSavingNode(true);
+    try {
+      if (nodeFormMode === 'create') {
+        await nodesApi.create({
+          name,
+          ips,
+          ns_ips: parseList(nodeForm.nsIps),
+          ns_label: nodeForm.nsLabel.trim() || undefined,
+          ns_base_domain: nodeForm.nsBaseDomain.trim() || undefined,
+          api_endpoint: nodeForm.apiEndpoint.trim() || undefined,
+        });
+        toast.success('Node created');
+      } else if (nodeFormMode === 'edit' && editingNodeId) {
+        const baseNode = nodes.find((n) => n.id === editingNodeId);
+        if (!baseNode) {
+          toast.error('Node not found');
+          setSavingNode(false);
+          return;
+        }
+        await nodesApi.update(editingNodeId, {
+          ...baseNode,
+          name,
+          ips,
+          ns_ips: parseList(nodeForm.nsIps),
+          ns_label: nodeForm.nsLabel.trim() || undefined,
+          ns_base_domain: nodeForm.nsBaseDomain.trim() || undefined,
+          api_endpoint: nodeForm.apiEndpoint.trim() || undefined,
+        });
+        toast.success('Node updated');
+      }
+      await loadInfrastructure();
+      resetNodeForm();
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Failed to save node');
+    } finally {
+      setSavingNode(false);
+    }
+  };
+
+  const handleDeleteNode = async (id: string) => {
+    if (!confirm('Delete this node?')) return;
+    try {
+      await nodesApi.delete(id);
+      toast.success('Node deleted');
+      await loadInfrastructure();
+      if (editingNodeId === id) {
+        resetNodeForm();
+      }
+      if (selectedNode?.id === id) {
+        setSelectedNode(null);
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Failed to delete node');
     }
   };
 
@@ -230,6 +354,113 @@ export default function AdminInfrastructure() {
         </Card>
       </div>
 
+      <Card title="Node Management" className="node-management-card">
+        <div className="node-management-header">
+          <Button variant="primary" size="sm" onClick={openCreateNode}>
+            Add Node
+          </Button>
+        </div>
+        <div className="node-management-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>IPs</th>
+                <th>NS IPs</th>
+                <th>API Endpoint</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {nodes.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="node-empty">No nodes configured</td>
+                </tr>
+              ) : (
+                nodes.map((node) => (
+                  <tr key={node.id} className={editingNodeId === node.id && nodeFormMode === 'edit' ? 'node-row-editing' : ''}>
+                    <td>{node.name}</td>
+                    <td className="mono">{node.ips.join(', ')}</td>
+                    <td className="mono">{(node.ns_ips || []).join(', ') || '—'}</td>
+                    <td className="mono">{node.api_endpoint || '—'}</td>
+                    <td className="node-actions">
+                      <Button variant="secondary" size="sm" onClick={() => openEditNode(node)}>
+                        Edit
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => handleDeleteNode(node.id)}>
+                        Delete
+                      </Button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        {nodeFormMode !== 'idle' && (
+          <form className="node-form" onSubmit={handleSaveNode}>
+            <div className="node-form-grid">
+              <Input
+                label="Node Name"
+                value={nodeForm.name}
+                onChange={(e) => handleNodeFormChange('name', e.target.value)}
+                required
+                fullWidth
+              />
+              <div className="node-textarea-field">
+                <label>IPs (comma or newline separated)</label>
+                <textarea
+                  value={nodeForm.ips}
+                  onChange={(e) => handleNodeFormChange('ips', e.target.value)}
+                  required
+                  className="node-textarea"
+                  rows={2}
+                />
+              </div>
+              <div className="node-textarea-field">
+                <label>NS IPs</label>
+                <textarea
+                  value={nodeForm.nsIps}
+                  onChange={(e) => handleNodeFormChange('nsIps', e.target.value)}
+                  className="node-textarea"
+                  rows={2}
+                  placeholder="Optional"
+                />
+              </div>
+              <Input
+                label="NS Label"
+                value={nodeForm.nsLabel}
+                onChange={(e) => handleNodeFormChange('nsLabel', e.target.value)}
+                placeholder="e.g. ns"
+                fullWidth
+              />
+              <Input
+                label="NS Base Domain"
+                value={nodeForm.nsBaseDomain}
+                onChange={(e) => handleNodeFormChange('nsBaseDomain', e.target.value)}
+                placeholder="e.g. example.net"
+                fullWidth
+              />
+              <Input
+                label="API Endpoint"
+                value={nodeForm.apiEndpoint}
+                onChange={(e) => handleNodeFormChange('apiEndpoint', e.target.value)}
+                placeholder="https://node-api.example.com"
+                fullWidth
+              />
+            </div>
+            <div className="node-form-actions">
+              <Button variant="primary" type="submit" loading={savingNode}>
+                Save Node
+              </Button>
+              <Button variant="ghost" type="button" onClick={resetNodeForm} disabled={savingNode}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        )}
+      </Card>
+
       <Card title="Nameservers" className="nameservers-card">
         <div className="nameservers-description">
           <p>Authoritative DNS servers for domain delegation</p>
@@ -237,6 +468,10 @@ export default function AdminInfrastructure() {
         <div className="nameservers-grid">
           {nameservers.map((ns) => {
             const status = nsStatus.find(s => s.node_id === ns.node_id);
+            const lastChecked = status?.checked_at ? formatDistanceToNow(new Date(status.checked_at), { addSuffix: true }) : null;
+            const badgeVariant: 'default' | 'success' | 'danger' = status ? (status.healthy ? 'success' : 'danger') : 'default';
+            const badgeLabel = status ? (status.healthy ? 'Healthy' : 'Unhealthy') : 'Unknown';
+            const badgeTitle = status?.message || (lastChecked ? `Last checked ${lastChecked}` : undefined);
             return (
               <div key={ns.node_id} className="nameserver-item">
                 <div className="ns-node">{ns.name}</div>
@@ -246,12 +481,19 @@ export default function AdminInfrastructure() {
                 </div>
                 <div className="ns-status">
                   <Badge
-                    variant={status?.healthy ? 'success' : status ? 'danger' : 'default'}
+                    variant={badgeVariant}
                     size="sm"
                     dot
+                    title={badgeTitle}
                   >
-                    {status?.healthy ? 'Healthy' : status ? 'Unhealthy' : 'Unknown'}
+                    {badgeLabel}
                   </Badge>
+                  {status?.message && (
+                    <span className="ns-message">{status.message}</span>
+                  )}
+                  {lastChecked && (
+                    <span className="ns-last-checked">Checked {lastChecked}</span>
+                  )}
                 </div>
               </div>
             );

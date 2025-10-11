@@ -48,6 +48,10 @@ func (s *Store) edgeHealthFile() string {
 	return filepath.Join(s.dataDir, "cluster", "edge_health.json")
 }
 
+func (s *Store) nameServerStatusFile() string {
+	return filepath.Join(s.dataDir, "infra", "nameserver_status.json")
+}
+
 func (s *Store) domainDir(domain string) string {
 	domain = strings.ToLower(domain)
 	return filepath.Join(s.dataDir, "domains", domain)
@@ -211,6 +215,31 @@ func (s *Store) DeleteEdgeHealth(ip string) error {
 	return writeJSONAtomic(path, pruned)
 }
 
+// GetNameServerStatus returns the cached nameserver health results.
+func (s *Store) GetNameServerStatus() ([]models.NameServerHealth, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	path := s.nameServerStatusFile()
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return []models.NameServerHealth{}, nil
+		}
+		return nil, err
+	}
+	var statuses []models.NameServerHealth
+	if err := readJSON(path, &statuses); err != nil {
+		return nil, err
+	}
+	return statuses, nil
+}
+
+// SaveNameServerStatus persists nameserver health results atomically.
+func (s *Store) SaveNameServerStatus(statuses []models.NameServerHealth) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return writeJSONAtomic(s.nameServerStatusFile(), statuses)
+}
+
 // GetDomains returns all domain records.
 func (s *Store) GetDomains() ([]models.DomainRecord, error) {
 	s.mu.RLock()
@@ -281,23 +310,27 @@ func (s *Store) MutateDomain(domain string, mutate func(rec *models.DomainRecord
 
 	file := s.domainRecordFile(domain)
 	var rec models.DomainRecord
-	if data, err := os.ReadFile(file); err == nil {
-		if err := json.Unmarshal(data, &rec); err != nil {
-			return nil, err
+	data, err := os.ReadFile(file)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fs.ErrNotExist
 		}
-		rec.EnsureTLSDefaults()
-	} else if !os.IsNotExist(err) {
 		return nil, err
-	} else {
-		rec.Domain = domain
-		rec.EnsureTLSDefaults()
 	}
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return nil, err
+	}
+	rec.EnsureTLSDefaults()
 	rec.Domain = domain
 
 	if err := mutate(&rec); err != nil {
 		return nil, err
 	}
 	rec.EnsureTLSDefaults()
+	rec.Domain = domain
+	if err := rec.Validate(); err != nil {
+		return nil, err
+	}
 	if err := writeJSONAtomic(file, rec); err != nil {
 		return nil, err
 	}

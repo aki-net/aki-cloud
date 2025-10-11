@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import clsx from 'clsx';
 import './Table.css';
 
@@ -36,9 +36,17 @@ export default function Table<T>({
   emptyMessage = 'No data available',
   className,
 }: TableProps<T>) {
+  const selectedSet = selectedRows ?? new Set<string>();
   const hasSelection = selectedRows !== undefined && onRowSelect !== undefined;
-  const allSelected = hasSelection && data.length > 0 && data.every(item => selectedRows.has(keyExtractor(item)));
-  const someSelected = hasSelection && data.some(item => selectedRows.has(keyExtractor(item)));
+  const allSelected = hasSelection && data.length > 0 && data.every(item => selectedSet.has(keyExtractor(item)));
+  const someSelected = hasSelection && data.some(item => selectedSet.has(keyExtractor(item)));
+  const selectAllRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = Boolean(hasSelection && someSelected && !allSelected);
+    }
+  }, [hasSelection, someSelected, allSelected]);
 
   return (
     <div className={clsx('table-container', className)}>
@@ -51,7 +59,7 @@ export default function Table<T>({
                   type="checkbox"
                   className="checkbox"
                   checked={allSelected}
-                  indeterminate={someSelected && !allSelected}
+                  ref={selectAllRef}
                   onChange={(e) => onSelectAll?.(e.target.checked)}
                 />
               </th>
@@ -96,7 +104,7 @@ export default function Table<T>({
           ) : (
             data.map((item) => {
               const key = keyExtractor(item);
-              const isSelected = hasSelection && selectedRows.has(key);
+              const isSelected = hasSelection && selectedSet.has(key);
               
               return (
                 <tr

@@ -9,7 +9,9 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"io/fs"
 	"math/big"
 	"strings"
 	"time"
@@ -36,7 +38,13 @@ func (s *Service) ensureOriginPullMaterial(domain string) error {
 		rec.Version.Updated = now.Unix()
 		return nil
 	})
-	return err
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func generateOriginPullBundle(domain string) (*models.OriginPullMaterial, error) {

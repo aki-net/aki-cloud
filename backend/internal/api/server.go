@@ -62,13 +62,14 @@ type nsCheckRequest struct {
 }
 
 type nsCheckResult struct {
-	NodeID    string `json:"node_id"`
-	Name      string `json:"name"`
-	FQDN      string `json:"fqdn"`
-	IPv4      string `json:"ipv4"`
-	Healthy   bool   `json:"healthy"`
-	LatencyMS int64  `json:"latency_ms"`
-	Message   string `json:"message,omitempty"`
+	NodeID    string    `json:"node_id"`
+	Name      string    `json:"name"`
+	FQDN      string    `json:"fqdn"`
+	IPv4      string    `json:"ipv4"`
+	Healthy   bool      `json:"healthy"`
+	LatencyMS int64     `json:"latency_ms"`
+	Message   string    `json:"message,omitempty"`
+	CheckedAt time.Time `json:"checked_at"`
 }
 
 type domainTLSPayload struct {
@@ -106,6 +107,7 @@ type bulkUpdateDomainPayload struct {
 	Proxied  *bool             `json:"proxied,omitempty"`
 	TTL      *int              `json:"ttl,omitempty"`
 	TLS      *domainTLSPayload `json:"tls,omitempty"`
+	Owner    *string           `json:"owner,omitempty"`
 }
 
 type bulkDomainResult struct {
@@ -159,6 +161,7 @@ type updateDomainPayload struct {
 	Proxied  *bool             `json:"proxied,omitempty"`
 	TTL      *int              `json:"ttl,omitempty"`
 	TLS      *domainTLSPayload `json:"tls,omitempty"`
+	Owner    *string           `json:"owner,omitempty"`
 }
 
 // Routes constructs the HTTP router.
@@ -219,6 +222,7 @@ func (s *Server) Routes() http.Handler {
 
 				r.Get("/domains/overview", s.handleDomainsOverview)
 				r.Post("/infra/nameservers/check", s.handleNameServerCheck)
+				r.Get("/infra/nameservers/status", s.handleNameServerStatus)
 
 				r.Post("/ops/rebuild", s.handleRebuild)
 			})
@@ -509,9 +513,19 @@ func (s *Server) prepareDomainRecord(user userContext, domain string, owner stri
 	}
 	if record.Owner == "" {
 		record.Owner = user.ID
-	}
-	if user.Role != models.RoleAdmin && record.Owner != user.ID {
-		return models.DomainRecord{}, errForbiddenDomainOwner
+	} else {
+		if user.Role == models.RoleAdmin {
+			resolvedOwner, err := s.resolveOwnerIdentifier(record.Owner)
+			if err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					return models.DomainRecord{}, models.ErrValidation("owner not found")
+				}
+				return models.DomainRecord{}, err
+			}
+			record.Owner = resolvedOwner
+		} else if record.Owner != user.ID {
+			return models.DomainRecord{}, errForbiddenDomainOwner
+		}
 	}
 	if proxied != nil {
 		record.Proxied = *proxied
@@ -692,6 +706,27 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("too many domains (max %d)", maxBulkDomains))
 		return
 	}
+	var transferOwnerID string
+	if payload.Owner != nil {
+		if user.Role != models.RoleAdmin {
+			writeError(w, http.StatusForbidden, "owner updates require admin")
+			return
+		}
+		resolvedOwner, err := s.resolveOwnerIdentifier(*payload.Owner)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusBadRequest, "owner not found")
+				return
+			}
+			if ve, ok := err.(models.ErrValidation); ok {
+				writeError(w, http.StatusBadRequest, ve.Error())
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		transferOwnerID = resolvedOwner
+	}
 	success := 0
 	for _, domain := range normalized {
 		existing, err := s.Store.GetDomain(domain)
@@ -743,6 +778,9 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 				}
 			}
 			existing.TLS.UpdatedAt = time.Now().UTC()
+		}
+		if transferOwnerID != "" {
+			existing.Owner = transferOwnerID
 		}
 		if err := ensureTLSProxyCompatibility(existing); err != nil {
 			failed++
@@ -814,6 +852,26 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	}
 	if payload.TTL != nil && *payload.TTL > 0 {
 		existing.TTL = *payload.TTL
+	}
+	if payload.Owner != nil {
+		if user.Role != models.RoleAdmin {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		resolvedOwner, err := s.resolveOwnerIdentifier(*payload.Owner)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusBadRequest, "owner not found")
+				return
+			}
+			if ve, ok := err.(models.ErrValidation); ok {
+				writeError(w, http.StatusBadRequest, ve.Error())
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		existing.Owner = resolvedOwner
 	}
 	if payload.TLS != nil {
 		if payload.TLS.Mode != "" {
@@ -982,6 +1040,32 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	existing, err := s.Store.GetUserByID(id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if existing.Role == models.RoleAdmin {
+		users, err := s.Store.GetUsers()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		adminCount := 0
+		for _, u := range users {
+			if u.Role == models.RoleAdmin && u.ID != id {
+				adminCount++
+			}
+		}
+		if adminCount == 0 {
+			writeError(w, http.StatusBadRequest, "cannot delete the last admin user")
+			return
+		}
+	}
 	if err := s.Store.DeleteUser(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1274,6 +1358,27 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+func (s *Server) resolveOwnerIdentifier(owner string) (string, error) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return "", models.ErrValidation("owner must be provided")
+	}
+	if user, err := s.Store.GetUserByID(owner); err == nil {
+		return user.ID, nil
+	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return "", err
+	}
+	lower := strings.ToLower(owner)
+	if strings.Contains(lower, "@") {
+		if user, err := s.Store.FindUserByEmail(lower); err == nil {
+			return user.ID, nil
+		} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return "", err
+		}
+	}
+	return "", store.ErrNotFound
+}
+
 func (s *Server) handleNameServerCheck(w http.ResponseWriter, r *http.Request) {
 	var req nsCheckRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
@@ -1300,6 +1405,7 @@ func (s *Server) handleNameServerCheck(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		healthy, latency, message := s.probeNameServer(r.Context(), ns)
+		checkedAt := time.Now().UTC()
 		results = append(results, nsCheckResult{
 			NodeID:    ns.NodeID,
 			Name:      ns.Name,
@@ -1308,6 +1414,7 @@ func (s *Server) handleNameServerCheck(w http.ResponseWriter, r *http.Request) {
 			Healthy:   healthy,
 			LatencyMS: latency.Milliseconds(),
 			Message:   message,
+			CheckedAt: checkedAt,
 		})
 	}
 	sort.Slice(results, func(i, j int) bool {
@@ -1319,7 +1426,42 @@ func (s *Server) handleNameServerCheck(w http.ResponseWriter, r *http.Request) {
 		}
 		return results[i].IPv4 < results[j].IPv4
 	})
+	if len(results) > 0 {
+		snapshot := make([]models.NameServerHealth, 0, len(results))
+		for _, res := range results {
+			snapshot = append(snapshot, models.NameServerHealth{
+				NodeID:    res.NodeID,
+				FQDN:      res.FQDN,
+				IPv4:      res.IPv4,
+				Healthy:   res.Healthy,
+				LatencyMS: res.LatencyMS,
+				Message:   res.Message,
+				CheckedAt: res.CheckedAt,
+			})
+		}
+		if err := s.Store.SaveNameServerStatus(snapshot); err != nil {
+			log.Printf("infra: persist nameserver status failed: %v", err)
+		}
+	}
 	writeJSON(w, http.StatusOK, results)
+}
+
+func (s *Server) handleNameServerStatus(w http.ResponseWriter, r *http.Request) {
+	statuses, err := s.Store.GetNameServerStatus()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	sort.Slice(statuses, func(i, j int) bool {
+		if statuses[i].NodeID != statuses[j].NodeID {
+			return statuses[i].NodeID < statuses[j].NodeID
+		}
+		if statuses[i].FQDN != statuses[j].FQDN {
+			return statuses[i].FQDN < statuses[j].FQDN
+		}
+		return statuses[i].IPv4 < statuses[j].IPv4
+	})
+	writeJSON(w, http.StatusOK, statuses)
 }
 
 func (s *Server) probeNameServer(ctx context.Context, ns infra.NameServer) (bool, time.Duration, string) {

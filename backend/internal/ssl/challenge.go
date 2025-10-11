@@ -2,6 +2,8 @@ package ssl
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"time"
 
 	"aki-cloud/backend/internal/models"
@@ -49,10 +51,14 @@ func (s *Service) publishChallenge(domain, token, keyAuth string) error {
 		rec.Version.Updated = now.Unix()
 		return nil
 	})
-	if err == nil {
-		s.orch.Trigger(context.Background())
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
 	}
-	return err
+	s.orch.Trigger(context.Background())
+	return nil
 }
 
 func (s *Service) cleanupChallenge(domain, token string) error {
@@ -76,8 +82,12 @@ func (s *Service) cleanupChallenge(domain, token string) error {
 		rec.Version.Updated = now.Unix()
 		return nil
 	})
-	if err == nil {
-		s.orch.Trigger(context.Background())
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
 	}
-	return err
+	s.orch.Trigger(context.Background())
+	return nil
 }

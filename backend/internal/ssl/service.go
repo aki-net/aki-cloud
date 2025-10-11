@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -34,6 +35,10 @@ var (
 	errLockHeld = errors.New("certificate issuance already in progress")
 	errBackoff  = errors.New("waiting for retry window")
 )
+
+func domainNotFound(err error) bool {
+	return errors.Is(err, fs.ErrNotExist)
+}
 
 // Service orchestrates TLS recommendations, issuance, and renewals.
 type Service struct {
@@ -205,6 +210,9 @@ func (s *Service) ensureRecommendation(ctx context.Context, rec models.DomainRec
 		return nil
 	})
 	if err != nil {
+		if domainNotFound(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return updated, nil
@@ -221,7 +229,7 @@ func (s *Service) detectRecommendedMode(ctx context.Context, rec models.DomainRe
 	if s.probeOriginHTTP(ctx, rec) {
 		return models.EncryptionFlexible
 	}
-	return models.EncryptionOff
+	return models.EncryptionFlexible
 }
 
 func (s *Service) probeOriginTLS(ctx context.Context, rec models.DomainRecord) (valid bool, any bool) {
@@ -366,6 +374,9 @@ func (s *Service) markAwaitingDelegation(domain string) {
 		return nil
 	})
 	if err != nil {
+		if domainNotFound(err) {
+			return
+		}
 		log.Printf("tls: mark awaiting delegation for %s failed: %v", domain, err)
 	}
 }
@@ -397,6 +408,9 @@ func (s *Service) clearAwaitingDelegation(domain string) {
 		return nil
 	})
 	if err != nil {
+		if domainNotFound(err) {
+			return
+		}
 		log.Printf("tls: clear awaiting delegation for %s failed: %v", domain, err)
 	}
 }
@@ -424,6 +438,9 @@ func (s *Service) deferForRateWindow(domain string, next time.Time) {
 		return nil
 	})
 	if err != nil {
+		if domainNotFound(err) {
+			return
+		}
 		log.Printf("tls: schedule issuance retry for %s failed: %v", domain, err)
 	}
 }
@@ -454,6 +471,9 @@ func (s *Service) acquireLock(domain string) (string, *models.DomainRecord, erro
 		return nil
 	})
 	if err != nil {
+		if domainNotFound(err) {
+			return "", nil, nil
+		}
 		return "", nil, err
 	}
 	return lockID, updated, nil
@@ -476,6 +496,9 @@ func (s *Service) releaseLock(domain, lockID string) {
 		return nil
 	})
 	if err != nil {
+		if domainNotFound(err) {
+			return
+		}
 		log.Printf("tls: release lock for %s failed: %v", domain, err)
 	}
 }
@@ -504,6 +527,9 @@ func (s *Service) markError(domain, lockID string, keepAuto bool, issueErr error
 		return nil
 	})
 	if err != nil {
+		if domainNotFound(err) {
+			return
+		}
 		log.Printf("tls: mark error on %s failed: %v", domain, err)
 	}
 	if s.orch != nil {
@@ -777,6 +803,9 @@ func (s *Service) syncBackoffState(rec models.DomainRecord) (*models.DomainRecor
 		return nil
 	})
 	if err != nil {
+		if domainNotFound(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return updated, nil

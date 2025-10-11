@@ -29,6 +29,8 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   const [editingDomain, setEditingDomain] = useState<string | null>(null);
   const [editingIP, setEditingIP] = useState('');
   const [viewMode, setViewMode] = useState<'my' | 'all' | 'orphaned'>('my');
+  const [bulkIP, setBulkIP] = useState('');
+  const [bulkOwner, setBulkOwner] = useState('');
   const editInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -57,6 +59,24 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       toast.error('Failed to load data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const modeLabel = (mode?: string | null) => {
+    if (!mode) return '';
+    switch (mode) {
+      case 'flexible':
+        return 'Flexible';
+      case 'full':
+        return 'Full';
+      case 'full_strict':
+        return 'Full (Strict)';
+      case 'strict_origin_pull':
+        return 'Strict Origin Pull';
+      case 'off':
+        return 'Off';
+      default:
+        return mode;
     }
   };
 
@@ -226,6 +246,54 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     }
   };
 
+  const handleBulkIPUpdate = async () => {
+    if (selectedDomains.size === 0) return;
+    const ip = bulkIP.trim();
+    if (!ip) {
+      toast.error('Enter a new origin IP address');
+      return;
+    }
+    try {
+      const response = await domainsApi.bulkUpdate({
+        domains: Array.from(selectedDomains),
+        origin_ip: ip,
+      });
+      toast.success(`Updated IP for ${response.success} domain(s)`);
+      if (response.failed > 0) {
+        toast.error(`Failed to update ${response.failed} domain(s)`);
+      }
+      setBulkIP('');
+      setSelectedDomains(new Set());
+      loadData();
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Failed to update origin IP');
+    }
+  };
+
+  const handleBulkOwnerUpdate = async () => {
+    if (selectedDomains.size === 0) return;
+    const owner = bulkOwner.trim();
+    if (!owner) {
+      toast.error('Enter a new owner (email or ID)');
+      return;
+    }
+    try {
+      const response = await domainsApi.bulkUpdate({
+        domains: Array.from(selectedDomains),
+        owner,
+      });
+      toast.success(`Updated owner for ${response.success} domain(s)`);
+      if (response.failed > 0) {
+        toast.error(`Failed to update ${response.failed} domain(s)`);
+      }
+      setBulkOwner('');
+      setSelectedDomains(new Set());
+      loadData();
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Failed to update domain owner');
+    }
+  };
+
   const getTLSDisplay = (domain: Domain | DomainOverview) => {
     const isFullDomain = 'tls' in domain;
     
@@ -259,6 +327,11 @@ export default function DomainManagement({ isAdmin = false }: Props) {
             <option value="full_strict">Full Strict</option>
             <option value="auto">Auto</option>
           </select>
+          {domain.tls_use_recommended && (
+            <span className="tls-auto-hint">
+              Auto → {domain.tls_recommended_mode ? modeLabel(domain.tls_recommended_mode) : 'detecting…'}
+            </span>
+          )}
           {/* Always show error status, show other statuses only when proxy is on and TLS is not off */}
           {status && status.label !== 'None' && (
             (domain.tls_status === 'errored' || (domain.proxied && currentValue !== 'off')) && (
@@ -307,6 +380,11 @@ export default function DomainManagement({ isAdmin = false }: Props) {
           <option value="full_strict">Full Strict</option>
           <option value="auto">Auto</option>
         </select>
+        {domain.tls.use_recommended && (
+          <span className="tls-auto-hint">
+            Auto → {domain.tls.recommended_mode ? modeLabel(domain.tls.recommended_mode) : 'detecting…'}
+          </span>
+        )}
         {/* Always show error status, show other statuses only when proxy is on and TLS is not off */}
         {domain.tls.status !== 'none' && (
           (domain.tls.status === 'errored' || (domain.proxied && currentValue !== 'off')) && (
@@ -358,6 +436,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
 
   const filteredData = getFilteredData();
   const orphanedCount = allDomains.filter(d => !d.owner_exists).length;
+  const selectionEnabled = viewMode === 'my' || (isAdmin && (viewMode === 'all' || viewMode === 'orphaned'));
 
   // Build unified columns array
   const columns: any[] = [];
@@ -480,27 +559,53 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         searchValue={searchQuery}
         onSearchChange={setSearchQuery}
       >
-        {selectedDomains.size > 0 && (viewMode === 'my' || (viewMode === 'all' && isAdmin)) && (
+        {selectedDomains.size > 0 && selectionEnabled && (
           <>
             <div className="batch-actions">
-              <Button variant="secondary" size="sm" onClick={() => handleBulkProxyToggle(true)}>
-                Enable Proxy
-              </Button>
-              <Button variant="secondary" size="sm" onClick={() => handleBulkProxyToggle(false)}>
-                Disable Proxy
-              </Button>
-              <select 
-                className="batch-tls-select"
-                onChange={(e) => e.target.value && handleBulkTLSUpdate(e.target.value)}
-                defaultValue=""
-              >
-                <option value="" disabled>TLS Mode...</option>
-                <option value="off">TLS Off</option>
-                <option value="flexible">Flexible</option>
-                <option value="full">Full</option>
-                <option value="full_strict">Full Strict</option>
-                <option value="auto">Auto</option>
-              </select>
+              <div className="batch-toggle-group">
+                <Button variant="secondary" size="sm" onClick={() => handleBulkProxyToggle(true)}>
+                  Enable Proxy
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => handleBulkProxyToggle(false)}>
+                  Disable Proxy
+                </Button>
+                <select 
+                  className="batch-tls-select"
+                  onChange={(e) => e.target.value && handleBulkTLSUpdate(e.target.value)}
+                  defaultValue=""
+                >
+                  <option value="" disabled>TLS Mode...</option>
+                  <option value="off">TLS Off</option>
+                  <option value="flexible">Flexible</option>
+                  <option value="full">Full</option>
+                  <option value="full_strict">Full Strict</option>
+                  <option value="auto">Auto</option>
+                </select>
+              </div>
+              <div className="batch-input-group">
+                <input
+                  className="batch-input"
+                  placeholder="New origin IP"
+                  value={bulkIP}
+                  onChange={(e) => setBulkIP(e.target.value)}
+                />
+                <Button variant="secondary" size="sm" onClick={handleBulkIPUpdate} disabled={!bulkIP.trim()}>
+                  Update IP
+                </Button>
+              </div>
+              {isAdmin && (
+                <div className="batch-input-group">
+                  <input
+                    className="batch-input"
+                    placeholder="Owner email or ID"
+                    value={bulkOwner}
+                    onChange={(e) => setBulkOwner(e.target.value)}
+                  />
+                  <Button variant="secondary" size="sm" onClick={handleBulkOwnerUpdate} disabled={!bulkOwner.trim()}>
+                    Update Owner
+                  </Button>
+                </div>
+              )}
             </div>
             <Button variant="danger" onClick={handleDeleteSelected}>
               Delete {selectedDomains.size}
@@ -543,8 +648,8 @@ export default function DomainManagement({ isAdmin = false }: Props) {
           columns={columns}
           data={filteredData as any}
           keyExtractor={(d: any) => d.domain}
-          selectedRows={(viewMode === 'my' || (viewMode === 'all' && isAdmin)) ? selectedDomains : undefined}
-          onRowSelect={(viewMode === 'my' || (viewMode === 'all' && isAdmin)) ? (id, selected) => {
+          selectedRows={selectionEnabled ? selectedDomains : undefined}
+          onRowSelect={selectionEnabled ? (id, selected) => {
             const newSelected = new Set(selectedDomains);
             if (selected) {
               newSelected.add(id);
@@ -553,7 +658,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
             }
             setSelectedDomains(newSelected);
           } : undefined}
-          onSelectAll={(viewMode === 'my' || (viewMode === 'all' && isAdmin)) ? (selected) => {
+          onSelectAll={selectionEnabled ? (selected) => {
             if (selected) {
               setSelectedDomains(new Set(filteredData.map((d: any) => d.domain)));
             } else {

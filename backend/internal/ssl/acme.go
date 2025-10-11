@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"sort"
@@ -146,7 +147,13 @@ func (s *Service) persistCertificate(domain string, res *certificate.Resource, l
 		rec.Version.Updated = now.Unix()
 		return nil
 	})
-	return err
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // acmeUser implements lego.User.

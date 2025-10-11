@@ -162,6 +162,10 @@ export const infra = {
     const res = await client.get<string[]>('/infra/edges');
     return res.data;
   },
+  nameserverStatus: async (): Promise<NameServerStatus[]> => {
+    const res = await client.get<NameServerStatus[]>('/admin/infra/nameservers/status');
+    return res.data;
+  },
   
   checkNameServers: async (targets?: string[]): Promise<NameServerStatus[]> => {
     const payload = targets && targets.length > 0 ? { targets } : {};

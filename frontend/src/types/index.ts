@@ -91,6 +91,7 @@ export interface BulkUpdateDomainPayload {
   proxied?: boolean;
   ttl?: number;
   tls?: DomainTLSPayload;
+  owner?: string;
 }
 
 export type BulkDomainStatus = 'created' | 'updated' | 'skipped' | 'failed';
@@ -157,6 +158,7 @@ export interface NameServerStatus {
   healthy: boolean;
   latency_ms: number;
   message?: string;
+  checked_at?: string;
 }
 
 export interface AnalyticsData {

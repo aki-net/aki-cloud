@@ -203,6 +203,101 @@
   font-style: italic;
 }
 
+.node-management-card {
+  margin-bottom: 16px;
+}
+
+.node-management-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.node-management-table {
+  overflow-x: auto;
+}
+
+.node-management-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.node-management-table th,
+.node-management-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+}
+
+.node-management-table th {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.node-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.node-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--color-text-tertiary);
+}
+
+.node-row-editing {
+  background: var(--color-bg-tertiary);
+}
+
+.node-form {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.node-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.node-textarea-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.node-textarea-field label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+.node-textarea {
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  resize: vertical;
+  min-height: 64px;
+}
+
+.node-textarea:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent-transparent, rgba(0, 122, 255, 0.35));
+}
+
+.node-form-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .nameservers-description {
   margin-bottom: 16px;
 }
@@ -260,7 +355,19 @@
 
 .ns-status {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.ns-message {
+  font-size: 11px;
+  color: var(--color-danger);
+}
+
+.ns-last-checked {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
 }
 
 /* ns-latency removed */

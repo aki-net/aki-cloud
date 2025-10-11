@@ -276,6 +276,17 @@ func MergeEdgeHealth(local EdgeHealthStatus, remote EdgeHealthStatus) EdgeHealth
 	return local
 }
 
+// NameServerHealth captures the latest health probe result for an NS endpoint.
+type NameServerHealth struct {
+	NodeID    string    `json:"node_id"`
+	FQDN      string    `json:"fqdn"`
+	IPv4      string    `json:"ipv4"`
+	Healthy   bool      `json:"healthy"`
+	LatencyMS int64     `json:"latency_ms"`
+	Message   string    `json:"message,omitempty"`
+	CheckedAt time.Time `json:"checked_at"`
+}
+
 // ErrValidation indicates input validation failure.
 type ErrValidation string
 
