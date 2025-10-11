@@ -650,52 +650,6 @@ configure_firewall() {
   done
 }
 
-install_firewall_timer() {
-  local enable_dns="$1"
-  local enable_proxy="$2"
-  if [[ "$AUTO_FIREWALL" == "false" ]]; then
-    return
-  fi
-  if ! command -v systemctl >/dev/null 2>&1; then
-    echo "systemd not available, skipping firewall timer setup"
-    return
-  fi
-  local unit_dir="/etc/systemd/system"
-  local service_path="${unit_dir}/aki-firewall.service"
-  local timer_path="${unit_dir}/aki-firewall.timer"
-  cat >"$service_path" <<EOF
-[Unit]
-Description=aki-cloud firewall synchronisation
-After=network.target
-
-[Service]
-Type=oneshot
-Environment=DATA_DIR=${PROJECT_DIR}/data
-Environment=AUTO_FIREWALL=${AUTO_FIREWALL}
-Environment=ENABLE_DNS=${enable_dns}
-Environment=ENABLE_PROXY=${enable_proxy}
-ExecStart=${PROJECT_DIR}/scripts/configure_firewall.sh
-EOF
-
-  cat >"$timer_path" <<'EOF'
-[Unit]
-Description=Run aki-cloud firewall synchronisation periodically
-
-[Timer]
-OnBootSec=30s
-OnUnitActiveSec=2m
-AccuracySec=30s
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
-
-  systemctl daemon-reload
-  systemctl enable --now aki-firewall.timer >/dev/null 2>&1 || true
-  systemctl start aki-firewall.service >/dev/null 2>&1 || true
-}
-
 main() {
   parse_args "$@"
 
@@ -827,7 +781,8 @@ main() {
 
     write_env_file "$enable_dns" "$enable_proxy" "$API_ENDPOINT"
     configure_firewall "$enable_dns" "$enable_proxy"
-    install_firewall_timer "$enable_dns" "$enable_proxy"
+    PROJECT_DIR="$PROJECT_DIR" DATA_DIR="$PROJECT_DIR/data" AUTO_FIREWALL="$AUTO_FIREWALL" ENABLE_DNS="$enable_dns" ENABLE_PROXY="$enable_proxy" \
+      bash "$PROJECT_DIR/scripts/install_firewall_timer.sh"
   else
     if [[ -z "$SEED" ]]; then
       prompt_if_empty SEED "Seed backend URL (e.g. http://1.2.3.4:8080)"
@@ -861,7 +816,8 @@ main() {
     fi
     write_env_file "$enable_dns" "$enable_proxy" "$API_ENDPOINT"
     configure_firewall "$enable_dns" "$enable_proxy"
-    install_firewall_timer "$enable_dns" "$enable_proxy"
+    PROJECT_DIR="$PROJECT_DIR" DATA_DIR="$PROJECT_DIR/data" AUTO_FIREWALL="$AUTO_FIREWALL" ENABLE_DNS="$enable_dns" ENABLE_PROXY="$enable_proxy" \
+      bash "$PROJECT_DIR/scripts/install_firewall_timer.sh"
   fi
 
   if [[ -n "$NS_IPS" ]]; then

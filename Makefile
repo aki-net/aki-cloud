@@ -20,8 +20,10 @@ up-force:
 firewall:
 	@if [ "$$(id -u)" -eq 0 ]; then \
 		DATA_DIR=$(PWD)/data AUTO_FIREWALL=$${AUTO_FIREWALL:-auto} ./scripts/configure_firewall.sh; \
+		PROJECT_DIR=$(PWD) DATA_DIR=$(PWD)/data AUTO_FIREWALL=$${AUTO_FIREWALL:-auto} ./scripts/install_firewall_timer.sh; \
 	else \
 		sudo DATA_DIR=$(PWD)/data AUTO_FIREWALL=$${AUTO_FIREWALL:-auto} ./scripts/configure_firewall.sh; \
+		sudo PROJECT_DIR=$(PWD) DATA_DIR=$(PWD)/data AUTO_FIREWALL=$${AUTO_FIREWALL:-auto} ./scripts/install_firewall_timer.sh; \
 	fi
 
 update:
