@@ -83,7 +83,10 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   const computeRetryHint = (iso?: string | null) => {
     if (!iso) return '';
     const retry = new Date(iso);
-    if (Number.isNaN(retry.getTime())) {
+    if (
+      Number.isNaN(retry.getTime()) ||
+      retry.getUTCFullYear() <= 1900
+    ) {
       return '';
     }
     const now = Date.now();
