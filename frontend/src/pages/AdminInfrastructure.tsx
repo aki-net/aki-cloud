@@ -4,6 +4,7 @@ import { Node, NameServerEntry, NameServerStatus } from '../types';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
+import PageHeader from '../components/PageHeader';
 import toast from 'react-hot-toast';
 import './AdminInfrastructure.css';
 
@@ -91,20 +92,17 @@ export default function AdminInfrastructure() {
 
   return (
     <div className="admin-infrastructure">
-      <div className="page-header">
-        <div className="header-content">
-          <h1>Infrastructure</h1>
-          <p className="subtitle">Cluster topology and node management</p>
-        </div>
-        <div className="header-actions">
-          <Button variant="secondary" onClick={checkNameServerHealth} loading={checkingHealth}>
-            Check Health
-          </Button>
-          <Button variant="danger" onClick={handleRebuild}>
-            Rebuild Services
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Infrastructure"
+        subtitle="Cluster topology and node management"
+      >
+        <Button variant="secondary" onClick={checkNameServerHealth} loading={checkingHealth}>
+          Check Health
+        </Button>
+        <Button variant="danger" onClick={handleRebuild}>
+          Rebuild Services
+        </Button>
+      </PageHeader>
 
       <div className="infrastructure-grid">
         <Card title="Cluster Topology" className="cluster-card">
@@ -233,13 +231,20 @@ export default function AdminInfrastructure() {
       </div>
 
       <Card title="Nameservers" className="nameservers-card">
+        <div className="nameservers-description">
+          <p>Authoritative DNS servers for domain delegation</p>
+        </div>
         <div className="nameservers-grid">
           {nameservers.map((ns) => {
             const status = nsStatus.find(s => s.node_id === ns.node_id);
             return (
               <div key={ns.node_id} className="nameserver-item">
-                <div className="ns-header">
-                  <span className="ns-name">{ns.name}</span>
+                <div className="ns-node">{ns.name}</div>
+                <div className="ns-content">
+                  <div className="ns-fqdn mono">{ns.fqdn}</div>
+                  <div className="ns-ip mono">{ns.ipv4}</div>
+                </div>
+                <div className="ns-status">
                   <Badge
                     variant={status?.healthy ? 'success' : status ? 'danger' : 'default'}
                     size="sm"
@@ -248,36 +253,33 @@ export default function AdminInfrastructure() {
                     {status?.healthy ? 'Healthy' : status ? 'Unhealthy' : 'Unknown'}
                   </Badge>
                 </div>
-                <div className="ns-details">
-                  <span className="ns-fqdn mono">{ns.fqdn}</span>
-                  <span className="ns-ip mono">{ns.ipv4}</span>
-                  {status && (
-                    <span className="ns-latency">
-                      {status.latency_ms}ms
-                    </span>
-                  )}
-                </div>
-                {status?.message && (
-                  <div className="ns-message">{status.message}</div>
-                )}
               </div>
             );
           })}
         </div>
       </Card>
 
-      <Card title="Edge Servers" className="edges-card">
+      <Card title="Edge IP Addresses" className="edges-card">
+        <div className="edge-ips-info">
+          <p className="edge-description">Public anycast IPs distributed across cluster nodes for receiving client traffic</p>
+        </div>
         <div className="edges-grid">
-          {edges.map((edge) => (
-            <div key={edge} className="edge-item">
-              <div className="edge-icon">🌍</div>
-              <span className="edge-ip mono">{edge}</span>
-              <Badge variant="success" size="sm">Active</Badge>
-            </div>
-          ))}
+          {edges.map((edge, index) => {
+            // Simulate IP distribution across nodes (in real app this would come from backend)
+            const nodeId = (index % 4) + 1;
+            return (
+              <div key={edge} className="edge-item">
+                <div className="edge-node-indicator">node-{nodeId}</div>
+                <div className="edge-content">
+                  <span className="edge-ip mono">{edge}</span>
+                  <Badge variant="success" size="sm">Active</Badge>
+                </div>
+              </div>
+            );
+          })}
           {edges.length === 0 && (
             <div className="empty-state">
-              <p>No edge servers configured</p>
+              <p>No edge IPs configured</p>
             </div>
           )}
         </div>

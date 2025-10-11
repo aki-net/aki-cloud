@@ -47,6 +47,17 @@
   box-sizing: border-box;
 }
 
+/* Remove default focus outline */
+*:focus {
+  outline: none;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+}
+
 html {
   font-size: 16px;
   -webkit-font-smoothing: antialiased;

@@ -65,6 +65,20 @@ export const auth = {
   },
 };
 
+export const validateSession = async (): Promise<boolean> => {
+  try {
+    // Try to fetch user domains as a way to validate the session
+    await client.get('/domains');
+    return true;
+  } catch (error: any) {
+    if (error.response?.status === 401) {
+      return false;
+    }
+    // For other errors, assume session is still valid
+    return true;
+  }
+};
+
 export const domains = {
   list: async (): Promise<Domain[]> => {
     const res = await client.get<Domain[]>('/domains');
@@ -168,12 +182,24 @@ export const admin = {
 };
 
 // Interceptor for automatic logout on 401
+let isRedirecting = false;
 client.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 && !isRedirecting) {
+      // Prevent multiple redirects
+      isRedirecting = true;
+      
+      // Clear auth data
       setAuthToken(null);
-      window.location.href = '/login';
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('user');
+      
+      // Use React Router navigation instead of full page reload
+      // This will be handled by the AuthContext
+      setTimeout(() => {
+        isRedirecting = false;
+      }, 1000);
     }
     return Promise.reject(error);
   }

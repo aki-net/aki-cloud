@@ -270,6 +270,113 @@
   border-top: 1px solid var(--color-border);
 }
 
+/* TLS Display */
+.tls-display {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tls-mode-select {
+  padding: 4px 8px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  min-width: 90px;
+}
+
+.tls-mode-select:hover:not(:disabled) {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-accent);
+}
+
+.tls-mode-select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+.tls-mode-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tls-error-tooltip {
+  font-size: 14px;
+  cursor: help;
+  user-select: none;
+}
+
+.cert-expiry {
+  font-size: 12px;
+  opacity: 0.7;
+  cursor: help;
+}
+
+/* Batch Actions */
+.batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--color-bg-tertiary);
+  border-radius: 8px;
+}
+
+.batch-tls-select {
+  padding: 6px 10px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  outline: none;
+}
+
+.batch-tls-select:hover,
+.batch-tls-select:focus {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-accent);
+}
+
+/* TLS Mode Select in Form */
+.tls-mode-select {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.form-select {
+  padding: 10px 12px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  outline: none;
+}
+
+.form-select:hover,
+.form-select:focus {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-accent);
+}
+
+.tls-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
 /* Mobile Responsive */
 @media (max-width: 768px) {
   .dashboard-header {
@@ -287,5 +394,14 @@
 
   .form-row {
     grid-template-columns: 1fr;
+  }
+  
+  .batch-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+  
+  .batch-actions > * {
+    width: 100%;
   }
 }

@@ -1,7 +1,7 @@
 .admin-infrastructure {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 16px;
 }
 
 .loading-state {
@@ -26,7 +26,7 @@
 .infrastructure-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 20px;
+  gap: 16px;
 }
 
 .cluster-card {
@@ -203,86 +203,118 @@
   font-style: italic;
 }
 
+.nameservers-description {
+  margin-bottom: 16px;
+}
+
+.nameservers-description p {
+  font-size: 13px;
+  color: var(--color-text-tertiary);
+  margin: 0;
+}
+
 .nameservers-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px;
 }
 
 .nameserver-item {
-  padding: 16px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
   background: var(--color-bg-tertiary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
 }
 
-.ns-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-
-.ns-name {
+.ns-node {
+  font-size: 12px;
   font-weight: 600;
-  color: var(--color-text-primary);
+  color: var(--color-text-tertiary);
+  text-transform: lowercase;
+  opacity: 0.8;
 }
 
-.ns-details {
+.ns-content {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .ns-fqdn {
   color: var(--color-text-primary);
   font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
 }
 
 .ns-ip {
-  color: var(--color-text-secondary);
-  font-size: 13px;
-}
-
-.ns-latency {
-  color: var(--color-success);
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.ns-message {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--color-border);
-  font-size: 12px;
   color: var(--color-text-tertiary);
+  font-size: 11px;
+  opacity: 0.7;
+  line-height: 1.2;
 }
+
+.ns-status {
+  display: flex;
+  align-items: center;
+}
+
+/* ns-latency removed */
+
+/* ns-message removed */
 
 .edges-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.edge-ips-info {
+  margin-bottom: 16px;
+}
+
+.edge-description {
+  font-size: 13px;
+  color: var(--color-text-tertiary);
+  margin: 0;
 }
 
 .edge-item {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
   background: var(--color-bg-tertiary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
+  position: relative;
 }
 
-.edge-icon {
-  font-size: 20px;
+.edge-node-indicator {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+  opacity: 0.7;
+}
+
+.edge-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .edge-ip {
-  flex: 1;
   color: var(--color-text-primary);
   font-weight: 500;
+  font-size: 13px;
 }
+
+/* edge-status removed - badges handle their own styling */
 
 /* Mobile Responsive */
 @media (max-width: 1024px) {

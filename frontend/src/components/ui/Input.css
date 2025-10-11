@@ -26,12 +26,14 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   transition: all 0.15s ease;
+  outline: none;
 }
 
 .input-container:focus-within {
   background: var(--color-bg-elevated);
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px rgba(88, 101, 242, 0.15);
+  outline: none;
+  box-shadow: none;
 }
 
 .input-container.input-error {
@@ -39,7 +41,9 @@
 }
 
 .input-container.input-error:focus-within {
-  box-shadow: 0 0 0 3px rgba(237, 66, 69, 0.15);
+  background: var(--color-bg-elevated);
+  border-color: var(--color-danger);
+  outline: none;
 }
 
 .input {
@@ -51,6 +55,11 @@
   color: var(--color-text-primary);
   outline: none;
   width: 100%;
+}
+
+.input:focus {
+  outline: none;
+  box-shadow: none;
 }
 
 .input::placeholder {

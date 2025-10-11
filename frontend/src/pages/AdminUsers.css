@@ -1,13 +1,13 @@
 .admin-users {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 16px;
 }
 
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 20px;
+  gap: 16px;
 }
 
 .stat-card {
@@ -47,8 +47,46 @@
   color: var(--color-text-tertiary);
 }
 
-.action-btn-danger:hover {
+.user-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.user-actions button {
+  padding: 6px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.user-actions button:hover {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-accent);
+}
+
+.user-actions button svg {
+  width: 14px;
+  height: 14px;
+  color: var(--color-text-tertiary);
+}
+
+.user-actions button:hover svg {
+  color: var(--color-text-primary);
+}
+
+.user-actions button.action-btn-danger:hover {
   border-color: var(--color-danger);
+  background: rgba(237, 66, 69, 0.05);
+}
+
+.user-actions button.action-btn-danger:hover svg {
   color: var(--color-danger);
 }
 

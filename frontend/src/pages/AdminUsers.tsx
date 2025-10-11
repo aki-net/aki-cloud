@@ -6,6 +6,7 @@ import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Badge from '../components/ui/Badge';
 import Card from '../components/ui/Card';
+import PageHeader from '../components/PageHeader';
 import toast from 'react-hot-toast';
 import './AdminUsers.css';
 
@@ -80,9 +81,8 @@ export default function AdminUsers() {
       key: 'actions',
       header: 'Actions',
       accessor: (u: User) => (
-        <div className="actions-cell">
+        <div className="user-actions">
           <button
-            className="action-btn"
             onClick={() => setEditingUser(u)}
             title="Edit user"
           >
@@ -92,7 +92,7 @@ export default function AdminUsers() {
             </svg>
           </button>
           <button
-            className="action-btn action-btn-danger"
+            className="action-btn-danger"
             onClick={() => handleDeleteUser(u)}
             title="Delete user"
           >
@@ -110,28 +110,17 @@ export default function AdminUsers() {
 
   return (
     <div className="admin-users">
-      <div className="page-header">
-        <div className="header-content">
-          <h1>User Management</h1>
-          <p className="subtitle">{users.length} registered users</p>
-        </div>
-        <div className="header-actions">
-          <Input
-            placeholder="Search users..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            icon={
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="11" cy="11" r="8" />
-                <path d="M21 21l-4.35-4.35" />
-              </svg>
-            }
-          />
-          <Button variant="primary" onClick={() => setShowAddUser(true)}>
-            Add User
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="User Management"
+        subtitle={`${users.length} registered users`}
+        searchPlaceholder="Search users..."
+        searchValue={searchQuery}
+        onSearchChange={setSearchQuery}
+      >
+        <Button variant="primary" onClick={() => setShowAddUser(true)}>
+          Add User
+        </Button>
+      </PageHeader>
 
       <div className="stats-grid">
         <Card className="stat-card">

@@ -4,6 +4,7 @@ import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import Switch from '../components/ui/Switch';
+import PageHeader from '../components/PageHeader';
 import './AdminExtensions.css';
 
 function ExtensionsHub() {
@@ -317,12 +318,10 @@ export default function AdminExtensions() {
 
   return (
     <div className="admin-extensions">
-      <div className="page-header">
-        <div className="header-content">
-          <h1>Extensions & Tools</h1>
-          <p className="subtitle">Enhance your infrastructure with powerful add-ons</p>
-        </div>
-      </div>
+      <PageHeader
+        title="Extensions & Tools"
+        subtitle="Enhance your infrastructure with powerful add-ons"
+      />
 
       <div className="extensions-tabs">
         {tabs.map((tab) => (

@@ -1,7 +1,7 @@
 .admin-dashboard {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 16px;
 }
 
 .dashboard-loading {
@@ -26,12 +26,12 @@
 .metrics-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 20px;
+  gap: 16px;
 }
 
 .metric-card {
   background: linear-gradient(135deg, var(--color-bg-tertiary), var(--color-bg-secondary));
-  padding: 24px;
+  padding: 20px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -71,12 +71,30 @@
 
 .charts-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+  grid-template-columns: repeat(2, 1fr);
   gap: 20px;
 }
 
 .chart-card {
   padding: 0;
+  min-height: 380px;
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-card .card-header {
+  flex-shrink: 0;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chart-card .card-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  line-height: 1.4;
 }
 
 .chart-card .card-body {
@@ -86,7 +104,7 @@
 .bottom-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 20px;
+  gap: 16px;
 }
 
 .node-health-list {

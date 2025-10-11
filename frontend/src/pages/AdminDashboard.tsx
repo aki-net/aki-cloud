@@ -3,6 +3,7 @@ import { domains as domainsApi, users, nodes, admin } from '../api/client';
 import { AnalyticsData, DomainOverview } from '../types';
 import Card from '../components/ui/Card';
 import Badge from '../components/ui/Badge';
+import PageHeader from '../components/PageHeader';
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
@@ -98,10 +99,10 @@ export default function AdminDashboard() {
 
   return (
     <div className="admin-dashboard">
-      <div className="dashboard-header">
-        <h1 className="dashboard-title">Analytics Dashboard</h1>
-        <p className="dashboard-subtitle">Real-time infrastructure insights</p>
-      </div>
+      <PageHeader
+        title="Analytics Dashboard"
+        subtitle="Real-time infrastructure insights"
+      />
 
       <div className="metrics-grid">
         <Card className="metric-card">
