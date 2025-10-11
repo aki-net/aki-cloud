@@ -7,6 +7,8 @@ if [[ "${AUTO_FIREWALL,,}" == "false" ]]; then
 fi
 
 DATA_DIR="${DATA_DIR:-/data}"
+PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
+ENV_FILE="${ENV_FILE:-${PROJECT_DIR}/.env}"
 NODE_FILE="${DATA_DIR}/cluster/node.json"
 INFRA_FILE="${DATA_DIR}/infra/nodes.json"
 
@@ -56,11 +58,15 @@ if ns_ips:
 
 print(",".join(str(p) for p in sorted(tcp_ports)))
 print(",".join(str(p) for p in sorted(udp_ports)))
+print("true" if ns_ips else "false")
+print("true" if edge_ips else "false")
 PY
 )"
 
 TCP_PORTS="${CONFIG[0]}"
 UDP_PORTS="${CONFIG[1]}"
+DNS_FLAG="${CONFIG[2]:-false}"
+PROXY_FLAG="${CONFIG[3]:-false}"
 
 ensure_iptables_rule() {
   local proto="$1"
@@ -115,5 +121,42 @@ open_port() {
 
 open_port tcp "$TCP_PORTS"
 open_port udp "$UDP_PORTS"
+
+if [[ -f "$ENV_FILE" ]]; then
+python3 - <<'PY'
+import os
+
+env_path = os.environ["ENV_FILE"]
+desired = {
+    "ENABLE_COREDNS": os.environ.get("DNS_FLAG", "false"),
+    "ENABLE_OPENRESTY": os.environ.get("PROXY_FLAG", "false"),
+}
+
+with open(env_path, "r", encoding="utf-8") as fh:
+    lines = fh.read().splitlines()
+
+result = []
+seen = set()
+for line in lines:
+    if "=" not in line or line.strip().startswith("#"):
+        result.append(line)
+        continue
+    key, _, _ = line.partition("=")
+    key = key.strip()
+    if key in desired:
+        value = desired[key]
+        result.append(f"{key}={value}")
+        seen.add(key)
+    else:
+        result.append(line)
+
+for key, value in desired.items():
+    if key not in seen:
+        result.append(f"{key}={value}")
+
+with open(env_path, "w", encoding="utf-8") as fh:
+    fh.write("\n".join(result) + "\n")
+PY
+fi
 
 exit 0
