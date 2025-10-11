@@ -9,7 +9,7 @@ import Badge from './ui/Badge';
 import Card from './ui/Card';
 import PageHeader from './PageHeader';
 import toast from 'react-hot-toast';
-import { format } from 'date-fns';
+import { format, formatDistanceToNow } from 'date-fns';
 import { useAuth } from '../contexts/AuthContext';
 import './DomainManagement.css';
 
@@ -78,6 +78,19 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       default:
         return mode;
     }
+  };
+
+  const computeRetryHint = (iso?: string | null) => {
+    if (!iso) return '';
+    const retry = new Date(iso);
+    if (Number.isNaN(retry.getTime())) {
+      return '';
+    }
+    const now = Date.now();
+    if (retry.getTime() <= now) {
+      return 'Retrying now';
+    }
+    return `Retry ${formatDistanceToNow(retry, { addSuffix: true })}`;
   };
 
   const handleToggleProxy = async (domain: Domain | DomainOverview) => {
@@ -309,6 +322,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       
       const status = domain.tls_status ? statusMap[domain.tls_status as keyof typeof statusMap] : statusMap.none;
       const currentValue = domain.tls_use_recommended ? 'auto' : (domain.tls_mode || 'off');
+      const retryHint = computeRetryHint(domain.tls_retry_after);
       
       // Admin can edit all domains
       const canEdit = isAdmin || domains.some(d => d.domain === domain.domain);
@@ -344,6 +358,9 @@ export default function DomainManagement({ isAdmin = false }: Props) {
               </Badge>
             )
           )}
+          {retryHint && (
+            <span className="tls-retry-hint">{retryHint}</span>
+          )}
           {/* Show error icon for errored status */}
           {domain.tls_status === 'errored' && domain.tls_last_error && (
             <div className="tls-error-tooltip" title={domain.tls_last_error}>
@@ -365,6 +382,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     
     const status = statusMap[domain.tls.status] || statusMap.none;
     const currentValue = domain.tls.use_recommended ? 'auto' : domain.tls.mode;
+    const retryHint = computeRetryHint(domain.tls.retry_after);
     
     return (
       <div className="tls-display">
@@ -396,6 +414,11 @@ export default function DomainManagement({ isAdmin = false }: Props) {
               {status.label}
             </Badge>
           )
+        )}
+        {retryHint && (
+          <span className="tls-retry-hint">
+            {retryHint}
+          </span>
         )}
         {/* Show error icon for errored status */}
         {domain.tls.status === 'errored' && domain.tls.last_error && (

@@ -113,6 +113,11 @@
   border-color: var(--color-accent);
 }
 
+.tls-retry-hint {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
 .tls-mode-select:focus {
   outline: none;
   border-color: var(--color-accent);

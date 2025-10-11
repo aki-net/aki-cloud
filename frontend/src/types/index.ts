@@ -154,6 +154,7 @@ export interface DomainOverview {
   tls_recommended_mode?: EncryptionMode;
   tls_expires_at?: string;
   tls_last_error?: string;
+  tls_retry_after?: string;
 }
 
 export interface NameServerStatus {

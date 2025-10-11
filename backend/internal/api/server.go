@@ -56,6 +56,7 @@ type domainOverview struct {
 	TLSRecMode  models.EncryptionMode    `json:"tls_recommended_mode,omitempty"`
 	TLSExpires  *time.Time               `json:"tls_expires_at,omitempty"`
 	TLSError    string                   `json:"tls_last_error,omitempty"`
+	TLSRetryAt  *time.Time               `json:"tls_retry_after,omitempty"`
 }
 
 type nsCheckRequest struct {
@@ -1262,6 +1263,10 @@ func (s *Server) handleDomainsOverview(w http.ResponseWriter, r *http.Request) {
 		if domain.TLS.Certificate != nil && !domain.TLS.Certificate.NotAfter.IsZero() {
 			expires := domain.TLS.Certificate.NotAfter.UTC()
 			entry.TLSExpires = &expires
+		}
+		if !domain.TLS.RetryAfter.IsZero() {
+			retry := domain.TLS.RetryAfter.UTC()
+			entry.TLSRetryAt = &retry
 		}
 		if user, ok := userMap[domain.Owner]; ok {
 			entry.OwnerExists = true
