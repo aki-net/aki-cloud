@@ -396,7 +396,23 @@ func (s *Service) markAwaitingDelegation(domain string) {
 	existing, err := s.store.GetDomain(domain)
 	if err == nil && existing != nil {
 		existing.EnsureTLSDefaults()
-		if existing.TLS.Status == models.CertificateStatusAwaitingDNS && existing.TLS.LastError == awaitingDelegationMessage {
+		now := time.Now().UTC()
+		if hasValidCertificate(*existing, now) {
+			if existing.TLS.LastError == awaitingDelegationMessage {
+				_, _ = s.store.MutateDomain(domain, func(rec *models.DomainRecord) error {
+					rec.EnsureTLSDefaults()
+					if rec.TLS.LastError != awaitingDelegationMessage {
+						return nil
+					}
+					rec.TLS.LastError = ""
+					rec.TLS.UpdatedAt = now
+					rec.UpdatedAt = now
+					rec.Version.Counter++
+					rec.Version.NodeID = s.cfg.NodeID
+					rec.Version.Updated = now.Unix()
+					return nil
+				})
+			}
 			return
 		}
 	} else if err != nil {

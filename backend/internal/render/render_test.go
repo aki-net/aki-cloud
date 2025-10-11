@@ -18,13 +18,23 @@ func TestFilterHealthyEdges(t *testing.T) {
 		}
 	})
 
-	t.Run("pending edges skipped when health data exists", func(t *testing.T) {
+	t.Run("unknown edges remain available when health data exists", func(t *testing.T) {
 		health := map[string]models.EdgeHealthStatus{
 			"10.0.0.1": {IP: "10.0.0.1", Healthy: true, LastChecked: now},
 		}
 		got := filterHealthyEdges(edges, health)
-		if len(got) != 1 || got[0] != "10.0.0.1" {
-			t.Fatalf("expected only healthy edge, got %v", got)
+		if len(got) != len(edges) {
+			t.Fatalf("expected all edges to remain available, got %v", got)
+		}
+	})
+
+	t.Run("recent unhealthy edge filtered out", func(t *testing.T) {
+		health := map[string]models.EdgeHealthStatus{
+			"10.0.0.2": {IP: "10.0.0.2", Healthy: false, LastChecked: now},
+		}
+		got := filterHealthyEdges([]string{"10.0.0.2"}, health)
+		if len(got) != 0 {
+			t.Fatalf("expected unhealthy edge to be excluded, got %v", got)
 		}
 	})
 

@@ -11,12 +11,18 @@ PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
 ENV_FILE="${ENV_FILE:-${PROJECT_DIR}/.env}"
 NODE_FILE="${DATA_DIR}/cluster/node.json"
 INFRA_FILE="${DATA_DIR}/infra/nodes.json"
+PYTHON_BIN="$(command -v python3 || command -v python || true)"
+
+if [[ -z "$PYTHON_BIN" ]]; then
+  # No interpreter available (e.g. inside the backend container); skip.
+  exit 0
+fi
 
 if [[ ! -f "$NODE_FILE" || ! -f "$INFRA_FILE" ]]; then
   exit 0
 fi
 
-readarray -t CONFIG <<<"$(python3 - <<'PY'
+readarray -t CONFIG <<<"$("$PYTHON_BIN" - <<'PY'
 import json
 import os
 
@@ -124,7 +130,7 @@ open_port tcp "$TCP_PORTS"
 open_port udp "$UDP_PORTS"
 
 if [[ -f "$ENV_FILE" ]]; then
-python3 - <<'PY'
+  "$PYTHON_BIN" - <<'PY'
 import os
 
 env_path = os.environ["ENV_FILE"]

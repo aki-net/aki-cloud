@@ -90,6 +90,54 @@ func TestEnsureCertificateStatusPromotesValidCertificate(t *testing.T) {
 	}
 }
 
+func TestMarkAwaitingDelegationKeepsActiveCertificate(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.New(dir)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+
+	svc := newTestService(t, dir, st, "node-a")
+
+	now := time.Now().UTC()
+	rec := models.DomainRecord{
+		Domain:   "example.com",
+		OriginIP: "192.0.2.1",
+		Owner:    "user-1",
+		TTL:      60,
+		Proxied:  true,
+	}
+	rec.EnsureTLSDefaults()
+	rec.TLS.Mode = models.EncryptionFlexible
+	rec.TLS.UseRecommended = true
+	rec.TLS.Status = models.CertificateStatusActive
+	rec.TLS.Certificate = &models.TLSCertificate{
+		PrivateKeyPEM: "dummy-key",
+		CertChainPEM:  "dummy-cert",
+		NotBefore:     now.Add(-time.Hour),
+		NotAfter:      now.Add(time.Hour),
+	}
+	rec.TLS.UpdatedAt = now
+	rec.UpdatedAt = now
+
+	if err := st.UpsertDomain(rec); err != nil {
+		t.Fatalf("UpsertDomain: %v", err)
+	}
+
+	svc.markAwaitingDelegation("example.com")
+
+	stored, err := st.GetDomain("example.com")
+	if err != nil {
+		t.Fatalf("GetDomain: %v", err)
+	}
+	if stored.TLS.Status != models.CertificateStatusActive {
+		t.Fatalf("expected status active, got %s", stored.TLS.Status)
+	}
+	if stored.TLS.LastError != "" {
+		t.Fatalf("expected last error cleared, got %q", stored.TLS.LastError)
+	}
+}
+
 func TestShouldAttemptDomainPrefersCoordinator(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.New(dir)

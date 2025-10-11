@@ -368,10 +368,8 @@ func (g *OpenRestyGenerator) Render() error {
 		localEdgeSet[ip] = struct{}{}
 	}
 	filteredLocal := filterHealthyEdges(localEdges, edgeHealth)
-	if len(filteredLocal) == 0 {
-		if !hasHealthData {
-			filteredLocal = localEdges
-		}
+	if len(filteredLocal) == 0 && len(localEdges) > 0 {
+		filteredLocal = append([]string{}, localEdges...)
 	}
 	if len(filteredLocal) == 0 {
 		filteredLocal = healthyEdges
@@ -815,13 +813,10 @@ func filterHealthyEdges(all []string, health map[string]models.EdgeHealthStatus)
 		return all
 	}
 	filtered := make([]string, 0, len(all))
-	hasHealthData := len(health) > 0
 	for _, ip := range all {
 		status, ok := health[ip]
-		if !ok {
-			if !hasHealthData {
-				filtered = append(filtered, ip)
-			}
+		if !ok || status.LastChecked.IsZero() {
+			filtered = append(filtered, ip)
 			continue
 		}
 		if status.Healthy {
