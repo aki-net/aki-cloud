@@ -261,11 +261,15 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/domains/bulk", s.authorizeUser(s.handleBulkCreateDomains))
 			r.Patch("/domains/bulk", s.authorizeUser(s.handleBulkUpdateDomains))
 			r.Put("/domains/{domain}", s.authorizeUser(s.handleUpdateDomain))
-			r.Post("/domains/{domain}/edge/reassign", s.authorizeUser(s.handleReassignDomainEdge))
+			r.Post("/domains/{domain}/edge/reassign", func(w http.ResponseWriter, req *http.Request) {
+				s.requireAdmin(http.HandlerFunc(s.handleReassignDomainEdge)).ServeHTTP(w, req)
+			})
 			r.Delete("/domains/{domain}", s.authorizeUser(s.handleDeleteDomain))
 
 			r.Get("/infra/nameservers", s.requireRole(models.RoleUser, s.handleInfraNS))
-			r.Get("/infra/edges", s.requireRole(models.RoleUser, s.handleInfraEdges))
+			r.Get("/infra/edges", func(w http.ResponseWriter, req *http.Request) {
+				s.requireAdmin(http.HandlerFunc(s.handleInfraEdges)).ServeHTTP(w, req)
+			})
 
 			// admin subroutes
 			r.Route("/admin", func(r chi.Router) {
@@ -613,7 +617,7 @@ func (s *Server) prepareDomainRecord(user userContext, domain string, owner stri
 			record.TLS.UseRecommended = *tlsPayload.UseRecommended
 		}
 	}
-	if edgePayload != nil {
+	if edgePayload != nil && user.Role == models.RoleAdmin {
 		record.Edge.Labels = append([]string{}, edgePayload.Labels...)
 	}
 	record.Edge.Normalize()
@@ -640,6 +644,10 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 	var payload createDomainPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	if payload.Edge != nil && user.Role != models.RoleAdmin {
+		writeError(w, http.StatusForbidden, "edge configuration requires admin")
 		return
 	}
 	if payload.Domain == "" || payload.OriginIP == "" {
@@ -682,6 +690,10 @@ func (s *Server) handleBulkCreateDomains(w http.ResponseWriter, r *http.Request)
 	var payload bulkDomainPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	if payload.Edge != nil && user.Role != models.RoleAdmin {
+		writeError(w, http.StatusForbidden, "edge configuration requires admin")
 		return
 	}
 	if payload.OriginIP == "" {
@@ -877,6 +889,11 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 			existing.Owner = transferOwnerID
 		}
 		if payload.Edge != nil {
+			if user.Role != models.RoleAdmin {
+				failed++
+				results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: "edge updates require admin"})
+				continue
+			}
 			existing.Edge.Labels = append([]string{}, payload.Edge.Labels...)
 			existing.Edge.Normalize()
 		}
@@ -890,6 +907,11 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 				results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: errMsg})
 				continue
 			}
+		} else {
+			existing.Edge.AssignedIP = ""
+			existing.Edge.AssignedNodeID = ""
+			existing.Edge.AssignedAt = time.Time{}
+			existing.Edge.Normalize()
 		}
 		if err := ensureTLSProxyCompatibility(existing); err != nil {
 			failed++
@@ -1009,6 +1031,10 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		existing.TLS.UpdatedAt = time.Now().UTC()
 	}
 	if payload.Edge != nil {
+		if user.Role != models.RoleAdmin {
+			writeError(w, http.StatusForbidden, "edge updates require admin")
+			return
+		}
 		existing.Edge.Labels = append([]string{}, payload.Edge.Labels...)
 		existing.Edge.Normalize()
 	}
@@ -1021,6 +1047,11 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+	} else {
+		existing.Edge.AssignedIP = ""
+		existing.Edge.AssignedNodeID = ""
+		existing.Edge.AssignedAt = time.Time{}
+		existing.Edge.Normalize()
 	}
 	if err := ensureTLSProxyCompatibility(existing); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -1046,15 +1077,10 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleReassignDomainEdge(w http.ResponseWriter, r *http.Request) {
-	user := userFromContext(r.Context())
 	domain := strings.ToLower(chi.URLParam(r, "domain"))
 	existing, err := s.Store.GetDomain(domain)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "domain not found")
-		return
-	}
-	if user.Role != models.RoleAdmin && existing.Owner != user.ID {
-		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	if !existing.Proxied {

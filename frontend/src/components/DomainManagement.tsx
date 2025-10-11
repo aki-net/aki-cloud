@@ -64,48 +64,52 @@ export default function DomainManagement({ isAdmin = false }: Props) {
 
   const loadData = async () => {
     try {
-      const promises: Promise<any>[] = [
+      const [domainData, nsData, edgeData, overviewData] = await Promise.all([
         domainsApi.list(),
         infra.nameservers(),
-        infra.edges(),
-      ];
-
-      if (isAdmin) {
-        promises.push(admin.domainsOverview().catch(() => []));
-      }
-
-      const [domainData, nsData, edgeData, overviewData] =
-        await Promise.all(promises);
+        isAdmin ? infra.edges() : Promise.resolve<EdgeEndpoint[]>([]),
+        isAdmin
+          ? admin.domainsOverview().catch(() => [])
+          : Promise.resolve<DomainOverview[]>([]),
+      ]);
 
       setDomains(domainData);
       setNameservers(nsData);
-      setEdgeEndpoints(edgeData);
-      if (isAdmin && overviewData) {
-        setAllDomains(overviewData);
-      }
 
-      const labelSet = new Set<string>();
-      edgeData.forEach((edge: EdgeEndpoint) =>
-        edge.labels?.forEach((label) => labelSet.add(label)),
-      );
-      domainData.forEach((domain: Domain) =>
-        domain.edge?.labels?.forEach((label) => labelSet.add(label)),
-      );
-      if (overviewData) {
-        overviewData.forEach((overview: DomainOverview) =>
+      if (isAdmin) {
+        setEdgeEndpoints(edgeData);
+        setAllDomains(overviewData);
+
+        const labelSet = new Set<string>();
+        edgeData.forEach((edge) =>
+          edge.labels?.forEach((label) => labelSet.add(label)),
+        );
+        domainData.forEach((domain) =>
+          domain.edge?.labels?.forEach((label) => labelSet.add(label)),
+        );
+        overviewData.forEach((overview) =>
           overview.edge_labels?.forEach((label) => labelSet.add(label)),
         );
-      }
-      const sortedLabels = Array.from(labelSet).sort((a, b) =>
-        a.localeCompare(b),
-      );
-      setAvailableLabels(sortedLabels);
-      if (
-        labelFilter !== "all" &&
-        labelFilter !== "unlabeled" &&
-        !sortedLabels.includes(labelFilter)
-      ) {
-        setLabelFilter("all");
+        const sortedLabels = Array.from(labelSet).sort((a, b) =>
+          a.localeCompare(b),
+        );
+        setAvailableLabels(sortedLabels);
+        if (
+          labelFilter !== "all" &&
+          labelFilter !== "unlabeled" &&
+          !sortedLabels.includes(labelFilter)
+        ) {
+          setLabelFilter("all");
+        }
+      } else {
+        setAllDomains([]);
+        setEdgeEndpoints([]);
+        if (availableLabels.length > 0) {
+          setAvailableLabels([]);
+        }
+        if (labelFilter !== "all") {
+          setLabelFilter("all");
+        }
       }
     } catch (error) {
       toast.error("Failed to load data");
@@ -239,10 +243,16 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   };
 
   const openEdgeModal = (record: Domain | DomainOverview) => {
+    if (!isAdmin) {
+      return;
+    }
     setEdgeModalData(buildEdgeModalData(record));
   };
 
   const renderEdgeCell = (record: Domain | DomainOverview) => {
+    if (!isAdmin) {
+      return null;
+    }
     const info = buildEdgeModalData(record);
     const displayLabel = info.proxied
       ? info.assigned_ip || "Pending assignment"
@@ -513,6 +523,9 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     data: EdgeModalData,
     labels: string[],
   ) => {
+    if (!isAdmin) {
+      return;
+    }
     try {
       const updated = await domainsApi.update(data.domain, {
         origin_ip: data.origin_ip,
@@ -531,6 +544,9 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   };
 
   const handleReassignEdge = async (data: EdgeModalData) => {
+    if (!isAdmin) {
+      return;
+    }
     try {
       const updated = await domainsApi.reassignEdge(data.domain);
       setEdgeModalData(buildEdgeModalData(updated, updated));
@@ -630,7 +646,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   const getFilteredData = () => {
     const query = searchQuery.toLowerCase();
     const matchesLabel = (record: Domain | DomainOverview) => {
-      if (labelFilter === "all") {
+      if (!isAdmin || labelFilter === "all") {
         return true;
       }
       const labels = getDomainLabels(record);
@@ -767,12 +783,14 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     align: "center" as const,
   });
 
-  columns.push({
-    key: "edge-assignment",
-    header: "Edge",
-    accessor: (d: any) => renderEdgeCell(d),
-    width: "220px",
-  });
+  if (isAdmin) {
+    columns.push({
+      key: "edge-assignment",
+      header: "Edge",
+      accessor: (d: any) => renderEdgeCell(d),
+      width: "220px",
+    });
+  }
 
   // TLS column - always present
   columns.push({
@@ -897,7 +915,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
             </Button>
           </>
         )}
-        {availableLabels.length > 0 && (
+        {isAdmin && availableLabels.length > 0 && (
           <div className="label-filter">
             <select
               value={labelFilter}
@@ -1009,9 +1027,10 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         <AddDomainModal
           onClose={() => setShowAddDomain(false)}
           onAdd={loadData}
+          isAdmin={isAdmin}
         />
       )}
-      {edgeModalData && (
+      {isAdmin && edgeModalData && (
         <EdgeSettingsModal
           data={edgeModalData}
           onClose={() => setEdgeModalData(null)}
@@ -1026,9 +1045,11 @@ export default function DomainManagement({ isAdmin = false }: Props) {
 function AddDomainModal({
   onClose,
   onAdd,
+  isAdmin,
 }: {
   onClose: () => void;
   onAdd: () => void;
+  isAdmin: boolean;
 }) {
   const [formData, setFormData] = useState<CreateDomainPayload>({
     domain: "",
@@ -1065,12 +1086,16 @@ function AddDomainModal({
     setLoading(true);
 
     try {
-      const parsedLabels = edgeLabels
-        .split(/[\n,]/)
-        .map((label) => label.trim())
-        .filter(Boolean);
+      const parsedLabels = isAdmin
+        ? edgeLabels
+            .split(/[\n,]/)
+            .map((label) => label.trim())
+            .filter(Boolean)
+        : [];
       const edgePayload =
-        parsedLabels.length > 0 ? { labels: parsedLabels } : undefined;
+        isAdmin && parsedLabels.length > 0
+          ? { labels: parsedLabels }
+          : undefined;
       if (bulkMode) {
         const domainList = bulkDomains
           .split("\n")
@@ -1204,18 +1229,20 @@ function AddDomainModal({
             </div>
           </div>
 
-          <div className="form-group">
-            <label>Edge Labels</label>
-            <Input
-              placeholder="Comma separated (e.g. edge-eu, premium)"
-              value={edgeLabels}
-              onChange={(e) => setEdgeLabels(e.target.value)}
-              fullWidth
-            />
-            <p className="form-hint">
-              Optional. Labels control which edge nodes serve this domain.
-            </p>
-          </div>
+          {isAdmin && (
+            <div className="form-group">
+              <label>Edge Labels</label>
+              <Input
+                placeholder="Comma separated (e.g. edge-eu, premium)"
+                value={edgeLabels}
+                onChange={(e) => setEdgeLabels(e.target.value)}
+                fullWidth
+              />
+              <p className="form-hint">
+                Optional. Labels control which edge nodes serve this domain.
+              </p>
+            </div>
+          )}
 
           {formData.proxied && (
             <div className="form-group">
