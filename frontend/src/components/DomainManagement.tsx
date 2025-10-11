@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { domains as domainsApi, infra, admin } from '../api/client';
-import { Domain, CreateDomainPayload, NameServerEntry, DomainOverview } from '../types';
+import { Domain, CreateDomainPayload, NameServerEntry, DomainOverview, EdgeEndpoint } from '../types';
 import Table from './ui/Table';
 import Button from './ui/Button';
 import Input from './ui/Input';
@@ -22,6 +22,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   const [domains, setDomains] = useState<Domain[]>([]);
   const [allDomains, setAllDomains] = useState<DomainOverview[]>([]);
   const [nameservers, setNameservers] = useState<NameServerEntry[]>([]);
+  const [edgeEndpoints, setEdgeEndpoints] = useState<EdgeEndpoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDomains, setSelectedDomains] = useState<Set<string>>(new Set());
@@ -31,6 +32,20 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   const [viewMode, setViewMode] = useState<'my' | 'all' | 'orphaned'>('my');
   const [bulkIP, setBulkIP] = useState('');
   const [bulkOwner, setBulkOwner] = useState('');
+  const [availableLabels, setAvailableLabels] = useState<string[]>([]);
+  const [labelFilter, setLabelFilter] = useState<string>('all');
+  const [edgeModalData, setEdgeModalData] = useState<EdgeModalData | null>(null);
+
+  interface EdgeModalData {
+    domain: string;
+    origin_ip: string;
+    proxied: boolean;
+    ttl: number;
+    labels: string[];
+    assigned_ip?: string;
+    node_name?: string;
+    node_id?: string;
+  }
   const editInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -42,18 +57,32 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       const promises: Promise<any>[] = [
         domainsApi.list(),
         infra.nameservers(),
+        infra.edges(),
       ];
       
       if (isAdmin) {
         promises.push(admin.domainsOverview().catch(() => []));
       }
       
-      const [domainData, nsData, overviewData] = await Promise.all(promises);
+      const [domainData, nsData, edgeData, overviewData] = await Promise.all(promises);
       
       setDomains(domainData);
       setNameservers(nsData);
+      setEdgeEndpoints(edgeData);
       if (isAdmin && overviewData) {
         setAllDomains(overviewData);
+      }
+
+      const labelSet = new Set<string>();
+      edgeData.forEach((edge: EdgeEndpoint) => edge.labels?.forEach((label) => labelSet.add(label)));
+      domainData.forEach((domain: Domain) => domain.edge?.labels?.forEach((label) => labelSet.add(label)));
+      if (overviewData) {
+        overviewData.forEach((overview: DomainOverview) => overview.edge_labels?.forEach((label) => labelSet.add(label)));
+      }
+      const sortedLabels = Array.from(labelSet).sort((a, b) => a.localeCompare(b));
+      setAvailableLabels(sortedLabels);
+      if (labelFilter !== 'all' && labelFilter !== 'unlabeled' && !sortedLabels.includes(labelFilter)) {
+        setLabelFilter('all');
       }
     } catch (error) {
       toast.error('Failed to load data');
@@ -115,6 +144,89 @@ export default function DomainManagement({ isAdmin = false }: Props) {
           {meta.label}
         </Badge>
         {retryHint && <span className="tls-retry-hint">{retryHint}</span>}
+      </div>
+    );
+  };
+
+  const findFullDomain = (domainName: string) => domains.find((d) => d.domain === domainName);
+
+  const getDomainLabels = (record: Domain | DomainOverview): string[] => {
+    const full = findFullDomain(record.domain);
+    if (full?.edge?.labels) {
+      return full.edge.labels;
+    }
+    if ('edge' in record) {
+      return record.edge?.labels || [];
+    }
+    return record.edge_labels || [];
+  };
+
+  const buildEdgeModalData = (record: Domain | DomainOverview, override?: Domain): EdgeModalData => {
+    const source = override ?? findFullDomain(record.domain);
+    const assignedIp =
+      override?.edge?.assigned_ip ??
+      source?.edge?.assigned_ip ??
+      ('edge' in record ? record.edge?.assigned_ip : record.edge_ip);
+    const nodeId =
+      override?.edge?.assigned_node_id ??
+      source?.edge?.assigned_node_id ??
+      ('edge' in record ? record.edge?.assigned_node_id : record.edge_node_id);
+    const labels =
+      override?.edge?.labels ??
+      source?.edge?.labels ??
+      ('edge' in record ? record.edge?.labels ?? [] : record.edge_labels ?? []);
+    const originIp = override?.origin_ip ?? source?.origin_ip ?? record.origin_ip;
+    const proxied = override?.proxied ?? source?.proxied ?? record.proxied;
+    const ttl =
+      override?.ttl ??
+      source?.ttl ??
+      ('ttl' in record ? ((record as any).ttl ?? 60) : 60);
+    const nodeName =
+      nodeId
+        ? edgeEndpoints.find((edge) => edge.node_id === nodeId)?.node_name
+        : assignedIp
+        ? edgeEndpoints.find((edge) => edge.ip === assignedIp)?.node_name
+        : undefined;
+    return {
+      domain: record.domain,
+      origin_ip: originIp,
+      proxied,
+      ttl,
+      labels,
+      assigned_ip: assignedIp,
+      node_id: nodeId,
+      node_name: nodeName,
+    };
+  };
+
+  const openEdgeModal = (record: Domain | DomainOverview) => {
+    setEdgeModalData(buildEdgeModalData(record));
+  };
+
+  const renderEdgeCell = (record: Domain | DomainOverview) => {
+    const info = buildEdgeModalData(record);
+    return (
+      <div className="edge-cell">
+        <div className="edge-assignment">
+          <span className={`edge-ip mono ${info.assigned_ip ? '' : 'edge-ip-muted'}`}>
+            {info.assigned_ip || 'Pending assignment'}
+          </span>
+          {info.node_name && <span className="edge-node-name">{info.node_name}</span>}
+        </div>
+        {info.labels.length > 0 && (
+          <div className="edge-labels">
+            {info.labels.map((label) => (
+              <Badge key={`${record.domain}-edge-label-${label}`} variant="secondary" size="sm">
+                {label}
+              </Badge>
+            ))}
+          </div>
+        )}
+        <div className="edge-actions">
+          <Button variant="ghost" size="sm" onClick={() => openEdgeModal(record)}>
+            Configure
+          </Button>
+        </div>
       </div>
     );
   };
@@ -333,6 +445,33 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     }
   };
 
+  const handleSaveEdgeLabels = async (data: EdgeModalData, labels: string[]) => {
+    try {
+      const updated = await domainsApi.update(data.domain, {
+        origin_ip: data.origin_ip,
+        proxied: data.proxied,
+        ttl: data.ttl,
+        edge: { labels },
+      });
+      setEdgeModalData(buildEdgeModalData(updated, updated));
+      await loadData();
+      toast.success('Edge labels updated');
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Failed to update edge labels');
+    }
+  };
+
+  const handleReassignEdge = async (data: EdgeModalData) => {
+    try {
+      const updated = await domainsApi.reassignEdge(data.domain);
+      setEdgeModalData(buildEdgeModalData(updated, updated));
+      await loadData();
+      toast.success('Edge assignment updated');
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Failed to reassign edge');
+    }
+  };
+
   const getTLSDisplay = (domain: Domain | DomainOverview) => {
     const isFullDomain = 'tls' in domain;
     
@@ -412,11 +551,21 @@ export default function DomainManagement({ isAdmin = false }: Props) {
 
   const getFilteredData = () => {
     const query = searchQuery.toLowerCase();
+    const matchesLabel = (record: Domain | DomainOverview) => {
+      if (labelFilter === 'all') {
+        return true;
+      }
+      const labels = getDomainLabels(record);
+      if (labelFilter === 'unlabeled') {
+        return labels.length === 0;
+      }
+      return labels.includes(labelFilter);
+    };
     
     if (viewMode === 'my') {
       return domains.filter(d =>
-        d.domain.toLowerCase().includes(query) ||
-        d.origin_ip.includes(searchQuery)
+        (d.domain.toLowerCase().includes(query) ||
+        d.origin_ip.includes(searchQuery)) && matchesLabel(d)
       );
     }
     
@@ -425,15 +574,17 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         !d.owner_exists &&
         (d.domain.toLowerCase().includes(query) ||
          d.origin_ip.includes(searchQuery) ||
-         d.owner_email?.toLowerCase().includes(query))
+         d.owner_email?.toLowerCase().includes(query)) &&
+        matchesLabel(d)
       );
     }
     
     // All domains mode - search by domain, IP, or email
     return allDomains.filter(d =>
-      d.domain.toLowerCase().includes(query) ||
+      (d.domain.toLowerCase().includes(query) ||
       d.owner_email?.toLowerCase().includes(query) ||
-      d.origin_ip.includes(searchQuery)
+      d.origin_ip.includes(searchQuery)) &&
+      matchesLabel(d)
     );
   };
 
@@ -518,6 +669,13 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     ),
     width: '100px',
     align: 'center' as const,
+  });
+  
+  columns.push({
+    key: 'edge-assignment',
+    header: 'Edge',
+    accessor: (d: any) => renderEdgeCell(d),
+    width: '220px',
   });
   
   // TLS column - always present
@@ -615,6 +773,17 @@ export default function DomainManagement({ isAdmin = false }: Props) {
             </Button>
           </>
         )}
+        {availableLabels.length > 0 && (
+          <div className="label-filter">
+            <select value={labelFilter} onChange={(e) => setLabelFilter(e.target.value)}>
+              <option value="all">All labels</option>
+              <option value="unlabeled">No label</option>
+              {availableLabels.map((label) => (
+                <option key={label} value={label}>{label}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <Button variant="primary" onClick={() => setShowAddDomain(true)}>
           Add Domain
         </Button>
@@ -687,6 +856,14 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       )}
 
       {showAddDomain && <AddDomainModal onClose={() => setShowAddDomain(false)} onAdd={loadData} />}
+      {edgeModalData && (
+        <EdgeSettingsModal
+          data={edgeModalData}
+          onClose={() => setEdgeModalData(null)}
+          onSaveLabels={(labels) => handleSaveEdgeLabels(edgeModalData, labels)}
+          onReassign={() => handleReassignEdge(edgeModalData)}
+        />
+      )}
     </div>
   );
 }
@@ -704,6 +881,7 @@ function AddDomainModal({ onClose, onAdd }: { onClose: () => void; onAdd: () => 
   });
   const [bulkMode, setBulkMode] = useState(false);
   const [bulkDomains, setBulkDomains] = useState('');
+  const [edgeLabels, setEdgeLabels] = useState('');
   const [loading, setLoading] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
   const [isMouseDown, setIsMouseDown] = useState(false);
@@ -726,6 +904,11 @@ function AddDomainModal({ onClose, onAdd }: { onClose: () => void; onAdd: () => 
     setLoading(true);
 
     try {
+      const parsedLabels = edgeLabels
+        .split(/[\n,]/)
+        .map(label => label.trim())
+        .filter(Boolean);
+      const edgePayload = parsedLabels.length > 0 ? { labels: parsedLabels } : undefined;
       if (bulkMode) {
         const domainList = bulkDomains.split('\n').map(d => d.trim()).filter(Boolean);
         await domainsApi.bulkCreate({
@@ -734,10 +917,14 @@ function AddDomainModal({ onClose, onAdd }: { onClose: () => void; onAdd: () => 
           proxied: formData.proxied,
           ttl: formData.ttl,
           tls: formData.tls,
+          edge: edgePayload,
         });
         toast.success(`Added ${domainList.length} domains`);
       } else {
-        await domainsApi.create(formData);
+        await domainsApi.create({
+          ...formData,
+          edge: edgePayload,
+        });
         toast.success(`Added ${formData.domain}`);
       }
       onAdd();
@@ -834,6 +1021,17 @@ function AddDomainModal({ onClose, onAdd }: { onClose: () => void; onAdd: () => 
             </div>
           </div>
 
+          <div className="form-group">
+            <label>Edge Labels</label>
+            <input
+              className="form-input"
+              placeholder="Comma separated (e.g. edge-eu, premium)"
+              value={edgeLabels}
+              onChange={(e) => setEdgeLabels(e.target.value)}
+            />
+            <p className="form-hint">Optional. Labels control which edge nodes serve this domain.</p>
+          </div>
+
           {formData.proxied && (
             <div className="form-group">
               <label>TLS Mode</label>
@@ -873,6 +1071,116 @@ function AddDomainModal({ onClose, onAdd }: { onClose: () => void; onAdd: () => 
             </Button>
             <Button type="submit" variant="primary" loading={loading}>
               Add {bulkMode ? 'Domains' : 'Domain'}
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function EdgeSettingsModal({
+  data,
+  onClose,
+  onSaveLabels,
+  onReassign,
+}: {
+  data: EdgeModalData;
+  onClose: () => void;
+  onSaveLabels: (labels: string[]) => Promise<void>;
+  onReassign: () => Promise<void>;
+}) {
+  const [labelsInput, setLabelsInput] = useState(data.labels.join(', '));
+  const [saving, setSaving] = useState(false);
+  const [reassigning, setReassigning] = useState(false);
+  const modalRef = useRef<HTMLDivElement>(null);
+  const [isMouseDown, setIsMouseDown] = useState(false);
+
+  useEffect(() => {
+    setLabelsInput(data.labels.join(', '));
+  }, [data]);
+
+  const parseLabels = (value: string) =>
+    value
+      .split(/[\n,]/)
+      .map((label) => label.trim())
+      .filter(Boolean);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (!modalRef.current?.contains(e.target as Node)) {
+      setIsMouseDown(true);
+    }
+  };
+
+  const handleMouseUp = (e: React.MouseEvent) => {
+    if (isMouseDown && !modalRef.current?.contains(e.target as Node)) {
+      onClose();
+    }
+    setIsMouseDown(false);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await onSaveLabels(parseLabels(labelsInput));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReassignClick = async () => {
+    setReassigning(true);
+    try {
+      await onReassign();
+    } finally {
+      setReassigning(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onMouseDown={handleMouseDown} onMouseUp={handleMouseUp}>
+      <div className="modal" ref={modalRef}>
+        <div className="modal-header">
+          <h2>Edge Assignment</h2>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <form onSubmit={handleSubmit} className="modal-body">
+          <div className="form-group">
+            <label>Domain</label>
+            <div className="edge-modal-domain mono">{data.domain}</div>
+          </div>
+          <div className="form-group">
+            <label>Assigned Edge IP</label>
+            <div className="edge-modal-assignment">
+              <span className="mono edge-modal-ip">{data.assigned_ip || 'Pending assignment'}</span>
+              {data.node_name && <span className="edge-modal-node">{data.node_name}</span>}
+            </div>
+          </div>
+          <div className="form-group">
+            <label>Labels</label>
+            <input
+              className="form-input"
+              placeholder="Comma separated labels"
+              value={labelsInput}
+              onChange={(e) => setLabelsInput(e.target.value)}
+            />
+            <p className="form-hint">Labels control which nodes participate in the rotation for this domain.</p>
+          </div>
+          <div className="modal-actions edge-modal-actions">
+            <Button variant="ghost" type="button" onClick={onClose} disabled={saving || reassigning}>
+              Close
+            </Button>
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={handleReassignClick}
+              loading={reassigning}
+            >
+              Reassign
+            </Button>
+            <Button variant="primary" type="submit" loading={saving}>
+              Save Labels
             </Button>
           </div>
         </form>

@@ -44,6 +44,18 @@ export interface DomainTLS {
   origin_pull_secret?: OriginPullMaterial;
 }
 
+export interface DomainEdge {
+  labels?: string[];
+  assignment_salt?: string;
+  assigned_ip?: string;
+  assigned_node_id?: string;
+  assigned_at?: string;
+}
+
+export interface DomainEdgePayload {
+  labels?: string[];
+}
+
 export interface Domain {
   domain: string;
   owner: string;
@@ -52,6 +64,7 @@ export interface Domain {
   ttl: number;
   updated_at: string;
   tls: DomainTLS;
+  edge?: DomainEdge;
 }
 
 export interface DomainTLSPayload {
@@ -66,6 +79,7 @@ export interface CreateDomainPayload {
   proxied: boolean;
   ttl?: number;
   tls?: DomainTLSPayload;
+  edge?: DomainEdgePayload;
 }
 
 export interface UpdateDomainPayload {
@@ -74,6 +88,7 @@ export interface UpdateDomainPayload {
   ttl?: number;
   owner?: string;
   tls?: DomainTLSPayload;
+  edge?: DomainEdgePayload;
 }
 
 export interface BulkDomainPayload {
@@ -83,6 +98,7 @@ export interface BulkDomainPayload {
   proxied?: boolean;
   ttl?: number;
   tls?: DomainTLSPayload;
+  edge?: DomainEdgePayload;
 }
 
 export interface BulkUpdateDomainPayload {
@@ -92,6 +108,7 @@ export interface BulkUpdateDomainPayload {
   ttl?: number;
   tls?: DomainTLSPayload;
   owner?: string;
+  edge?: DomainEdgePayload;
 }
 
 export type BulkDomainStatus = 'created' | 'updated' | 'skipped' | 'failed';
@@ -116,6 +133,8 @@ export interface CreateUserPayload {
   role: UserRole;
 }
 
+export type NodeRole = 'edge' | 'nameserver';
+
 export interface Node {
   id: string;
   name: string;
@@ -125,12 +144,22 @@ export interface Node {
   ns_base_domain?: string;
   edge_ips?: string[];
   api_endpoint?: string;
+  roles?: NodeRole[];
+  labels?: string[];
   status?: 'idle' | 'pending' | 'healthy' | 'degraded' | 'offline';
   status_message?: string;
   healthy_edges?: number;
   total_edges?: number;
   last_health_at?: string;
   last_seen_at?: string;
+}
+
+export interface EdgeEndpoint {
+  node_id: string;
+  node_name: string;
+  ip: string;
+  labels?: string[];
+  roles?: NodeRole[];
 }
 
 export interface NameServerEntry {
@@ -155,6 +184,10 @@ export interface DomainOverview {
   tls_expires_at?: string;
   tls_last_error?: string;
   tls_retry_after?: string;
+  edge_ip?: string;
+  edge_node_id?: string;
+  edge_labels?: string[];
+  edge_assigned_at?: string;
 }
 
 export interface NameServerStatus {

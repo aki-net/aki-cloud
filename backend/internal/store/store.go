@@ -352,6 +352,9 @@ func (s *Store) GetNodes() ([]models.Node, error) {
 	if err := readJSON(path, &nodes); err != nil {
 		return nil, err
 	}
+	for i := range nodes {
+		nodes[i].ComputeEdgeIPs()
+	}
 	return nodes, nil
 }
 

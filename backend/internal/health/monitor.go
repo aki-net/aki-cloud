@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"log"
 	"net"
 	"strings"
 	"sync"
@@ -107,6 +108,7 @@ func (m *Monitor) evaluateEdges(ctx context.Context) {
 	}
 
 	if updated {
+		m.rebalanceAssignments()
 		m.orch.Trigger(context.Background())
 	}
 }
@@ -159,6 +161,53 @@ func (m *Monitor) checkEdge(ctx context.Context, ip string, prev models.EdgeHeal
 		}
 	}
 	return next
+}
+
+func (m *Monitor) rebalanceAssignments() bool {
+	domains, err := m.store.GetDomains()
+	if err != nil {
+		log.Printf("health: fetch domains for reassignment failed: %v", err)
+		return false
+	}
+	endpoints, err := m.infra.EdgeEndpoints()
+	if err != nil {
+		log.Printf("health: fetch edge endpoints for reassignment failed: %v", err)
+		return false
+	}
+	health, err := m.store.GetEdgeHealthMap()
+	if err != nil {
+		log.Printf("health: fetch edge health for reassignment failed: %v", err)
+		return false
+	}
+	mutated := false
+	for _, domain := range domains {
+		if !domain.Proxied {
+			continue
+		}
+		rec := domain
+		changed, err := infra.EnsureDomainEdgeAssignment(&rec, endpoints, health)
+		if err != nil {
+			if _, ok := err.(models.ErrValidation); ok {
+				continue
+			}
+			log.Printf("health: reassignment for %s failed: %v", rec.Domain, err)
+			continue
+		}
+		if !changed {
+			continue
+		}
+		now := time.Now().UTC()
+		rec.UpdatedAt = now
+		rec.Version.Counter++
+		rec.Version.NodeID = m.nodeID
+		rec.Version.Updated = now.Unix()
+		if err := m.store.UpsertDomain(rec); err != nil {
+			log.Printf("health: persist reassignment for %s failed: %v", rec.Domain, err)
+			continue
+		}
+		mutated = true
+	}
+	return mutated
 }
 
 func changed(a, b models.EdgeHealthStatus) bool {

@@ -333,13 +333,12 @@ func (g *OpenRestyGenerator) Render() error {
 	healthyEdges := filterHealthyEdges(edges, edgeHealth)
 	localInfo := g.localNodeInfo()
 	localEdges := g.localEdgeIPs(localInfo)
-	nsList, err := g.Infra.ActiveNameServers()
-	if err != nil {
-		return err
-	}
-	nsIPs := map[string]struct{}{}
-	for _, ns := range nsList {
-		nsIPs[ns.IPv4] = struct{}{}
+	localEdgeSet := make(map[string]struct{}, len(localEdges))
+	for _, ip := range localEdges {
+		if ip == "" {
+			continue
+		}
+		localEdgeSet[ip] = struct{}{}
 	}
 	filteredLocal := filterHealthyEdges(localEdges, edgeHealth)
 	if len(filteredLocal) == 0 {
@@ -468,50 +467,52 @@ func (g *OpenRestyGenerator) Render() error {
 			placeholderKey = keyPath
 		}
 
+		assignedIP := strings.TrimSpace(domain.Edge.AssignedIP)
+		if assignedIP == "" {
+			continue
+		}
+		if _, ok := localEdgeSet[assignedIP]; !ok {
+			continue
+		}
 		proxyPass := fmt.Sprintf("%s://%s", originScheme, domain.OriginIP)
-		for _, edgeIP := range edgeIPs {
-			if _, isNS := nsIPs[edgeIP]; isNS {
-				continue
-			}
-			challengeUpstream := "http://127.0.0.1:8080"
-			if domain.TLS.LockNodeID != "" && domain.TLS.LockNodeID != localInfo.NodeID {
-				if node, ok := nodeMap[domain.TLS.LockNodeID]; ok {
-					if endpoint := strings.TrimSuffix(node.APIEndpoint, "/"); endpoint != "" {
-						challengeUpstream = endpoint
-					}
+		challengeUpstream := "http://127.0.0.1:8080"
+		if domain.TLS.LockNodeID != "" && domain.TLS.LockNodeID != localInfo.NodeID {
+			if node, ok := nodeMap[domain.TLS.LockNodeID]; ok {
+				if endpoint := strings.TrimSuffix(node.APIEndpoint, "/"); endpoint != "" {
+					challengeUpstream = endpoint
 				}
 			}
-			data := map[string]interface{}{
-				"Domain":           domain.Domain,
-				"EdgeIP":           edgeIP,
-				"OriginIP":         domain.OriginIP,
-				"ProxyPass":        proxyPass,
-				"Mode":             mode,
-				"HasCertificate":   serveTLS,
-				"CertPath":         certPath,
-				"KeyPath":          keyPath,
-				"ChallengeDir":     challengeDir,
-				"RedirectHTTP":     redirectHTTP,
-				"PendingTLS":       pendingTLS,
-				"FallbackLabel":    baseName,
-				"OriginIsHTTPS":    originScheme == "https",
-				"VerifyOrigin":     verifyOrigin,
-				"OriginServerName": domain.Domain,
-				"StrictOriginPull": strictOrigin,
-				"OriginPullCert":   originPullCert,
-				"OriginPullKey":    originPullKey,
-				"ChallengeProxy":   challengeUpstream,
-				"PlaceholderCert":  placeholderCert,
-				"PlaceholderKey":   placeholderKey,
-			}
-			buf := bytes.Buffer{}
-			if err := tmpl.Execute(&buf, data); err != nil {
-				return err
-			}
-			file := filepath.Join(sitesDir, fmt.Sprintf("%s@%s.conf", sanitizeFileName(domain.Domain), strings.ReplaceAll(edgeIP, ":", "_")))
-			if err := os.WriteFile(file, buf.Bytes(), 0o644); err != nil {
-				return err
-			}
+		}
+		data := map[string]interface{}{
+			"Domain":           domain.Domain,
+			"EdgeIP":           assignedIP,
+			"OriginIP":         domain.OriginIP,
+			"ProxyPass":        proxyPass,
+			"Mode":             mode,
+			"HasCertificate":   serveTLS,
+			"CertPath":         certPath,
+			"KeyPath":          keyPath,
+			"ChallengeDir":     challengeDir,
+			"RedirectHTTP":     redirectHTTP,
+			"PendingTLS":       pendingTLS,
+			"FallbackLabel":    baseName,
+			"OriginIsHTTPS":    originScheme == "https",
+			"VerifyOrigin":     verifyOrigin,
+			"OriginServerName": domain.Domain,
+			"StrictOriginPull": strictOrigin,
+			"OriginPullCert":   originPullCert,
+			"OriginPullKey":    originPullKey,
+			"ChallengeProxy":   challengeUpstream,
+			"PlaceholderCert":  placeholderCert,
+			"PlaceholderKey":   placeholderKey,
+		}
+		buf := bytes.Buffer{}
+		if err := tmpl.Execute(&buf, data); err != nil {
+			return err
+		}
+		file := filepath.Join(sitesDir, fmt.Sprintf("%s@%s.conf", sanitizeFileName(domain.Domain), strings.ReplaceAll(assignedIP, ":", "_")))
+		if err := os.WriteFile(file, buf.Bytes(), 0o644); err != nil {
+			return err
 		}
 	}
 
@@ -530,9 +531,10 @@ func (g *OpenRestyGenerator) Render() error {
 }
 
 type localEdgeNode struct {
-	NodeID string   `json:"node_id"`
-	IPs    []string `json:"ips"`
-	NSIPs  []string `json:"ns_ips"`
+	NodeID  string   `json:"node_id"`
+	IPs     []string `json:"ips"`
+	NSIPs   []string `json:"ns_ips"`
+	EdgeIPs []string `json:"edge_ips"`
 }
 
 func (g *OpenRestyGenerator) localNodeInfo() localEdgeNode {
@@ -688,20 +690,32 @@ func loadLocalNodeInfo(dataDir string) localEdgeNode {
 }
 
 func (g *OpenRestyGenerator) localEdgeIPs(node localEdgeNode) []string {
+	if len(node.EdgeIPs) > 0 {
+		return uniqueStrings(trimAndFilter(node.EdgeIPs))
+	}
 	ns := make(map[string]struct{}, len(node.NSIPs))
 	for _, ip := range node.NSIPs {
+		ip = strings.TrimSpace(ip)
+		if ip == "" {
+			continue
+		}
 		ns[ip] = struct{}{}
 	}
 	edges := make([]string, 0, len(node.IPs))
-	for _, ip := range node.IPs {
+	for _, raw := range node.IPs {
+		ip := strings.TrimSpace(raw)
+		if ip == "" {
+			continue
+		}
 		if _, ok := ns[ip]; ok {
 			continue
 		}
-		if ip != "" {
-			edges = append(edges, ip)
-		}
+		edges = append(edges, ip)
 	}
-	return edges
+	if len(edges) == 0 {
+		edges = append(edges, trimAndFilter(node.NSIPs)...)
+	}
+	return uniqueStrings(edges)
 }
 
 func ensureDot(input string) string {
@@ -758,6 +772,18 @@ func filterHealthyEdges(all []string, health map[string]models.EdgeHealthStatus)
 		}
 	}
 	return filtered
+}
+
+func trimAndFilter(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
 }
 
 func uniqueStrings(values []string) []string {

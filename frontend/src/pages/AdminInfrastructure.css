@@ -288,6 +288,33 @@
   color: var(--color-text-secondary);
 }
 
+.node-role-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.node-role-field .role-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+.role-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.role-option input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-accent);
+}
+
 .node-textarea {
   padding: 8px;
   border: 1px solid var(--color-border);
@@ -302,6 +329,40 @@
   outline: none;
   border-color: var(--color-accent);
   box-shadow: 0 0 0 1px var(--color-accent-transparent, rgba(0, 122, 255, 0.35));
+}
+
+.node-role-badges,
+.node-label-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.node-role-tag,
+.node-label-tag {
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+}
+
+.node-role-tag {
+  background: rgba(88, 101, 242, 0.18);
+  color: var(--color-accent);
+}
+
+.node-label-tag {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.node-label-tag::before {
+  content: '#';
+  margin-right: 2px;
+  color: var(--color-text-tertiary);
 }
 
 .node-form-actions {
@@ -450,15 +511,22 @@
 
 .edge-content {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
 }
 
 .edge-ip {
   color: var(--color-text-primary);
   font-weight: 500;
   font-size: 13px;
+}
+
+.edge-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
 }
 
 /* edge-status removed - badges handle their own styling */

@@ -10,6 +10,8 @@ import {
   BulkUpdateDomainPayload,
   CreateUserPayload,
   Node,
+  NodeRole,
+  EdgeEndpoint,
   NameServerEntry,
   DomainOverview,
   NameServerStatus,
@@ -58,6 +60,18 @@ interface LoginResponse {
   role: string;
 }
 
+interface NodePayload {
+  name: string;
+  ips: string[];
+  ns_ips?: string[];
+  edge_ips?: string[];
+  roles?: NodeRole[];
+  labels?: string[];
+  ns_label?: string;
+  ns_base_domain?: string;
+  api_endpoint?: string;
+}
+
 export const auth = {
   login: async (credentials: LoginCredentials): Promise<LoginResponse> => {
     const res = await axios.post(`${API_BASE}/auth/login`, credentials);
@@ -92,6 +106,11 @@ export const domains = {
   
   update: async (domain: string, payload: UpdateDomainPayload): Promise<Domain> => {
     const res = await client.put<Domain>(`/domains/${domain}`, payload);
+    return res.data;
+  },
+
+  reassignEdge: async (domain: string): Promise<Domain> => {
+    const res = await client.post<Domain>(`/domains/${domain}/edge/reassign`, {});
     return res.data;
   },
   
@@ -137,12 +156,12 @@ export const nodes = {
     return res.data;
   },
   
-  create: async (node: Omit<Node, 'id'>): Promise<Node> => {
+  create: async (node: NodePayload): Promise<Node> => {
     const res = await client.post<Node>('/admin/nodes', node);
     return res.data;
   },
   
-  update: async (id: string, node: Node): Promise<Node> => {
+  update: async (id: string, node: Partial<NodePayload>): Promise<Node> => {
     const res = await client.put<Node>(`/admin/nodes/${id}`, node);
     return res.data;
   },
@@ -158,8 +177,8 @@ export const infra = {
     return res.data;
   },
   
-  edges: async (): Promise<string[]> => {
-    const res = await client.get<string[]>('/infra/edges');
+  edges: async (): Promise<EdgeEndpoint[]> => {
+    const res = await client.get<EdgeEndpoint[]>('/infra/edges');
     return res.data;
   },
   nameserverStatus: async (): Promise<NameServerStatus[]> => {

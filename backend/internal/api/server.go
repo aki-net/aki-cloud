@@ -57,6 +57,10 @@ type domainOverview struct {
 	TLSExpires  *time.Time               `json:"tls_expires_at,omitempty"`
 	TLSError    string                   `json:"tls_last_error,omitempty"`
 	TLSRetryAt  *time.Time               `json:"tls_retry_after,omitempty"`
+	EdgeIP      string                   `json:"edge_ip,omitempty"`
+	EdgeNodeID  string                   `json:"edge_node_id,omitempty"`
+	EdgeLabels  []string                 `json:"edge_labels,omitempty"`
+	EdgeUpdated *time.Time               `json:"edge_assigned_at,omitempty"`
 }
 
 type nsCheckRequest struct {
@@ -79,13 +83,18 @@ type domainTLSPayload struct {
 	UseRecommended *bool  `json:"use_recommended,omitempty"`
 }
 
+type domainEdgePayload struct {
+	Labels []string `json:"labels,omitempty"`
+}
+
 type createDomainPayload struct {
-	Domain   string            `json:"domain"`
-	Owner    string            `json:"owner,omitempty"`
-	OriginIP string            `json:"origin_ip"`
-	Proxied  *bool             `json:"proxied,omitempty"`
-	TTL      *int              `json:"ttl,omitempty"`
-	TLS      *domainTLSPayload `json:"tls,omitempty"`
+	Domain   string             `json:"domain"`
+	Owner    string             `json:"owner,omitempty"`
+	OriginIP string             `json:"origin_ip"`
+	Proxied  *bool              `json:"proxied,omitempty"`
+	TTL      *int               `json:"ttl,omitempty"`
+	TLS      *domainTLSPayload  `json:"tls,omitempty"`
+	Edge     *domainEdgePayload `json:"edge,omitempty"`
 }
 
 const (
@@ -99,21 +108,23 @@ var (
 )
 
 type bulkDomainPayload struct {
-	Domains  []string          `json:"domains"`
-	Owner    string            `json:"owner,omitempty"`
-	OriginIP string            `json:"origin_ip"`
-	Proxied  *bool             `json:"proxied,omitempty"`
-	TTL      *int              `json:"ttl,omitempty"`
-	TLS      *domainTLSPayload `json:"tls,omitempty"`
+	Domains  []string           `json:"domains"`
+	Owner    string             `json:"owner,omitempty"`
+	OriginIP string             `json:"origin_ip"`
+	Proxied  *bool              `json:"proxied,omitempty"`
+	TTL      *int               `json:"ttl,omitempty"`
+	TLS      *domainTLSPayload  `json:"tls,omitempty"`
+	Edge     *domainEdgePayload `json:"edge,omitempty"`
 }
 
 type bulkUpdateDomainPayload struct {
-	Domains  []string          `json:"domains"`
-	OriginIP *string           `json:"origin_ip,omitempty"`
-	Proxied  *bool             `json:"proxied,omitempty"`
-	TTL      *int              `json:"ttl,omitempty"`
-	TLS      *domainTLSPayload `json:"tls,omitempty"`
-	Owner    *string           `json:"owner,omitempty"`
+	Domains  []string           `json:"domains"`
+	OriginIP *string            `json:"origin_ip,omitempty"`
+	Proxied  *bool              `json:"proxied,omitempty"`
+	TTL      *int               `json:"ttl,omitempty"`
+	TLS      *domainTLSPayload  `json:"tls,omitempty"`
+	Owner    *string            `json:"owner,omitempty"`
+	Edge     *domainEdgePayload `json:"edge,omitempty"`
 }
 
 type bulkDomainResult struct {
@@ -204,11 +215,12 @@ func ensureTLSProxyCompatibility(rec *models.DomainRecord) error {
 }
 
 type updateDomainPayload struct {
-	OriginIP string            `json:"origin_ip,omitempty"`
-	Proxied  *bool             `json:"proxied,omitempty"`
-	TTL      *int              `json:"ttl,omitempty"`
-	TLS      *domainTLSPayload `json:"tls,omitempty"`
-	Owner    *string           `json:"owner,omitempty"`
+	OriginIP string             `json:"origin_ip,omitempty"`
+	Proxied  *bool              `json:"proxied,omitempty"`
+	TTL      *int               `json:"ttl,omitempty"`
+	TLS      *domainTLSPayload  `json:"tls,omitempty"`
+	Owner    *string            `json:"owner,omitempty"`
+	Edge     *domainEdgePayload `json:"edge,omitempty"`
 }
 
 // Routes constructs the HTTP router.
@@ -249,6 +261,7 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/domains/bulk", s.authorizeUser(s.handleBulkCreateDomains))
 			r.Patch("/domains/bulk", s.authorizeUser(s.handleBulkUpdateDomains))
 			r.Put("/domains/{domain}", s.authorizeUser(s.handleUpdateDomain))
+			r.Post("/domains/{domain}/edge/reassign", s.authorizeUser(s.handleReassignDomainEdge))
 			r.Delete("/domains/{domain}", s.authorizeUser(s.handleDeleteDomain))
 
 			r.Get("/infra/nameservers", s.requireRole(models.RoleUser, s.handleInfraNS))
@@ -545,7 +558,7 @@ func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, records)
 }
 
-func (s *Server) prepareDomainRecord(user userContext, domain string, owner string, origin string, proxied *bool, ttl *int, tlsPayload *domainTLSPayload) (models.DomainRecord, error) {
+func (s *Server) prepareDomainRecord(user userContext, domain string, owner string, origin string, proxied *bool, ttl *int, tlsPayload *domainTLSPayload, edgePayload *domainEdgePayload) (models.DomainRecord, error) {
 	record := models.DomainRecord{
 		Domain:   strings.ToLower(strings.TrimSpace(domain)),
 		Owner:    strings.TrimSpace(owner),
@@ -600,6 +613,10 @@ func (s *Server) prepareDomainRecord(user userContext, domain string, owner stri
 			record.TLS.UseRecommended = *tlsPayload.UseRecommended
 		}
 	}
+	if edgePayload != nil {
+		record.Edge.Labels = append([]string{}, edgePayload.Labels...)
+	}
+	record.Edge.Normalize()
 	if err := ensureTLSProxyCompatibility(&record); err != nil {
 		return models.DomainRecord{}, err
 	}
@@ -629,7 +646,7 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "domain and origin_ip required")
 		return
 	}
-	record, err := s.prepareDomainRecord(user, payload.Domain, payload.Owner, payload.OriginIP, payload.Proxied, payload.TTL, payload.TLS)
+	record, err := s.prepareDomainRecord(user, payload.Domain, payload.Owner, payload.OriginIP, payload.Proxied, payload.TTL, payload.TLS, payload.Edge)
 	if err != nil {
 		if errors.Is(err, errForbiddenDomainOwner) {
 			writeError(w, http.StatusForbidden, err.Error())
@@ -641,6 +658,16 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if record.Proxied {
+		if _, err := s.ensureDomainEdgeAssignment(&record); err != nil {
+			if ve, ok := err.(models.ErrValidation); ok {
+				writeError(w, http.StatusBadRequest, ve.Error())
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	if err := s.Store.UpsertDomain(record); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -691,7 +718,7 @@ func (s *Server) handleBulkCreateDomains(w http.ResponseWriter, r *http.Request)
 	}
 	success := 0
 	for _, domain := range normalized {
-		record, err := s.prepareDomainRecord(user, domain, payload.Owner, payload.OriginIP, payload.Proxied, payload.TTL, payload.TLS)
+		record, err := s.prepareDomainRecord(user, domain, payload.Owner, payload.OriginIP, payload.Proxied, payload.TTL, payload.TLS, payload.Edge)
 		if err != nil {
 			failed++
 			errMsg := err.Error()
@@ -703,6 +730,17 @@ func (s *Server) handleBulkCreateDomains(w http.ResponseWriter, r *http.Request)
 			}
 			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: errMsg})
 			continue
+		}
+		if record.Proxied {
+			if _, err := s.ensureDomainEdgeAssignment(&record); err != nil {
+				failed++
+				errMsg := err.Error()
+				if ve, ok := err.(models.ErrValidation); ok {
+					errMsg = ve.Error()
+				}
+				results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: errMsg})
+				continue
+			}
 		}
 		if err := s.Store.UpsertDomain(record); err != nil {
 			failed++
@@ -838,6 +876,21 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 		if transferOwnerID != "" {
 			existing.Owner = transferOwnerID
 		}
+		if payload.Edge != nil {
+			existing.Edge.Labels = append([]string{}, payload.Edge.Labels...)
+			existing.Edge.Normalize()
+		}
+		if existing.Proxied {
+			if _, err := s.ensureDomainEdgeAssignment(existing); err != nil {
+				failed++
+				errMsg := err.Error()
+				if ve, ok := err.(models.ErrValidation); ok {
+					errMsg = ve.Error()
+				}
+				results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: errMsg})
+				continue
+			}
+		}
 		if err := ensureTLSProxyCompatibility(existing); err != nil {
 			failed++
 			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: err.Error()})
@@ -955,6 +1008,20 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		}
 		existing.TLS.UpdatedAt = time.Now().UTC()
 	}
+	if payload.Edge != nil {
+		existing.Edge.Labels = append([]string{}, payload.Edge.Labels...)
+		existing.Edge.Normalize()
+	}
+	if existing.Proxied {
+		if _, err := s.ensureDomainEdgeAssignment(existing); err != nil {
+			if ve, ok := err.(models.ErrValidation); ok {
+				writeError(w, http.StatusBadRequest, ve.Error())
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	if err := ensureTLSProxyCompatibility(existing); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -970,6 +1037,49 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	existing.Version.Counter++
 	existing.Version.NodeID = s.Config.NodeID
 	existing.Version.Updated = existing.UpdatedAt.Unix()
+	if err := s.Store.UpsertDomain(*existing); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	go s.Orchestrator.Trigger(r.Context())
+	writeJSON(w, http.StatusOK, existing.Sanitize())
+}
+
+func (s *Server) handleReassignDomainEdge(w http.ResponseWriter, r *http.Request) {
+	user := userFromContext(r.Context())
+	domain := strings.ToLower(chi.URLParam(r, "domain"))
+	existing, err := s.Store.GetDomain(domain)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "domain not found")
+		return
+	}
+	if user.Role != models.RoleAdmin && existing.Owner != user.ID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if !existing.Proxied {
+		writeError(w, http.StatusBadRequest, "domain is not proxied")
+		return
+	}
+	newSalt := fmt.Sprintf("%s:%s", strings.ToLower(existing.Domain), uuid.NewString())
+	existing.Edge.AssignmentSalt = newSalt
+	existing.Edge.AssignedIP = ""
+	existing.Edge.AssignedNodeID = ""
+	existing.Edge.AssignedAt = time.Time{}
+	existing.Edge.Normalize()
+	if _, err := s.ensureDomainEdgeAssignment(existing); err != nil {
+		if ve, ok := err.(models.ErrValidation); ok {
+			writeError(w, http.StatusBadRequest, ve.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	now := time.Now().UTC()
+	existing.UpdatedAt = now
+	existing.Version.Counter++
+	existing.Version.NodeID = s.Config.NodeID
+	existing.Version.Updated = now.Unix()
 	if err := s.Store.UpsertDomain(*existing); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1008,12 +1118,12 @@ func (s *Server) handleInfraNS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleInfraEdges(w http.ResponseWriter, r *http.Request) {
-	edges, err := s.Infra.EdgeIPs()
+	endpoints, err := s.Infra.EdgeEndpoints()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, edges)
+	writeJSON(w, http.StatusOK, endpoints)
 }
 
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
@@ -1158,6 +1268,8 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 	node.APIEndpoint = strings.TrimSpace(node.APIEndpoint)
 	node.IPs = filterEmpty(node.IPs)
 	node.NSIPs = filterEmpty(node.NSIPs)
+	node.EdgeIPs = filterEmpty(node.EdgeIPs)
+	node.Labels = filterEmpty(node.Labels)
 	node.ComputeEdgeIPs()
 	if err := s.Store.UpsertNode(node); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -1167,6 +1279,7 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 	if err := s.syncPeersFromNodes(); err != nil {
 		log.Printf("sync peers after create node: %v", err)
 	}
+	go s.reconcileDomainAssignments(context.Background(), fmt.Sprintf("node-create:%s", node.ID))
 	go s.Orchestrator.Trigger(r.Context())
 	writeJSON(w, http.StatusCreated, s.decorateNodeStatus(node))
 }
@@ -1191,12 +1304,15 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var payload struct {
-		Name        *string   `json:"name"`
-		IPs         *[]string `json:"ips"`
-		NSIPs       *[]string `json:"ns_ips"`
-		NSLabel     *string   `json:"ns_label"`
-		NSBase      *string   `json:"ns_base_domain"`
-		APIEndpoint *string   `json:"api_endpoint"`
+		Name        *string            `json:"name"`
+		IPs         *[]string          `json:"ips"`
+		NSIPs       *[]string          `json:"ns_ips"`
+		EdgeIPs     *[]string          `json:"edge_ips"`
+		NSLabel     *string            `json:"ns_label"`
+		NSBase      *string            `json:"ns_base_domain"`
+		APIEndpoint *string            `json:"api_endpoint"`
+		Roles       *[]models.NodeRole `json:"roles"`
+		Labels      *[]string          `json:"labels"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid payload")
@@ -1211,6 +1327,9 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	if payload.NSIPs != nil {
 		existing.NSIPs = filterEmpty(*payload.NSIPs)
 	}
+	if payload.EdgeIPs != nil {
+		existing.EdgeIPs = filterEmpty(*payload.EdgeIPs)
+	}
 	if payload.NSLabel != nil {
 		existing.NSLabel = strings.TrimSpace(*payload.NSLabel)
 	}
@@ -1219,6 +1338,12 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	}
 	if payload.APIEndpoint != nil {
 		existing.APIEndpoint = strings.TrimSpace(*payload.APIEndpoint)
+	}
+	if payload.Roles != nil {
+		existing.Roles = append([]models.NodeRole{}, *payload.Roles...)
+	}
+	if payload.Labels != nil {
+		existing.Labels = filterEmpty(*payload.Labels)
 	}
 	existing.ComputeEdgeIPs()
 	if err := s.Store.UpsertNode(*existing); err != nil {
@@ -1229,6 +1354,7 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	if err := s.syncPeersFromNodes(); err != nil {
 		log.Printf("sync peers after update node: %v", err)
 	}
+	go s.reconcileDomainAssignments(context.Background(), fmt.Sprintf("node-update:%s", existing.ID))
 	go s.Orchestrator.Trigger(r.Context())
 	writeJSON(w, http.StatusOK, s.decorateNodeStatus(*existing))
 }
@@ -1253,6 +1379,7 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 	if err := s.syncPeersFromNodes(); err != nil {
 		log.Printf("sync peers after delete node: %v", err)
 	}
+	go s.reconcileDomainAssignments(context.Background(), fmt.Sprintf("node-delete:%s", id))
 	go s.Orchestrator.Trigger(r.Context())
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
@@ -1294,6 +1421,19 @@ func (s *Server) handleDomainsOverview(w http.ResponseWriter, r *http.Request) {
 		if !domain.TLS.RetryAfter.IsZero() {
 			retry := domain.TLS.RetryAfter.UTC()
 			entry.TLSRetryAt = &retry
+		}
+		if domain.Edge.AssignedIP != "" {
+			entry.EdgeIP = domain.Edge.AssignedIP
+		}
+		if domain.Edge.AssignedNodeID != "" {
+			entry.EdgeNodeID = domain.Edge.AssignedNodeID
+		}
+		if len(domain.Edge.Labels) > 0 {
+			entry.EdgeLabels = append([]string{}, domain.Edge.Labels...)
+		}
+		if !domain.Edge.AssignedAt.IsZero() {
+			assigned := domain.Edge.AssignedAt.UTC()
+			entry.EdgeUpdated = &assigned
 		}
 		if user, ok := userMap[domain.Owner]; ok {
 			entry.OwnerExists = true
@@ -1436,6 +1576,46 @@ func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+func (s *Server) reconcileDomainAssignments(ctx context.Context, reason string) {
+	domains, err := s.Store.GetDomains()
+	if err != nil {
+		log.Printf("edge assignment reconcile (%s): %v", reason, err)
+		return
+	}
+	updated := false
+	for _, domain := range domains {
+		if !domain.Proxied {
+			continue
+		}
+		rec := domain
+		mutated, err := s.ensureDomainEdgeAssignment(&rec)
+		if err != nil {
+			if _, ok := err.(models.ErrValidation); ok {
+				log.Printf("edge assignment reconcile (%s): %s -> %v", reason, rec.Domain, err)
+				continue
+			}
+			log.Printf("edge assignment reconcile (%s): %s -> %v", reason, rec.Domain, err)
+			continue
+		}
+		if !mutated {
+			continue
+		}
+		now := time.Now().UTC()
+		rec.UpdatedAt = now
+		rec.Version.Counter++
+		rec.Version.NodeID = s.Config.NodeID
+		rec.Version.Updated = now.Unix()
+		if err := s.Store.UpsertDomain(rec); err != nil {
+			log.Printf("edge assignment reconcile (%s): persist %s -> %v", reason, rec.Domain, err)
+			continue
+		}
+		updated = true
+	}
+	if updated {
+		go s.Orchestrator.Trigger(ctx)
+	}
 }
 
 func (s *Server) decorateNodesWithStatus(nodes []models.Node) []models.Node {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { formatDistanceToNow } from 'date-fns';
 import { nodes as nodesApi, infra } from '../api/client';
-import { Node, NameServerEntry, NameServerStatus } from '../types';
+import { Node, NameServerEntry, NameServerStatus, NodeRole, EdgeEndpoint } from '../types';
 import Input from '../components/ui/Input';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -14,21 +14,39 @@ export default function AdminInfrastructure() {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [nameservers, setNameservers] = useState<NameServerEntry[]>([]);
   const [nsStatus, setNsStatus] = useState<NameServerStatus[]>([]);
-  const [edges, setEdges] = useState<string[]>([]);
+  const [edges, setEdges] = useState<EdgeEndpoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [checkingHealth, setCheckingHealth] = useState(false);
   const [joinCommand, setJoinCommand] = useState('');
   const [copyingJoin, setCopyingJoin] = useState(false);
   const [nodeFormMode, setNodeFormMode] = useState<'idle' | 'create' | 'edit'>('idle');
-  const [nodeForm, setNodeForm] = useState({
+
+  interface NodeFormState {
+    name: string;
+    ips: string;
+    edgeIps: string;
+    nsIps: string;
+    nsLabel: string;
+    nsBaseDomain: string;
+    apiEndpoint: string;
+    labels: string;
+    roles: NodeRole[];
+  }
+
+  const initialNodeForm: NodeFormState = {
     name: '',
     ips: '',
+    edgeIps: '',
     nsIps: '',
     nsLabel: '',
     nsBaseDomain: '',
     apiEndpoint: '',
-  });
+    labels: '',
+    roles: ['edge', 'nameserver'],
+  };
+
+  const [nodeForm, setNodeForm] = useState<NodeFormState>(initialNodeForm);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [savingNode, setSavingNode] = useState(false);
 
@@ -90,14 +108,7 @@ export default function AdminInfrastructure() {
       .filter(Boolean);
 
   const resetNodeForm = () => {
-    setNodeForm({
-      name: '',
-      ips: '',
-      nsIps: '',
-      nsLabel: '',
-      nsBaseDomain: '',
-      apiEndpoint: '',
-    });
+    setNodeForm({ ...initialNodeForm, roles: [...initialNodeForm.roles] });
     setEditingNodeId(null);
     setNodeFormMode('idle');
   };
@@ -110,24 +121,53 @@ export default function AdminInfrastructure() {
   const openEditNode = (node: Node) => {
     setNodeFormMode('edit');
     setEditingNodeId(node.id);
+    const dedupedRoles = node.roles && node.roles.length > 0 ? [...node.roles] : [];
+    if (!dedupedRoles.includes('edge') && (node.edge_ips?.length || 0) > 0) {
+      dedupedRoles.push('edge');
+    }
+    if (!dedupedRoles.includes('nameserver') && (node.ns_ips?.length || 0) > 0) {
+      dedupedRoles.push('nameserver');
+    }
     setNodeForm({
       name: node.name,
       ips: node.ips.join(', '),
+      edgeIps: (node.edge_ips || []).join(', '),
       nsIps: (node.ns_ips || []).join(', '),
       nsLabel: node.ns_label || '',
       nsBaseDomain: node.ns_base_domain || '',
       apiEndpoint: node.api_endpoint || '',
+      labels: (node.labels || []).join(', '),
+      roles: dedupedRoles.length > 0 ? dedupedRoles : ['edge', 'nameserver'],
     });
   };
 
-  const handleNodeFormChange = (field: keyof typeof nodeForm, value: string) => {
+  type NodeFormField = Exclude<keyof NodeFormState, 'roles'>;
+
+  const handleNodeFormChange = (field: NodeFormField, value: string) => {
     setNodeForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleRoleToggle = (role: NodeRole, active: boolean) => {
+    setNodeForm((prev) => {
+      const current = new Set(prev.roles);
+      if (active) {
+        current.add(role);
+      } else {
+        current.delete(role);
+      }
+      const nextRoles = Array.from(current);
+      return { ...prev, roles: nextRoles.length > 0 ? nextRoles : [] };
+    });
   };
 
   const handleSaveNode = async (event: React.FormEvent) => {
     event.preventDefault();
     const name = nodeForm.name.trim();
     const ips = parseList(nodeForm.ips);
+    const nsIps = parseList(nodeForm.nsIps);
+    const explicitEdgeIps = parseList(nodeForm.edgeIps);
+    const labels = parseList(nodeForm.labels);
+    const roles = nodeForm.roles;
     if (!name) {
       toast.error('Node name is required');
       return;
@@ -136,34 +176,43 @@ export default function AdminInfrastructure() {
       toast.error('Provide at least one IP address');
       return;
     }
+    if (roles.length === 0) {
+      toast.error('Select at least one node role');
+      return;
+    }
+
+    let edgeIps: string[] = [];
+    if (roles.includes('edge')) {
+      if (explicitEdgeIps.length > 0) {
+        edgeIps = explicitEdgeIps;
+      } else {
+        const filtered = ips.filter((ip) => !nsIps.includes(ip));
+        edgeIps = filtered.length > 0 ? filtered : [...ips];
+      }
+      if (edgeIps.length === 0) {
+        toast.error('Edge role requires at least one edge IP');
+        return;
+      }
+    }
+
+    const payload = {
+      name,
+      ips,
+      ns_ips: nsIps,
+      edge_ips: roles.includes('edge') ? edgeIps : [],
+      roles,
+      labels,
+      ns_label: nodeForm.nsLabel.trim() || undefined,
+      ns_base_domain: nodeForm.nsBaseDomain.trim() || undefined,
+      api_endpoint: nodeForm.apiEndpoint.trim() || undefined,
+    };
     setSavingNode(true);
     try {
       if (nodeFormMode === 'create') {
-        await nodesApi.create({
-          name,
-          ips,
-          ns_ips: parseList(nodeForm.nsIps),
-          ns_label: nodeForm.nsLabel.trim() || undefined,
-          ns_base_domain: nodeForm.nsBaseDomain.trim() || undefined,
-          api_endpoint: nodeForm.apiEndpoint.trim() || undefined,
-        });
+        await nodesApi.create(payload);
         toast.success('Node created');
       } else if (nodeFormMode === 'edit' && editingNodeId) {
-        const baseNode = nodes.find((n) => n.id === editingNodeId);
-        if (!baseNode) {
-          toast.error('Node not found');
-          setSavingNode(false);
-          return;
-        }
-        await nodesApi.update(editingNodeId, {
-          ...baseNode,
-          name,
-          ips,
-          ns_ips: parseList(nodeForm.nsIps),
-          ns_label: nodeForm.nsLabel.trim() || undefined,
-          ns_base_domain: nodeForm.nsBaseDomain.trim() || undefined,
-          api_endpoint: nodeForm.apiEndpoint.trim() || undefined,
-        });
+        await nodesApi.update(editingNodeId, payload);
         toast.success('Node updated');
       }
       await loadInfrastructure();
@@ -368,6 +417,18 @@ export default function AdminInfrastructure() {
                   ))}
                 </div>
               </div>
+              <div className="detail-row">
+                <span className="detail-label">Roles:</span>
+                <div className="detail-list">
+                  {(selectedNode.roles && selectedNode.roles.length > 0)
+                    ? selectedNode.roles.map((role) => (
+                        <span key={`${selectedNode.id}-role-${role}`} className="node-role-tag">
+                          {role === 'edge' ? 'Edge Proxy' : 'Nameserver'}
+                        </span>
+                      ))
+                    : <span className="detail-value">—</span>}
+                </div>
+              </div>
               {selectedNode.ns_ips && selectedNode.ns_ips.length > 0 && (
                 <div className="detail-row">
                   <span className="detail-label">NS IPs:</span>
@@ -406,6 +467,16 @@ export default function AdminInfrastructure() {
                   <span className="detail-value mono">{selectedNode.api_endpoint}</span>
                 </div>
               )}
+              {selectedNode.labels && selectedNode.labels.length > 0 && (
+                <div className="detail-row">
+                  <span className="detail-label">Labels:</span>
+                  <div className="detail-list">
+                    {selectedNode.labels.map((label) => (
+                      <span key={`${selectedNode.id}-label-${label}`} className="node-label-tag">{label}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="empty-state">
@@ -429,6 +500,9 @@ export default function AdminInfrastructure() {
                 <th>Status</th>
                 <th>IPs</th>
                 <th>NS IPs</th>
+                <th>Edge IPs</th>
+                <th>Roles</th>
+                <th>Labels</th>
                 <th>API Endpoint</th>
                 <th></th>
               </tr>
@@ -449,6 +523,29 @@ export default function AdminInfrastructure() {
                     </td>
                     <td className="mono">{node.ips.join(', ')}</td>
                     <td className="mono">{(node.ns_ips || []).join(', ') || '—'}</td>
+                    <td className="mono">{(node.edge_ips || []).join(', ') || '—'}</td>
+                    <td>
+                      <div className="node-role-badges">
+                        {(node.roles && node.roles.length > 0)
+                          ? node.roles.map((role) => (
+                              <Badge key={`${node.id}-${role}`} variant={role === 'edge' ? 'primary' : 'info'} size="sm">
+                                {role === 'edge' ? 'Edge' : 'Nameserver'}
+                              </Badge>
+                            ))
+                          : '—'}
+                      </div>
+                    </td>
+                    <td>
+                      <div className="node-label-badges">
+                        {(node.labels && node.labels.length > 0)
+                          ? node.labels.map((label) => (
+                              <Badge key={`${node.id}-label-${label}`} variant="secondary" size="sm">
+                                {label}
+                              </Badge>
+                            ))
+                          : '—'}
+                      </div>
+                    </td>
                     <td className="mono">{node.api_endpoint || '—'}</td>
                     <td className="node-actions">
                       <Button variant="secondary" size="sm" onClick={() => openEditNode(node)}>
@@ -494,6 +591,35 @@ export default function AdminInfrastructure() {
                   placeholder="Optional"
                 />
               </div>
+              <div className="node-textarea-field">
+                <label>Edge IPs</label>
+                <textarea
+                  value={nodeForm.edgeIps}
+                  onChange={(e) => handleNodeFormChange('edgeIps', e.target.value)}
+                  className="node-textarea"
+                  rows={2}
+                  placeholder="Optional (default uses IPs not serving NS)"
+                />
+              </div>
+              <div className="node-role-field">
+                <span className="role-label">Roles</span>
+                <label className="role-option">
+                  <input
+                    type="checkbox"
+                    checked={nodeForm.roles.includes('edge')}
+                    onChange={(e) => handleRoleToggle('edge', e.target.checked)}
+                  />
+                  Edge Proxy
+                </label>
+                <label className="role-option">
+                  <input
+                    type="checkbox"
+                    checked={nodeForm.roles.includes('nameserver')}
+                    onChange={(e) => handleRoleToggle('nameserver', e.target.checked)}
+                  />
+                  Nameserver
+                </label>
+              </div>
               <Input
                 label="NS Label"
                 value={nodeForm.nsLabel}
@@ -506,6 +632,13 @@ export default function AdminInfrastructure() {
                 value={nodeForm.nsBaseDomain}
                 onChange={(e) => handleNodeFormChange('nsBaseDomain', e.target.value)}
                 placeholder="e.g. example.net"
+                fullWidth
+              />
+              <Input
+                label="Labels"
+                value={nodeForm.labels}
+                onChange={(e) => handleNodeFormChange('labels', e.target.value)}
+                placeholder="Comma separated (e.g. edge-eu, paid)"
                 fullWidth
               />
               <Input
@@ -588,15 +721,21 @@ export default function AdminInfrastructure() {
           <p className="edge-description">Public anycast IPs distributed across cluster nodes for receiving client traffic</p>
         </div>
         <div className="edges-grid">
-          {edges.map((edge, index) => {
-            // Simulate IP distribution across nodes (in real app this would come from backend)
-            const nodeId = (index % 4) + 1;
+          {edges.map((edge) => {
+            const labels = edge.labels || [];
             return (
-              <div key={edge} className="edge-item">
-                <div className="edge-node-indicator">node-{nodeId}</div>
+              <div key={`${edge.node_id}-${edge.ip}`} className="edge-item">
+                <div className="edge-node-indicator">{edge.node_name || edge.node_id}</div>
                 <div className="edge-content">
-                  <span className="edge-ip mono">{edge}</span>
-                  <Badge variant="success" size="sm">Active</Badge>
+                  <span className="edge-ip mono">{edge.ip}</span>
+                  <div className="edge-tags">
+                    <Badge variant="success" size="sm">Active</Badge>
+                    {labels.map((label) => (
+                      <Badge key={`${edge.ip}-${label}`} variant="secondary" size="sm">
+                        {label}
+                      </Badge>
+                    ))}
+                  </div>
                 </div>
               </div>
             );

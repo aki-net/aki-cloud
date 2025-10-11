@@ -56,6 +56,13 @@ func (c *Controller) ActiveNameServers() ([]NameServer, error) {
 			out = append(out, ns)
 		}
 	}
+	if len(out) == 1 {
+		primary := out[0]
+		alias := primary
+		alias.Name = fmt.Sprintf("%s-secondary", primary.Name)
+		alias.FQDN = fmt.Sprintf("%s-secondary.%s.%s", sanitizeLabel(primary.Name), primary.NSLabel, primary.BaseZone)
+		out = append(out, alias)
+	}
 	return out, nil
 }
 
@@ -65,14 +72,13 @@ func sanitizeLabel(in string) string {
 
 // EdgeIPs returns list of non-NS IPs across the cluster.
 func (c *Controller) EdgeIPs() ([]string, error) {
-	nodes, err := c.store.GetNodes()
+	endpoints, err := c.EdgeEndpoints()
 	if err != nil {
 		return nil, err
 	}
-	var edges []string
-	for _, node := range nodes {
-		node.ComputeEdgeIPs()
-		edges = append(edges, node.EdgeIPs...)
+	edges := make([]string, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		edges = append(edges, endpoint.IP)
 	}
 	return edges, nil
 }

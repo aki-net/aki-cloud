@@ -2,6 +2,7 @@ package models
 
 import (
 	"net"
+	"sort"
 	"strings"
 	"time"
 )
@@ -43,6 +44,7 @@ type DomainRecord struct {
 	TTL       int          `json:"ttl"`
 	UpdatedAt time.Time    `json:"updated_at"`
 	TLS       DomainTLS    `json:"tls,omitempty"`
+	Edge      DomainEdge   `json:"edge,omitempty"`
 	Version   ClockVersion `json:"version"`
 }
 
@@ -60,6 +62,10 @@ func (d *DomainRecord) Validate() error {
 	if err := d.TLS.Validate(); err != nil {
 		return err
 	}
+	d.Edge.Normalize()
+	if err := d.Edge.Validate(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -74,6 +80,12 @@ func (d *DomainRecord) EnsureTLSDefaults() {
 	if d.TLS.UseRecommended && d.TLS.RecommendedMode == "" {
 		d.TLS.RecommendedMode = EncryptionFlexible
 	}
+	d.Edge.Normalize()
+}
+
+// EnsureEdgeDefaults applies default values to edge settings.
+func (d *DomainRecord) EnsureEdgeDefaults() {
+	d.Edge.Normalize()
 }
 
 // Sanitize redacts sensitive TLS material before returning records via API.
@@ -92,6 +104,37 @@ func (d DomainRecord) Sanitize() DomainRecord {
 	d.TLS.LockNodeID = ""
 	d.TLS.LockExpiresAt = time.Time{}
 	return d
+}
+
+// DomainEdge captures edge assignment preferences and computed state.
+type DomainEdge struct {
+	Labels         []string  `json:"labels,omitempty"`
+	AssignmentSalt string    `json:"assignment_salt,omitempty"`
+	AssignedIP     string    `json:"assigned_ip,omitempty"`
+	AssignedNodeID string    `json:"assigned_node_id,omitempty"`
+	AssignedAt     time.Time `json:"assigned_at,omitempty"`
+}
+
+// Normalize trims, deduplicates, and sorts labels.
+func (e *DomainEdge) Normalize() {
+	e.Labels = normalizeLabels(e.Labels)
+	if e.AssignedIP != "" {
+		e.AssignedIP = strings.TrimSpace(e.AssignedIP)
+	}
+	if e.AssignedNodeID != "" {
+		e.AssignedNodeID = strings.TrimSpace(e.AssignedNodeID)
+	}
+	if e.AssignmentSalt != "" {
+		e.AssignmentSalt = strings.TrimSpace(e.AssignmentSalt)
+	}
+}
+
+// Validate ensures assigned edge metadata is consistent.
+func (e DomainEdge) Validate() error {
+	if e.AssignedIP != "" && net.ParseIP(e.AssignedIP) == nil {
+		return ErrValidation("assigned_ip must be a valid IP address")
+	}
+	return nil
 }
 
 // EncryptionMode describes client<->edge and edge<->origin TLS behaviour.
@@ -225,13 +268,15 @@ type Node struct {
 	Name         string     `json:"name"`
 	IPs          []string   `json:"ips"`
 	NSIPs        []string   `json:"ns_ips"`
+	EdgeIPs      []string   `json:"edge_ips,omitempty"`
 	NSLabel      string     `json:"ns_label,omitempty"`
 	NSBase       string     `json:"ns_base_domain,omitempty"`
 	APIEndpoint  string     `json:"api_endpoint,omitempty"`
+	Roles        []NodeRole `json:"roles,omitempty"`
+	Labels       []string   `json:"labels,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
 	ManagedNS    []string   `json:"managed_ns,omitempty"`
-	EdgeIPs      []string   `json:"edge_ips,omitempty"`
 	LastSeenAt   time.Time  `json:"last_seen_at,omitempty"`
 	Status       NodeStatus `json:"status,omitempty"`
 	StatusMsg    string     `json:"status_message,omitempty"`
@@ -240,20 +285,78 @@ type Node struct {
 	LastHealthAt time.Time  `json:"last_health_at,omitempty"`
 }
 
-// ComputeEdgeIPs populates EdgeIPs by removing NS IPs from the full list.
+// ComputeEdgeIPs normalises node metadata and ensures edge IPs are populated.
 func (n *Node) ComputeEdgeIPs() {
-	ns := make(map[string]struct{}, len(n.NSIPs))
-	for _, ip := range n.NSIPs {
-		ns[ip] = struct{}{}
-	}
-	edges := make([]string, 0, len(n.IPs))
-	for _, ip := range n.IPs {
-		if _, ok := ns[ip]; ok {
+	n.Name = strings.TrimSpace(n.Name)
+	n.APIEndpoint = strings.TrimSpace(n.APIEndpoint)
+	n.NSLabel = strings.TrimSpace(n.NSLabel)
+	n.NSBase = strings.TrimSpace(n.NSBase)
+
+	n.IPs = normalizeIPs(n.IPs)
+	n.NSIPs = normalizeIPs(n.NSIPs)
+	n.EdgeIPs = normalizeIPs(n.EdgeIPs)
+	n.Labels = normalizeLabels(n.Labels)
+	n.Roles = normalizeRoles(n.Roles)
+
+	// Ensure NS and Edge IPs are part of the general IP list.
+	for _, ip := range append(append([]string{}, n.NSIPs...), n.EdgeIPs...) {
+		if ip == "" {
 			continue
 		}
-		edges = append(edges, ip)
+		if !containsString(n.IPs, ip) {
+			n.IPs = append(n.IPs, ip)
+		}
 	}
-	n.EdgeIPs = edges
+	n.IPs = normalizeIPs(n.IPs)
+
+	if len(n.EdgeIPs) == 0 {
+		nsSet := make(map[string]struct{}, len(n.NSIPs))
+		for _, ip := range n.NSIPs {
+			if ip != "" {
+				nsSet[ip] = struct{}{}
+			}
+		}
+		candidates := make([]string, 0, len(n.IPs))
+		for _, ip := range n.IPs {
+			if ip == "" {
+				continue
+			}
+			if _, isNS := nsSet[ip]; isNS {
+				continue
+			}
+			candidates = append(candidates, ip)
+		}
+		if len(candidates) == 0 {
+			candidates = append(candidates, n.NSIPs...)
+		}
+		n.EdgeIPs = normalizeIPs(candidates)
+	}
+
+	if len(n.Roles) == 0 {
+		if len(n.EdgeIPs) > 0 {
+			n.Roles = append(n.Roles, NodeRoleEdge)
+		}
+		if len(n.NSIPs) > 0 {
+			n.Roles = append(n.Roles, NodeRoleNameServer)
+		}
+	}
+	if len(n.EdgeIPs) > 0 && !containsRole(n.Roles, NodeRoleEdge) {
+		n.Roles = append(n.Roles, NodeRoleEdge)
+	}
+	if len(n.NSIPs) > 0 && !containsRole(n.Roles, NodeRoleNameServer) {
+		n.Roles = append(n.Roles, NodeRoleNameServer)
+	}
+	n.Roles = normalizeRoles(n.Roles)
+}
+
+// HasRole reports whether the node is configured for the given role.
+func (n Node) HasRole(role NodeRole) bool {
+	for _, r := range n.Roles {
+		if r == role {
+			return true
+		}
+	}
+	return false
 }
 
 // NodeStatus represents the current health gate for a node's edge capacity.
@@ -309,3 +412,97 @@ type ErrValidation string
 func (e ErrValidation) Error() string {
 	return string(e)
 }
+
+func normalizeIPs(values []string) []string {
+	out := uniqueStrings(normalizeStrings(values))
+	sort.Strings(out)
+	return out
+}
+
+func normalizeLabels(values []string) []string {
+	labels := normalizeStrings(values)
+	for i := range labels {
+		labels[i] = strings.ToLower(labels[i])
+	}
+	return uniqueStrings(labels)
+}
+
+func normalizeStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+func uniqueStrings(values []string) []string {
+	if len(values) == 0 {
+		return values
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+func normalizeRoles(values []NodeRole) []NodeRole {
+	if len(values) == 0 {
+		return values
+	}
+	out := make([]NodeRole, 0, len(values))
+	seen := make(map[NodeRole]struct{}, len(values))
+	for _, role := range values {
+		switch role {
+		case NodeRoleEdge, NodeRoleNameServer:
+		default:
+			continue
+		}
+		if _, ok := seen[role]; ok {
+			continue
+		}
+		seen[role] = struct{}{}
+		out = append(out, role)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i] < out[j]
+	})
+	return out
+}
+
+func containsString(values []string, target string) bool {
+	for _, v := range values {
+		if v == target {
+			return true
+		}
+	}
+	return false
+}
+
+func containsRole(values []NodeRole, target NodeRole) bool {
+	for _, v := range values {
+		if v == target {
+			return true
+		}
+	}
+	return false
+}
+
+// NodeRole defines supported infrastructure responsibilities for a node.
+type NodeRole string
+
+const (
+	// NodeRoleEdge indicates the node participates in edge HTTP proxying.
+	NodeRoleEdge NodeRole = "edge"
+	// NodeRoleNameServer indicates the node answers authoritative DNS.
+	NodeRoleNameServer NodeRole = "nameserver"
+)

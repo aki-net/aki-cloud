@@ -1,0 +1,63 @@
+package infra
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"aki-cloud/backend/internal/models"
+)
+
+// EnsureDomainEdgeAssignment validates or updates the edge assignment for a domain.
+func EnsureDomainEdgeAssignment(record *models.DomainRecord, endpoints []EdgeEndpoint, health map[string]models.EdgeHealthStatus) (bool, error) {
+	record.Edge.Normalize()
+	if record.Edge.AssignmentSalt == "" {
+		record.Edge.AssignmentSalt = strings.ToLower(strings.TrimSpace(record.Domain))
+	}
+
+	eligible := FilterEdgeEndpointsByLabels(endpoints, record.Edge.Labels)
+	if len(eligible) == 0 {
+		return false, models.ErrValidation("no edge nodes match the requested labels")
+	}
+
+	endpointByIP := make(map[string]EdgeEndpoint, len(eligible))
+	for _, endpoint := range eligible {
+		endpointByIP[endpoint.IP] = endpoint
+	}
+
+	now := time.Now().UTC()
+	mutated := false
+
+	current, ok := endpointByIP[record.Edge.AssignedIP]
+	needsAssignment := !ok || record.Edge.AssignedIP == ""
+	if !needsAssignment {
+		if status, ok := health[record.Edge.AssignedIP]; ok && !status.Healthy {
+			needsAssignment = true
+		}
+	}
+
+	if needsAssignment {
+		candidates := PreferHealthyEndpoints(eligible, health)
+		if len(candidates) == 0 {
+			candidates = eligible
+		}
+		key := fmt.Sprintf("%s|%s", record.Domain, record.Edge.AssignmentSalt)
+		selected := RendezvousSelect(key, candidates)
+		record.Edge.AssignedIP = selected.IP
+		record.Edge.AssignedNodeID = selected.NodeID
+		record.Edge.AssignedAt = now
+		mutated = true
+	} else {
+		if record.Edge.AssignedNodeID != current.NodeID {
+			record.Edge.AssignedNodeID = current.NodeID
+			mutated = true
+		}
+		if record.Edge.AssignedAt.IsZero() {
+			record.Edge.AssignedAt = now
+			mutated = true
+		}
+	}
+
+	record.Edge.Normalize()
+	return mutated, nil
+}
