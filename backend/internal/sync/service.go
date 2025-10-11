@@ -188,6 +188,7 @@ func (s *Service) ApplySnapshot(snapshot Snapshot) error {
 	if err := s.store.SaveNodes(snapshot.Nodes); err != nil {
 		return err
 	}
+	s.bootstrapPendingEdgeHealth(snapshot.Nodes)
 	if err := s.updatePeers(snapshot.Nodes); err != nil {
 		return err
 	}
@@ -295,4 +296,35 @@ func (s *Service) updatePeers(nodes []models.Node) error {
 	}
 	sort.Strings(peers)
 	return s.store.SavePeers(peers)
+}
+
+func (s *Service) bootstrapPendingEdgeHealth(nodes []models.Node) {
+	healthMap, err := s.store.GetEdgeHealthMap()
+	if err != nil {
+		return
+	}
+	now := time.Now().UTC()
+	for _, node := range nodes {
+		node.ComputeEdgeIPs()
+		for _, ip := range node.EdgeIPs {
+			if _, exists := healthMap[ip]; exists {
+				continue
+			}
+			status := models.EdgeHealthStatus{
+				IP:           ip,
+				Healthy:      false,
+				LastChecked:  time.Time{},
+				FailureCount: 0,
+				Message:      "awaiting first health check",
+				Version: models.ClockVersion{
+					Counter: 1,
+					NodeID:  s.nodeID,
+					Updated: now.Unix(),
+				},
+			}
+			if err := s.store.UpsertEdgeHealth(status); err == nil {
+				healthMap[ip] = status
+			}
+		}
+	}
 }

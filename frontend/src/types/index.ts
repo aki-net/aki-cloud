@@ -125,6 +125,12 @@ export interface Node {
   ns_base_domain?: string;
   edge_ips?: string[];
   api_endpoint?: string;
+  status?: 'idle' | 'pending' | 'healthy' | 'degraded' | 'offline';
+  status_message?: string;
+  healthy_edges?: number;
+  total_edges?: number;
+  last_health_at?: string;
+  last_seen_at?: string;
 }
 
 export interface NameServerEntry {

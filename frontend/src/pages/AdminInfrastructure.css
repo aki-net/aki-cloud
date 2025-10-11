@@ -180,6 +180,17 @@
   font-size: 14px;
 }
 
+.status-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-message {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
 .detail-list {
   display: flex;
   flex-wrap: wrap;
@@ -296,6 +307,35 @@
 .node-form-actions {
   display: flex;
   gap: 8px;
+}
+
+.join-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.join-description {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-tertiary);
+}
+
+.join-command {
+  width: 100%;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  resize: none;
+}
+
+.join-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .nameservers-description {

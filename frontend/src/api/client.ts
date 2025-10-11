@@ -173,6 +173,11 @@ export const infra = {
     return res.data;
   },
   
+  joinCommand: async (): Promise<string> => {
+    const res = await client.get<{ command: string }>('/admin/nodes/join-command');
+    return res.data.command;
+  },
+  
   rebuild: async (): Promise<void> => {
     await client.post('/admin/ops/rebuild', {});
   },

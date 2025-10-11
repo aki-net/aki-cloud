@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -86,7 +87,11 @@ type createDomainPayload struct {
 	TLS      *domainTLSPayload `json:"tls,omitempty"`
 }
 
-const maxBulkDomains = 1000
+const (
+	maxBulkDomains          = 1000
+	installScriptURL        = "https://raw.githubusercontent.com/aki-net/aki-cloud/main/install.sh"
+	automationQueuedMessage = "automation queued"
+)
 
 var (
 	errForbiddenDomainOwner = errors.New("cannot create domain for another user")
@@ -137,6 +142,20 @@ func disableTLSForDNS(rec *models.DomainRecord) {
 	rec.TLS.LockExpiresAt = time.Time{}
 	rec.TLS.Challenges = nil
 	rec.TLS.UpdatedAt = time.Now().UTC()
+}
+
+func queueTLSAutomation(rec *models.DomainRecord, ts time.Time) {
+	if rec == nil {
+		return
+	}
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+	rec.TLS.Status = models.CertificateStatusPending
+	rec.TLS.LastError = automationQueuedMessage
+	rec.TLS.RetryAfter = time.Time{}
+	rec.TLS.LastAttemptAt = time.Time{}
+	rec.TLS.UpdatedAt = ts
 }
 
 func ensureTLSProxyCompatibility(rec *models.DomainRecord) error {
@@ -219,6 +238,7 @@ func (s *Server) Routes() http.Handler {
 				r.Post("/nodes", s.handleCreateNode)
 				r.Put("/nodes/{id}", s.handleUpdateNode)
 				r.Delete("/nodes/{id}", s.handleDeleteNode)
+				r.Get("/nodes/join-command", s.handleNodeJoinCommand)
 
 				r.Get("/domains/overview", s.handleDomainsOverview)
 				r.Post("/infra/nameservers/check", s.handleNameServerCheck)
@@ -541,7 +561,9 @@ func (s *Server) prepareDomainRecord(user userContext, domain string, owner stri
 		record.TLS.UseRecommended = false
 	}
 	record.TLS.Status = models.CertificateStatusNone
-	record.TLS.Status = models.CertificateStatusNone
+	if record.TLS.UseRecommended {
+		queueTLSAutomation(&record, time.Time{})
+	}
 	if tlsPayload != nil {
 		if tlsPayload.Mode != "" {
 			record.TLS.Mode = models.EncryptionMode(strings.ToLower(tlsPayload.Mode))
@@ -751,9 +773,7 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 			} else if !prevProxy && payload.TLS == nil {
 				existing.TLS.UseRecommended = true
 				existing.TLS.Mode = models.EncryptionFlexible
-				existing.TLS.Status = models.CertificateStatusNone
-				existing.TLS.LastError = ""
-				existing.TLS.UpdatedAt = time.Now().UTC()
+				queueTLSAutomation(existing, time.Now().UTC())
 			}
 		}
 		if payload.TTL != nil && *payload.TTL > 0 {
@@ -764,6 +784,7 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 				existing.TLS.Mode = models.EncryptionMode(strings.ToLower(payload.TLS.Mode))
 			}
 			if payload.TLS.UseRecommended != nil {
+				prevAuto := existing.TLS.UseRecommended
 				existing.TLS.UseRecommended = *payload.TLS.UseRecommended
 				existing.TLS.Challenges = nil
 				existing.TLS.LockID = ""
@@ -771,10 +792,17 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 				existing.TLS.LockExpiresAt = time.Time{}
 				existing.TLS.RecommendedMode = ""
 				existing.TLS.RecommendedAt = time.Time{}
-				if existing.TLS.Certificate != nil && existing.TLS.Certificate.CertChainPEM != "" {
-					existing.TLS.Status = models.CertificateStatusActive
-				} else if !existing.TLS.UseRecommended {
-					existing.TLS.Status = models.CertificateStatusNone
+				if existing.TLS.UseRecommended {
+					if !prevAuto || existing.TLS.Certificate == nil || existing.TLS.Certificate.CertChainPEM == "" {
+						queueTLSAutomation(existing, time.Now().UTC())
+					}
+				} else {
+					if existing.TLS.Certificate != nil && existing.TLS.Certificate.CertChainPEM != "" {
+						existing.TLS.Status = models.CertificateStatusActive
+					} else {
+						existing.TLS.Status = models.CertificateStatusNone
+						existing.TLS.LastError = ""
+					}
 				}
 			}
 			existing.TLS.UpdatedAt = time.Now().UTC()
@@ -845,9 +873,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		} else if !prevProxy && payload.TLS == nil {
 			existing.TLS.UseRecommended = true
 			existing.TLS.Mode = models.EncryptionFlexible
-			existing.TLS.Status = models.CertificateStatusNone
-			existing.TLS.LastError = ""
-			existing.TLS.UpdatedAt = time.Now().UTC()
+			queueTLSAutomation(existing, time.Now().UTC())
 		}
 	}
 	if payload.TTL != nil && *payload.TTL > 0 {
@@ -878,6 +904,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			existing.TLS.Mode = models.EncryptionMode(strings.ToLower(payload.TLS.Mode))
 		}
 		if payload.TLS.UseRecommended != nil {
+			prevAuto := existing.TLS.UseRecommended
 			existing.TLS.UseRecommended = *payload.TLS.UseRecommended
 			existing.TLS.Challenges = nil
 			existing.TLS.LockID = ""
@@ -885,10 +912,17 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			existing.TLS.LockExpiresAt = time.Time{}
 			existing.TLS.RecommendedMode = ""
 			existing.TLS.RecommendedAt = time.Time{}
-			if existing.TLS.Certificate != nil && existing.TLS.Certificate.CertChainPEM != "" {
-				existing.TLS.Status = models.CertificateStatusActive
-			} else if !existing.TLS.UseRecommended {
-				existing.TLS.Status = models.CertificateStatusNone
+			if existing.TLS.UseRecommended {
+				if !prevAuto || existing.TLS.Certificate == nil || existing.TLS.Certificate.CertChainPEM == "" {
+					queueTLSAutomation(existing, time.Now().UTC())
+				}
+			} else {
+				if existing.TLS.Certificate != nil && existing.TLS.Certificate.CertChainPEM != "" {
+					existing.TLS.Status = models.CertificateStatusActive
+				} else {
+					existing.TLS.Status = models.CertificateStatusNone
+					existing.TLS.LastError = ""
+				}
 			}
 		}
 		existing.TLS.UpdatedAt = time.Now().UTC()
@@ -1079,7 +1113,8 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, nodes)
+	annotated := s.decorateNodesWithStatus(nodes)
+	writeJSON(w, http.StatusOK, annotated)
 }
 
 func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
@@ -1100,11 +1135,12 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.bootstrapEdgeHealth(node)
 	if err := s.syncPeersFromNodes(); err != nil {
 		log.Printf("sync peers after create node: %v", err)
 	}
 	go s.Orchestrator.Trigger(r.Context())
-	writeJSON(w, http.StatusCreated, node)
+	writeJSON(w, http.StatusCreated, s.decorateNodeStatus(node))
 }
 
 func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
@@ -1161,15 +1197,27 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.bootstrapEdgeHealth(*existing)
 	if err := s.syncPeersFromNodes(); err != nil {
 		log.Printf("sync peers after update node: %v", err)
 	}
 	go s.Orchestrator.Trigger(r.Context())
-	writeJSON(w, http.StatusOK, existing)
+	writeJSON(w, http.StatusOK, s.decorateNodeStatus(*existing))
 }
 
 func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	nodes, err := s.Store.GetNodes()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, node := range nodes {
+		if node.ID == id {
+			s.cleanupEdgeHealth(node)
+			break
+		}
+	}
 	if err := s.Store.DeleteNode(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1356,6 +1404,301 @@ func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+func (s *Server) decorateNodesWithStatus(nodes []models.Node) []models.Node {
+	if len(nodes) == 0 {
+		return nodes
+	}
+	health, err := s.Store.GetEdgeHealthMap()
+	if err != nil {
+		log.Printf("infra: fetch edge health failed: %v", err)
+		return nodes
+	}
+	for i := range nodes {
+		nodes[i] = s.decorateNodeStatusWithHealth(nodes[i], health)
+	}
+	return nodes
+}
+
+func (s *Server) decorateNodeStatus(node models.Node) models.Node {
+	decorated := s.decorateNodesWithStatus([]models.Node{node})
+	if len(decorated) == 0 {
+		return node
+	}
+	return decorated[0]
+}
+
+func (s *Server) decorateNodeStatusWithHealth(node models.Node, health map[string]models.EdgeHealthStatus) models.Node {
+	node.ComputeEdgeIPs()
+	status, msg, healthyCount, totalCount, last := evaluateNodeStatus(node, health)
+	node.Status = status
+	node.StatusMsg = msg
+	node.HealthyEdges = healthyCount
+	node.TotalEdges = totalCount
+	node.LastHealthAt = last
+	if !last.IsZero() {
+		node.LastSeenAt = last
+	}
+	return node
+}
+
+func evaluateNodeStatus(node models.Node, health map[string]models.EdgeHealthStatus) (models.NodeStatus, string, int, int, time.Time) {
+	total := len(node.EdgeIPs)
+	if total == 0 {
+		return models.NodeStatusIdle, "no edge IPs configured", 0, 0, time.Time{}
+	}
+	var (
+		healthy   int
+		unhealthy int
+		pending   int
+		last      time.Time
+		messages  []string
+	)
+	for _, ip := range node.EdgeIPs {
+		status, ok := health[ip]
+		if !ok {
+			pending++
+			continue
+		}
+		if status.LastChecked.After(last) {
+			last = status.LastChecked
+		}
+		if status.Healthy {
+			healthy++
+			continue
+		}
+		if status.LastChecked.IsZero() {
+			pending++
+			continue
+		}
+		unhealthy++
+		if status.Message != "" {
+			messages = append(messages, fmt.Sprintf("%s: %s", ip, status.Message))
+		}
+	}
+	switch {
+	case healthy == total:
+		return models.NodeStatusHealthy, "", healthy, total, last
+	case healthy > 0:
+		msg := fmt.Sprintf("%d/%d edges degraded", total-healthy, total)
+		if len(messages) > 0 {
+			msg = fmt.Sprintf("%s; %s", msg, strings.Join(messages, "; "))
+		}
+		return models.NodeStatusDegraded, msg, healthy, total, last
+	case pending == total:
+		return models.NodeStatusPending, "waiting for first health check", healthy, total, last
+	case pending > 0:
+		msg := fmt.Sprintf("%d pending, %d unhealthy", pending, unhealthy)
+		if len(messages) > 0 {
+			msg = fmt.Sprintf("%s; %s", msg, strings.Join(messages, "; "))
+		}
+		return models.NodeStatusPending, msg, healthy, total, last
+	default:
+		msg := "all edges unhealthy"
+		if len(messages) > 0 {
+			msg = strings.Join(messages, "; ")
+		}
+		return models.NodeStatusOffline, msg, healthy, total, last
+	}
+}
+
+func (s *Server) bootstrapEdgeHealth(node models.Node) {
+	node.ComputeEdgeIPs()
+	if len(node.EdgeIPs) == 0 {
+		return
+	}
+	healthMap, err := s.Store.GetEdgeHealthMap()
+	if err != nil {
+		log.Printf("infra: bootstrap edge health map load failed: %v", err)
+		return
+	}
+	now := time.Now().UTC()
+	for _, ip := range node.EdgeIPs {
+		if _, exists := healthMap[ip]; exists {
+			continue
+		}
+		status := models.EdgeHealthStatus{
+			IP:           ip,
+			Healthy:      false,
+			LastChecked:  time.Time{},
+			FailureCount: 0,
+			Message:      "awaiting first health check",
+			Version: models.ClockVersion{
+				Counter: 1,
+				NodeID:  s.Config.NodeID,
+				Updated: now.Unix(),
+			},
+		}
+		if err := s.Store.UpsertEdgeHealth(status); err != nil {
+			log.Printf("infra: record pending health for %s failed: %v", ip, err)
+			continue
+		}
+		healthMap[ip] = status
+	}
+}
+
+func (s *Server) cleanupEdgeHealth(node models.Node) {
+	node.ComputeEdgeIPs()
+	for _, ip := range node.EdgeIPs {
+		if err := s.Store.DeleteEdgeHealth(ip); err != nil {
+			log.Printf("infra: cleanup health for %s failed: %v", ip, err)
+		}
+	}
+}
+
+func (s *Server) handleNodeJoinCommand(w http.ResponseWriter, r *http.Request) {
+	clusterSecretBytes, err := os.ReadFile(s.Config.ClusterSecretFile)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to read cluster secret")
+		return
+	}
+	clusterSecret := strings.TrimSpace(string(clusterSecretBytes))
+	jwtSecret := strings.TrimSpace(string(s.Config.JWTSecret))
+	if clusterSecret == "" || jwtSecret == "" {
+		writeError(w, http.StatusInternalServerError, "cluster secrets unavailable")
+		return
+	}
+	seedURL := s.seedURLFromRequest(r)
+	command := fmt.Sprintf(
+		"wget -qO install.sh %s && chmod +x install.sh && ./install.sh --mode join --seed %s --cluster-secret '%s' --jwt-secret '%s' --node-name \"<node-name>\" --ips \"<ip1,ip2>\" --ns-ips \"<ns-ip1,ns-ip2>\"",
+		installScriptURL,
+		seedURL,
+		escapeSingleQuotes(clusterSecret),
+		escapeSingleQuotes(jwtSecret),
+	)
+	writeJSON(w, http.StatusOK, map[string]string{"command": command})
+}
+
+func (s *Server) seedURLFromRequest(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if forwarded := r.Header.Get("X-Forwarded-Proto"); forwarded != "" {
+		parts := strings.Split(forwarded, ",")
+		if len(parts) > 0 {
+			if val := strings.TrimSpace(parts[0]); val != "" {
+				scheme = val
+			}
+		}
+	}
+	host := s.resolveSeedHost(r.Host)
+	return fmt.Sprintf("%s://%s", scheme, host)
+}
+
+func escapeSingleQuotes(input string) string {
+	if input == "" {
+		return ""
+	}
+	return strings.ReplaceAll(input, "'", `'"'"'`)
+}
+
+func (s *Server) resolveSeedHost(requestHost string) string {
+	trimmed := strings.TrimSpace(requestHost)
+	if trimmed != "" && !isLocalhost(trimmed) {
+		if strings.Contains(trimmed, ":") {
+			return trimmed
+		}
+		if s.Config.Port == 80 || s.Config.Port == 443 {
+			return trimmed
+		}
+		return fmt.Sprintf("%s:%d", trimmed, s.Config.Port)
+	}
+
+	// fall back to current node endpoint
+	if nodeHost := s.localNodeAPIHost(); nodeHost != "" {
+		return nodeHost
+	}
+
+	port := s.Config.Port
+	if port == 0 {
+		port = 8080
+	}
+	return fmt.Sprintf("127.0.0.1:%d", port)
+}
+
+func (s *Server) localNodeAPIHost() string {
+	nodes, err := s.Store.GetNodes()
+	if err != nil {
+		return ""
+	}
+	if host := hostFromNodes(nodes, s.Config.NodeID, s.Config.Port); host != "" {
+		return host
+	}
+	if len(nodes) > 0 {
+		return hostFromNodes(nodes[:1], "", s.Config.Port)
+	}
+	return ""
+}
+
+func hostFromNodes(nodes []models.Node, targetID string, fallbackPort int) string {
+	for _, node := range nodes {
+		if targetID != "" && node.ID != targetID {
+			continue
+		}
+		if host := hostFromEndpoint(node.APIEndpoint, fallbackPort); host != "" {
+			return host
+		}
+		if len(node.IPs) > 0 {
+			ip := node.IPs[0]
+			if fallbackPort == 80 || fallbackPort == 443 {
+				return ip
+			}
+			return fmt.Sprintf("%s:%d", ip, fallbackPort)
+		}
+	}
+	return ""
+}
+
+func hostFromEndpoint(endpoint string, fallbackPort int) string {
+	ep := strings.TrimSpace(endpoint)
+	if ep == "" {
+		return ""
+	}
+	if !strings.Contains(ep, "://") {
+		ep = "http://" + ep
+	}
+	u, err := url.Parse(ep)
+	if err != nil {
+		h := strings.TrimPrefix(strings.TrimPrefix(endpoint, "https://"), "http://")
+		if h == "" {
+			return ""
+		}
+		if strings.Contains(h, ":") {
+			return h
+		}
+		if fallbackPort == 80 || fallbackPort == 443 {
+			return h
+		}
+		return fmt.Sprintf("%s:%d", h, fallbackPort)
+	}
+	host := u.Host
+	if host == "" {
+		host = u.Path
+	}
+	if host == "" {
+		return ""
+	}
+	if strings.Contains(host, ":") {
+		return host
+	}
+	if fallbackPort == 80 || fallbackPort == 443 {
+		return host
+	}
+	return fmt.Sprintf("%s:%d", host, fallbackPort)
+}
+
+func isLocalhost(host string) bool {
+	lower := strings.ToLower(host)
+	if strings.HasPrefix(lower, "127.") || lower == "localhost" {
+		return true
+	}
+	if strings.Contains(lower, ":") {
+		parts := strings.Split(lower, ":")
+		return isLocalhost(parts[0])
+	}
+	return false
 }
 
 func (s *Server) resolveOwnerIdentifier(owner string) (string, error) {

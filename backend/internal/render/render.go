@@ -329,6 +329,7 @@ func (g *OpenRestyGenerator) Render() error {
 	if err != nil {
 		return err
 	}
+	hasHealthData := len(edgeHealth) > 0
 	healthyEdges := filterHealthyEdges(edges, edgeHealth)
 	localInfo := g.localNodeInfo()
 	localEdges := g.localEdgeIPs(localInfo)
@@ -342,19 +343,21 @@ func (g *OpenRestyGenerator) Render() error {
 	}
 	filteredLocal := filterHealthyEdges(localEdges, edgeHealth)
 	if len(filteredLocal) == 0 {
-		filteredLocal = localEdges
+		if !hasHealthData {
+			filteredLocal = localEdges
+		}
 	}
 	if len(filteredLocal) == 0 {
 		filteredLocal = healthyEdges
-		if len(filteredLocal) == 0 {
+		if len(filteredLocal) == 0 && !hasHealthData {
 			filteredLocal = edges
 		}
 	}
 	edgeIPs := uniqueStrings(filteredLocal)
-	if len(edgeIPs) == 0 {
+	if len(edgeIPs) == 0 && !hasHealthData {
 		edgeIPs = uniqueStrings(localEdges)
 	}
-	if len(edgeIPs) == 0 {
+	if len(edgeIPs) == 0 && !hasHealthData {
 		edgeIPs = uniqueStrings(edges)
 	}
 	if err := os.MkdirAll(g.OutputDir, 0o755); err != nil {
@@ -734,10 +737,13 @@ func filterHealthyEdges(all []string, health map[string]models.EdgeHealthStatus)
 		return all
 	}
 	filtered := make([]string, 0, len(all))
+	hasHealthData := len(health) > 0
 	for _, ip := range all {
 		status, ok := health[ip]
 		if !ok {
-			filtered = append(filtered, ip)
+			if !hasHealthData {
+				filtered = append(filtered, ip)
+			}
 			continue
 		}
 		if status.Healthy {
@@ -745,7 +751,6 @@ func filterHealthyEdges(all []string, health map[string]models.EdgeHealthStatus)
 			continue
 		}
 		if status.LastChecked.IsZero() {
-			filtered = append(filtered, ip)
 			continue
 		}
 		if time.Since(status.LastChecked) > staleThreshold {

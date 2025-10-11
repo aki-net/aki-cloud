@@ -361,6 +361,11 @@ func (s *Store) SaveNodes(nodes []models.Node) error {
 	defer s.mu.Unlock()
 	for i := range nodes {
 		nodes[i].ComputeEdgeIPs()
+		nodes[i].Status = ""
+		nodes[i].StatusMsg = ""
+		nodes[i].HealthyEdges = 0
+		nodes[i].TotalEdges = 0
+		nodes[i].LastHealthAt = time.Time{}
 	}
 	return writeJSONAtomic(s.nodesFile(), nodes)
 }

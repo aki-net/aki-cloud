@@ -18,6 +18,8 @@ export default function AdminInfrastructure() {
   const [loading, setLoading] = useState(true);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [checkingHealth, setCheckingHealth] = useState(false);
+  const [joinCommand, setJoinCommand] = useState('');
+  const [copyingJoin, setCopyingJoin] = useState(false);
   const [nodeFormMode, setNodeFormMode] = useState<'idle' | 'create' | 'edit'>('idle');
   const [nodeForm, setNodeForm] = useState({
     name: '',
@@ -36,16 +38,18 @@ export default function AdminInfrastructure() {
 
   const loadInfrastructure = async () => {
     try {
-      const [nodesData, nsData, edgeData, statusData] = await Promise.all([
+      const [nodesData, nsData, edgeData, statusData, joinCmd] = await Promise.all([
         nodesApi.list(),
         infra.nameservers(),
         infra.edges(),
         infra.nameserverStatus().catch(() => [] as NameServerStatus[]),
+        infra.joinCommand().catch(() => ''),
       ]);
       setNodes(nodesData);
       setNameservers(nsData);
       setEdges(edgeData);
       setNsStatus(statusData || []);
+      setJoinCommand(joinCmd || '');
     } catch (error) {
       toast.error('Failed to load infrastructure data');
     } finally {
@@ -63,6 +67,19 @@ export default function AdminInfrastructure() {
       toast.error('Health check failed');
     } finally {
       setCheckingHealth(false);
+    }
+  };
+
+  const handleCopyJoinCommand = async () => {
+    if (!joinCommand) return;
+    try {
+      setCopyingJoin(true);
+      await navigator.clipboard.writeText(joinCommand);
+      toast.success('Join command copied to clipboard');
+    } catch (error) {
+      toast.error('Failed to copy join command');
+    } finally {
+      setCopyingJoin(false);
     }
   };
 
@@ -186,22 +203,39 @@ export default function AdminInfrastructure() {
     }
   };
 
-  const getNodeStatus = (node: Node) => {
-    // Mock status based on node data
-    const hasNS = node.ns_ips && node.ns_ips.length > 0;
-    const hasEdge = node.edge_ips && node.edge_ips.length > 0;
-    
-    if (hasNS && hasEdge) return 'healthy';
-    if (hasNS || hasEdge) return 'partial';
-    return 'offline';
+  const getNodeStatus = (node: Node): NonNullable<Node['status']> => {
+    if (node.status) return node.status;
+    if (!node.edge_ips || node.edge_ips.length === 0) return 'idle';
+    return 'pending';
   };
 
-  const getStatusColor = (status: string) => {
+  const getStatusColor = (status: Node['status'] | string) => {
     switch (status) {
-      case 'healthy': return 'var(--color-success)';
-      case 'partial': return 'var(--color-warning)';
-      case 'offline': return 'var(--color-danger)';
-      default: return 'var(--color-text-tertiary)';
+      case 'healthy':
+        return 'var(--color-success)';
+      case 'degraded':
+      case 'pending':
+        return 'var(--color-warning)';
+      case 'offline':
+        return 'var(--color-danger)';
+      case 'idle':
+      default:
+        return 'var(--color-text-tertiary)';
+    }
+  };
+
+  const getStatusVariant = (status: Node['status'] | string): 'success' | 'warning' | 'danger' | 'default' => {
+    switch (status) {
+      case 'healthy':
+        return 'success';
+      case 'degraded':
+      case 'pending':
+        return 'warning';
+      case 'offline':
+        return 'danger';
+      case 'idle':
+      default:
+        return 'default';
     }
   };
 
@@ -300,6 +334,33 @@ export default function AdminInfrastructure() {
                 <span className="detail-value mono">{selectedNode.id}</span>
               </div>
               <div className="detail-row">
+                <span className="detail-label">Status:</span>
+                <div className="detail-value status-cell">
+                  <Badge variant={getStatusVariant(getNodeStatus(selectedNode))} size="sm" dot>
+                    {getNodeStatus(selectedNode)}
+                  </Badge>
+                  {selectedNode.status_message && (
+                    <span className="status-message">{selectedNode.status_message}</span>
+                  )}
+                </div>
+              </div>
+              {(selectedNode.total_edges ?? 0) > 0 && (
+                <div className="detail-row">
+                  <span className="detail-label">Edge Health:</span>
+                  <span className="detail-value mono">
+                    {(selectedNode.healthy_edges ?? 0)} / {(selectedNode.total_edges ?? 0)} healthy
+                  </span>
+                </div>
+              )}
+              {selectedNode.last_health_at && (
+                <div className="detail-row">
+                  <span className="detail-label">Last Check:</span>
+                  <span className="detail-value">
+                    {formatDistanceToNow(new Date(selectedNode.last_health_at), { addSuffix: true })}
+                  </span>
+                </div>
+              )}
+              <div className="detail-row">
                 <span className="detail-label">IPs:</span>
                 <div className="detail-list">
                   {selectedNode.ips.map(ip => (
@@ -365,6 +426,7 @@ export default function AdminInfrastructure() {
             <thead>
               <tr>
                 <th>Name</th>
+                <th>Status</th>
                 <th>IPs</th>
                 <th>NS IPs</th>
                 <th>API Endpoint</th>
@@ -374,12 +436,17 @@ export default function AdminInfrastructure() {
             <tbody>
               {nodes.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="node-empty">No nodes configured</td>
+                  <td colSpan={6} className="node-empty">No nodes configured</td>
                 </tr>
               ) : (
                 nodes.map((node) => (
                   <tr key={node.id} className={editingNodeId === node.id && nodeFormMode === 'edit' ? 'node-row-editing' : ''}>
                     <td>{node.name}</td>
+                    <td>
+                      <Badge variant={getStatusVariant(getNodeStatus(node))} size="sm" dot>
+                        {getNodeStatus(node)}
+                      </Badge>
+                    </td>
                     <td className="mono">{node.ips.join(', ')}</td>
                     <td className="mono">{(node.ns_ips || []).join(', ') || '—'}</td>
                     <td className="mono">{node.api_endpoint || '—'}</td>
@@ -459,6 +526,21 @@ export default function AdminInfrastructure() {
             </div>
           </form>
         )}
+      </Card>
+
+      <Card title="Join Helper" className="join-card">
+        <p className="join-description">Run this command on the new node (adjust name and IP arguments as needed).</p>
+        <textarea
+          className="join-command"
+          rows={3}
+          value={joinCommand || 'Command unavailable'}
+          readOnly
+        />
+        <div className="join-actions">
+          <Button variant="secondary" size="sm" onClick={handleCopyJoinCommand} disabled={!joinCommand} loading={copyingJoin}>
+            Copy Join Command
+          </Button>
+        </div>
       </Card>
 
       <Card title="Nameservers" className="nameservers-card">

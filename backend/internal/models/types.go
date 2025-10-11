@@ -221,18 +221,23 @@ func (u User) Sanitize() User {
 
 // Node represents an infrastructure node managed by the admin.
 type Node struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	IPs         []string  `json:"ips"`
-	NSIPs       []string  `json:"ns_ips"`
-	NSLabel     string    `json:"ns_label,omitempty"`
-	NSBase      string    `json:"ns_base_domain,omitempty"`
-	APIEndpoint string    `json:"api_endpoint,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	ManagedNS   []string  `json:"managed_ns,omitempty"`
-	EdgeIPs     []string  `json:"edge_ips,omitempty"`
-	LastSeenAt  time.Time `json:"last_seen_at,omitempty"`
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	IPs          []string   `json:"ips"`
+	NSIPs        []string   `json:"ns_ips"`
+	NSLabel      string     `json:"ns_label,omitempty"`
+	NSBase       string     `json:"ns_base_domain,omitempty"`
+	APIEndpoint  string     `json:"api_endpoint,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	ManagedNS    []string   `json:"managed_ns,omitempty"`
+	EdgeIPs      []string   `json:"edge_ips,omitempty"`
+	LastSeenAt   time.Time  `json:"last_seen_at,omitempty"`
+	Status       NodeStatus `json:"status,omitempty"`
+	StatusMsg    string     `json:"status_message,omitempty"`
+	HealthyEdges int        `json:"healthy_edges,omitempty"`
+	TotalEdges   int        `json:"total_edges,omitempty"`
+	LastHealthAt time.Time  `json:"last_health_at,omitempty"`
 }
 
 // ComputeEdgeIPs populates EdgeIPs by removing NS IPs from the full list.
@@ -250,6 +255,17 @@ func (n *Node) ComputeEdgeIPs() {
 	}
 	n.EdgeIPs = edges
 }
+
+// NodeStatus represents the current health gate for a node's edge capacity.
+type NodeStatus string
+
+const (
+	NodeStatusPending  NodeStatus = "pending"
+	NodeStatusHealthy  NodeStatus = "healthy"
+	NodeStatusDegraded NodeStatus = "degraded"
+	NodeStatusOffline  NodeStatus = "offline"
+	NodeStatusIdle     NodeStatus = "idle"
+)
 
 // EdgeHealthStatus describes the current reachability of an edge IP.
 type EdgeHealthStatus struct {
