@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	"aki-cloud/backend/internal/models"
 	"aki-cloud/backend/internal/orchestrator"
 	"aki-cloud/backend/internal/store"
+
+	"github.com/miekg/dns"
 )
 
 // Monitor runs reachability checks against edge IPs.
@@ -64,19 +67,26 @@ func (m *Monitor) Start(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			m.evaluateEdges(ctx)
+			edgesUpdated := m.evaluateEdges(ctx)
+			nsUpdated := m.evaluateNameServers(ctx)
+			if edgesUpdated {
+				m.rebalanceAssignments()
+				m.orch.Trigger(context.Background())
+			} else if nsUpdated {
+				// nothing else to do; data is persisted for passive consumers
+			}
 		}
 	}
 }
 
-func (m *Monitor) evaluateEdges(ctx context.Context) {
+func (m *Monitor) evaluateEdges(ctx context.Context) bool {
 	edges, err := m.infra.EdgeIPs()
 	if err != nil {
-		return
+		return false
 	}
 	statusMap, err := m.store.GetEdgeHealthMap()
 	if err != nil {
-		return
+		return false
 	}
 
 	updated := false
@@ -107,10 +117,7 @@ func (m *Monitor) evaluateEdges(ctx context.Context) {
 		}
 	}
 
-	if updated {
-		m.rebalanceAssignments()
-		m.orch.Trigger(context.Background())
-	}
+	return updated
 }
 
 func (m *Monitor) checkEdge(ctx context.Context, ip string, prev models.EdgeHealthStatus, now time.Time) models.EdgeHealthStatus {
@@ -163,6 +170,25 @@ func (m *Monitor) checkEdge(ctx context.Context, ip string, prev models.EdgeHeal
 	return next
 }
 
+func (m *Monitor) evaluateNameServers(ctx context.Context) bool {
+	nsList, err := m.infra.ActiveNameServers()
+	if err != nil {
+		return false
+	}
+	if len(nsList) == 0 {
+		return false
+	}
+	statuses := make([]models.NameServerHealth, 0, len(nsList))
+	for _, ns := range nsList {
+		statuses = append(statuses, m.checkNameServer(ctx, ns))
+	}
+	if err := m.store.SaveNameServerStatus(statuses); err != nil {
+		log.Printf("health: persist nameserver status failed: %v", err)
+		return false
+	}
+	return true
+}
+
 func (m *Monitor) rebalanceAssignments() bool {
 	domains, err := m.store.GetDomains()
 	if err != nil {
@@ -208,6 +234,55 @@ func (m *Monitor) rebalanceAssignments() bool {
 		mutated = true
 	}
 	return mutated
+}
+
+func (m *Monitor) checkNameServer(ctx context.Context, ns infra.NameServer) models.NameServerHealth {
+	result := models.NameServerHealth{
+		NodeID: ns.NodeID,
+		FQDN:   ns.FQDN,
+		IPv4:   ns.IPv4,
+	}
+	base := strings.TrimSpace(ns.BaseZone)
+	if base == "" {
+		base = ns.FQDN
+	}
+	fqdn := dns.Fqdn(base)
+	client := &dns.Client{
+		Timeout: m.dialTimeout,
+	}
+	msg := dns.Msg{}
+	msg.SetQuestion(fqdn, dns.TypeNS)
+	start := time.Now()
+	resp, _, err := client.ExchangeContext(ctx, &msg, net.JoinHostPort(ns.IPv4, "53"))
+	latency := time.Since(start)
+	result.CheckedAt = time.Now().UTC()
+	result.LatencyMS = latency.Milliseconds()
+	if err != nil {
+		result.Healthy = false
+		result.Message = err.Error()
+		return result
+	}
+	if resp == nil {
+		result.Healthy = false
+		result.Message = "nil response"
+		return result
+	}
+	if resp.Rcode != dns.RcodeSuccess {
+		if text, ok := dns.RcodeToString[resp.Rcode]; ok {
+			result.Message = text
+		} else {
+			result.Message = fmt.Sprintf("rcode %d", resp.Rcode)
+		}
+		result.Healthy = false
+		return result
+	}
+	if len(resp.Answer) == 0 {
+		result.Healthy = false
+		result.Message = "empty answer"
+		return result
+	}
+	result.Healthy = true
+	return result
 }
 
 func changed(a, b models.EdgeHealthStatus) bool {

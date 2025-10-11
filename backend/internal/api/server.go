@@ -1651,8 +1651,20 @@ func (s *Server) decorateNodesWithStatus(nodes []models.Node) []models.Node {
 		log.Printf("infra: fetch edge health failed: %v", err)
 		return nodes
 	}
+	nsStatuses, err := s.Store.GetNameServerStatus()
+	if err != nil {
+		log.Printf("infra: fetch name server health failed: %v", err)
+	}
+	nsByNode := make(map[string][]models.NameServerHealth)
+	for _, status := range nsStatuses {
+		id := strings.TrimSpace(status.NodeID)
+		if id == "" {
+			continue
+		}
+		nsByNode[id] = append(nsByNode[id], status)
+	}
 	for i := range nodes {
-		nodes[i] = s.decorateNodeStatusWithHealth(nodes[i], health)
+		nodes[i] = s.decorateNodeStatusWithHealth(nodes[i], health, nsByNode)
 	}
 	return nodes
 }
@@ -1665,9 +1677,9 @@ func (s *Server) decorateNodeStatus(node models.Node) models.Node {
 	return decorated[0]
 }
 
-func (s *Server) decorateNodeStatusWithHealth(node models.Node, health map[string]models.EdgeHealthStatus) models.Node {
+func (s *Server) decorateNodeStatusWithHealth(node models.Node, health map[string]models.EdgeHealthStatus, ns map[string][]models.NameServerHealth) models.Node {
 	node.ComputeEdgeIPs()
-	status, msg, healthyCount, totalCount, last := evaluateNodeStatus(node, health)
+	status, msg, healthyCount, totalCount, last := evaluateNodeStatus(node, health, ns[node.ID])
 	node.Status = status
 	node.StatusMsg = msg
 	node.HealthyEdges = healthyCount
@@ -1679,64 +1691,177 @@ func (s *Server) decorateNodeStatusWithHealth(node models.Node, health map[strin
 	return node
 }
 
-func evaluateNodeStatus(node models.Node, health map[string]models.EdgeHealthStatus) (models.NodeStatus, string, int, int, time.Time) {
-	total := len(node.EdgeIPs)
-	if total == 0 {
-		return models.NodeStatusIdle, "no edge IPs configured", 0, 0, time.Time{}
+type componentSeverity int
+
+const (
+	componentNone componentSeverity = iota
+	componentHealthy
+	componentPending
+	componentDegraded
+	componentOffline
+)
+
+func severityMax(a, b componentSeverity) componentSeverity {
+	if a > b {
+		return a
 	}
+	return b
+}
+
+func evaluateNodeStatus(node models.Node, health map[string]models.EdgeHealthStatus, nsStatuses []models.NameServerHealth) (models.NodeStatus, string, int, int, time.Time) {
+	totalEdges := len(node.EdgeIPs)
 	var (
-		healthy   int
-		unhealthy int
-		pending   int
-		last      time.Time
-		messages  []string
+		edgeHealthy int
+		edgePending int
+		edgeLast    time.Time
+		edgeMsgs    []string
 	)
 	for _, ip := range node.EdgeIPs {
+		ip = strings.TrimSpace(ip)
+		if ip == "" {
+			continue
+		}
 		status, ok := health[ip]
 		if !ok {
-			pending++
+			edgePending++
 			continue
 		}
-		if status.LastChecked.After(last) {
-			last = status.LastChecked
+		if status.LastChecked.After(edgeLast) {
+			edgeLast = status.LastChecked
 		}
 		if status.Healthy {
-			healthy++
+			edgeHealthy++
 			continue
 		}
-		if status.LastChecked.IsZero() {
-			pending++
-			continue
+		msg := strings.TrimSpace(status.Message)
+		if msg == "" {
+			msg = "unreachable"
 		}
-		unhealthy++
-		if status.Message != "" {
-			messages = append(messages, fmt.Sprintf("%s: %s", ip, status.Message))
-		}
+		edgeMsgs = append(edgeMsgs, fmt.Sprintf("%s %s", ip, msg))
 	}
+	edgeSeverity := componentNone
 	switch {
-	case healthy == total:
-		return models.NodeStatusHealthy, "", healthy, total, last
-	case healthy > 0:
-		msg := fmt.Sprintf("%d/%d edges degraded", total-healthy, total)
-		if len(messages) > 0 {
-			msg = fmt.Sprintf("%s; %s", msg, strings.Join(messages, "; "))
-		}
-		return models.NodeStatusDegraded, msg, healthy, total, last
-	case pending == total:
-		return models.NodeStatusPending, "waiting for first health check", healthy, total, last
-	case pending > 0:
-		msg := fmt.Sprintf("%d pending, %d unhealthy", pending, unhealthy)
-		if len(messages) > 0 {
-			msg = fmt.Sprintf("%s; %s", msg, strings.Join(messages, "; "))
-		}
-		return models.NodeStatusPending, msg, healthy, total, last
+	case totalEdges == 0:
+		edgeSeverity = componentNone
+	case edgeHealthy == totalEdges && edgePending == 0:
+		edgeSeverity = componentHealthy
+	case edgeHealthy == totalEdges && edgePending > 0:
+		edgeSeverity = componentPending
+	case edgeHealthy == 0 && edgePending == totalEdges:
+		edgeSeverity = componentPending
+	case edgeHealthy == 0 && edgePending == 0:
+		edgeSeverity = componentOffline
 	default:
-		msg := "all edges unhealthy"
-		if len(messages) > 0 {
-			msg = strings.Join(messages, "; ")
-		}
-		return models.NodeStatusOffline, msg, healthy, total, last
+		edgeSeverity = componentDegraded
 	}
+
+	nsTotal := len(node.NSIPs)
+	nsByIP := make(map[string]models.NameServerHealth, len(nsStatuses))
+	for _, ns := range nsStatuses {
+		ip := strings.TrimSpace(ns.IPv4)
+		if ip == "" {
+			continue
+		}
+		nsByIP[ip] = ns
+	}
+	var (
+		nsHealthy int
+		nsPending int
+		nsLast    time.Time
+		nsMsgs    []string
+	)
+	for _, ip := range node.NSIPs {
+		ip = strings.TrimSpace(ip)
+		if ip == "" {
+			continue
+		}
+		stat, ok := nsByIP[ip]
+		if !ok {
+			nsPending++
+			continue
+		}
+		if stat.CheckedAt.After(nsLast) {
+			nsLast = stat.CheckedAt
+		}
+		if stat.Healthy {
+			nsHealthy++
+			continue
+		}
+		msg := strings.TrimSpace(stat.Message)
+		if msg == "" {
+			msg = "unreachable"
+		}
+		nsMsgs = append(nsMsgs, fmt.Sprintf("%s %s", ip, msg))
+	}
+	nsSeverity := componentNone
+	if nsTotal > 0 {
+		switch {
+		case nsHealthy == nsTotal && nsPending == 0:
+			nsSeverity = componentHealthy
+		case nsHealthy == nsTotal && nsPending > 0:
+			nsSeverity = componentPending
+		case nsHealthy == 0 && nsPending == nsTotal:
+			nsSeverity = componentPending
+		case nsHealthy == 0 && nsPending == 0:
+			nsSeverity = componentOffline
+		default:
+			nsSeverity = componentDegraded
+		}
+	}
+
+	finalSeverity := severityMax(edgeSeverity, nsSeverity)
+	var last time.Time
+	if edgeLast.After(last) {
+		last = edgeLast
+	}
+	if nsLast.After(last) {
+		last = nsLast
+	}
+
+	var status models.NodeStatus
+	switch finalSeverity {
+	case componentNone:
+		if totalEdges == 0 && nsTotal == 0 {
+			status = models.NodeStatusIdle
+		} else {
+			status = models.NodeStatusHealthy
+		}
+	case componentHealthy:
+		status = models.NodeStatusHealthy
+	case componentPending:
+		status = models.NodeStatusPending
+	case componentDegraded:
+		status = models.NodeStatusDegraded
+	case componentOffline:
+		status = models.NodeStatusOffline
+	}
+
+	var summary []string
+	if totalEdges > 0 {
+		part := fmt.Sprintf("edges %d/%d healthy", edgeHealthy, totalEdges)
+		if edgePending > 0 {
+			part = part + fmt.Sprintf(", %d pending", edgePending)
+		}
+		if len(edgeMsgs) > 0 {
+			part = part + " (" + strings.Join(edgeMsgs, "; ") + ")"
+		}
+		summary = append(summary, part)
+	}
+	if nsTotal > 0 {
+		part := fmt.Sprintf("nameservers %d/%d healthy", nsHealthy, nsTotal)
+		if nsPending > 0 {
+			part = part + fmt.Sprintf(", %d pending", nsPending)
+		}
+		if len(nsMsgs) > 0 {
+			part = part + " (" + strings.Join(nsMsgs, "; ") + ")"
+		}
+		summary = append(summary, part)
+	}
+	if len(summary) == 0 {
+		summary = append(summary, "no services configured")
+	}
+
+	return status, strings.Join(summary, " | "), edgeHealthy, totalEdges, last
 }
 
 func (s *Server) bootstrapEdgeHealth(node models.Node) {
