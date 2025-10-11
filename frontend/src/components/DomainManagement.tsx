@@ -96,6 +96,29 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     return `Retry ${formatDistanceToNow(retry, { addSuffix: true })}`;
   };
 
+  const tlsStatusMeta: Record<
+    string,
+    { variant: 'default' | 'primary' | 'success' | 'warning' | 'danger' | 'info'; label: string }
+  > = {
+    none: { variant: 'default', label: 'inactive' },
+    pending: { variant: 'warning', label: 'pending' },
+    active: { variant: 'success', label: 'active' },
+    errored: { variant: 'danger', label: 'error' },
+    awaiting_dns: { variant: 'info', label: 'awaiting dns' },
+  };
+
+  const renderStatusIndicator = (statusKey: string, error?: string, retryHint?: string) => {
+    const meta = tlsStatusMeta[statusKey] || tlsStatusMeta.none;
+    return (
+      <div className="tls-status-chip">
+        <Badge variant={meta.variant} size="sm" dot title={error || undefined}>
+          {meta.label}
+        </Badge>
+        {retryHint && <span className="tls-retry-hint">{retryHint}</span>}
+      </div>
+    );
+  };
+
   const handleToggleProxy = async (domain: Domain | DomainOverview) => {
     try {
       const domainName = 'domain' in domain ? domain.domain : domain.domain;
@@ -315,15 +338,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     
     if (!isFullDomain) {
       // DomainOverview - limited TLS info
-      const statusMap = {
-        none: { variant: 'default' as const, label: 'None' },
-        pending: { variant: 'warning' as const, label: 'Issuing...' },
-        active: { variant: 'success' as const, label: 'Active' },
-        errored: { variant: 'danger' as const, label: 'Error' },
-        awaiting_dns: { variant: 'info' as const, label: 'Awaiting DNS' },
-      };
-      
-      const status = domain.tls_status ? statusMap[domain.tls_status as keyof typeof statusMap] : statusMap.none;
+      const statusKey = domain.tls_status || 'none';
       const currentValue = domain.tls_use_recommended ? 'auto' : (domain.tls_mode || 'off');
       const retryHint = computeRetryHint(domain.tls_retry_after);
       
@@ -349,21 +364,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
               Auto → {domain.tls_recommended_mode ? modeLabel(domain.tls_recommended_mode) : 'detecting…'}
             </span>
           )}
-          {/* Always show error status, show other statuses only when proxy is on and TLS is not off */}
-          {status && status.label !== 'None' && (
-            (domain.tls_status === 'errored' || (domain.proxied && currentValue !== 'off')) && (
-              <Badge 
-                variant={status.variant} 
-                size="sm" 
-                title={domain.tls_last_error || ''}
-              >
-                {status.label}
-              </Badge>
-            )
-          )}
-          {retryHint && (
-            <span className="tls-retry-hint">{retryHint}</span>
-          )}
+          {renderStatusIndicator(statusKey, domain.tls_last_error, retryHint)}
           {/* Show error icon for errored status */}
           {domain.tls_status === 'errored' && domain.tls_last_error && (
             <div className="tls-error-tooltip" title={domain.tls_last_error}>
@@ -375,15 +376,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     }
     
     // Full Domain with complete TLS data
-    const statusMap = {
-      none: { variant: 'default' as const, label: 'None' },
-      pending: { variant: 'warning' as const, label: 'Issuing...' },
-      active: { variant: 'success' as const, label: 'Active' },
-      errored: { variant: 'danger' as const, label: 'Error' },
-      awaiting_dns: { variant: 'info' as const, label: 'Awaiting DNS' },
-    };
-    
-    const status = statusMap[domain.tls.status] || statusMap.none;
+    const statusKey = domain.tls.status || 'none';
     const currentValue = domain.tls.use_recommended ? 'auto' : domain.tls.mode;
     const retryHint = computeRetryHint(domain.tls.retry_after);
     
@@ -406,23 +399,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
             Auto → {domain.tls.recommended_mode ? modeLabel(domain.tls.recommended_mode) : 'detecting…'}
           </span>
         )}
-        {/* Always show error status, show other statuses only when proxy is on and TLS is not off */}
-        {domain.tls.status !== 'none' && (
-          (domain.tls.status === 'errored' || (domain.proxied && currentValue !== 'off')) && (
-            <Badge 
-              variant={status.variant} 
-              size="sm" 
-              title={domain.tls.last_error || ''}
-            >
-              {status.label}
-            </Badge>
-          )
-        )}
-        {retryHint && (
-          <span className="tls-retry-hint">
-            {retryHint}
-          </span>
-        )}
+        {renderStatusIndicator(statusKey, domain.tls.last_error, retryHint)}
         {/* Show error icon for errored status */}
         {domain.tls.status === 'errored' && domain.tls.last_error && (
           <div className="tls-error-tooltip" title={domain.tls.last_error}>

@@ -129,6 +129,12 @@
   cursor: not-allowed;
 }
 
+.tls-status-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .tls-error-tooltip {
   font-size: 14px;
   cursor: help;
