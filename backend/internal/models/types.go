@@ -269,7 +269,7 @@ type Node struct {
 	IPs          []string     `json:"ips"`
 	NSIPs        []string     `json:"ns_ips"`
 	EdgeIPs      []string     `json:"edge_ips,omitempty"`
-	EdgeManual   bool         `json:"edge_manual,omitempty"`
+	EdgeManual   bool         `json:"edge_manual"`
 	NSLabel      string       `json:"ns_label,omitempty"`
 	NSBase       string       `json:"ns_base_domain,omitempty"`
 	APIEndpoint  string       `json:"api_endpoint,omitempty"`
