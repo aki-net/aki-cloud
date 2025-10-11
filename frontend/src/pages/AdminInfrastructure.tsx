@@ -154,7 +154,13 @@ export default function AdminInfrastructure() {
       toast.error("Node name is required");
       return;
     }
-    if (ips.length === 0) {
+    const clearingAll =
+      nodeFormMode === "edit" &&
+      ips.length === 0 &&
+      nsIps.length === 0 &&
+      explicitEdgeIps.length === 0;
+
+    if (ips.length === 0 && !clearingAll) {
       toast.error("Provide at least one IP address");
       return;
     }
