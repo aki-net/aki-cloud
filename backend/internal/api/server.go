@@ -152,6 +152,18 @@ func queueTLSAutomation(rec *models.DomainRecord, ts time.Time) {
 	if ts.IsZero() {
 		ts = time.Now().UTC()
 	}
+	if certificateUsable(rec, ts) {
+		rec.TLS.Status = models.CertificateStatusActive
+		if rec.TLS.RetryAfter.Before(ts) {
+			rec.TLS.RetryAfter = time.Time{}
+		}
+		if rec.TLS.LastError == automationQueuedMessage {
+			rec.TLS.LastError = ""
+		}
+		rec.TLS.LastAttemptAt = time.Time{}
+		rec.TLS.UpdatedAt = ts
+		return
+	}
 	if rec.TLS.RetryAfter.After(ts) {
 		// Respect existing retry/backoff window: leave status/error untouched.
 		return
@@ -161,6 +173,17 @@ func queueTLSAutomation(rec *models.DomainRecord, ts time.Time) {
 	rec.TLS.UpdatedAt = ts
 	rec.TLS.RetryAfter = time.Time{}
 	rec.TLS.LastError = automationQueuedMessage
+}
+
+func certificateUsable(rec *models.DomainRecord, now time.Time) bool {
+	if rec.TLS.Certificate == nil {
+		return false
+	}
+	cert := rec.TLS.Certificate
+	if cert.CertChainPEM == "" || cert.NotAfter.IsZero() {
+		return false
+	}
+	return cert.NotAfter.After(now)
 }
 
 func ensureTLSProxyCompatibility(rec *models.DomainRecord) error {

@@ -1,6 +1,7 @@
 package ssl
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -11,8 +12,8 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
@@ -81,27 +82,33 @@ func (s *Service) obtainCertificate(client *lego.Client, rec models.DomainRecord
 }
 
 func uniqueDomains(root string) []string {
-	base := strings.TrimSpace(root)
-	set := map[string]struct{}{}
-	add := func(name string) {
-		name = strings.ToLower(strings.TrimSpace(name))
-		if name == "" {
-			return
-		}
-		if _, ok := set[name]; !ok {
-			set[name] = struct{}{}
-		}
+	base := strings.ToLower(strings.TrimSpace(root))
+	if base == "" {
+		return nil
 	}
-	add(base)
+	names := []string{base}
 	if !strings.HasPrefix(base, "*.") {
-		add("www." + base)
+		sub := "www." + base
+		if hasResolvableAddress(sub) {
+			names = append(names, sub)
+		}
 	}
-	result := make([]string, 0, len(set))
-	for name := range set {
-		result = append(result, name)
+	return names
+}
+
+func hasResolvableAddress(host string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), lookupTimeout)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return false
 	}
-	sort.Strings(result)
-	return result
+	for _, addr := range addrs {
+		if addr.IP != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) persistCertificate(domain string, res *certificate.Resource, lockID string) error {
