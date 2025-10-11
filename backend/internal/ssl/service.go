@@ -111,6 +111,12 @@ func (s *Service) reconcileDomain(ctx context.Context, rec models.DomainRecord, 
 		return nil
 	}
 
+	if updated, err := s.ensureCertificateStatus(rec); err != nil {
+		log.Printf("tls: ensure certificate status for %s failed: %v", rec.Domain, err)
+	} else if updated != nil {
+		rec = *updated
+	}
+
 	if updated, err := s.syncBackoffState(rec); err != nil {
 		log.Printf("tls: sync backoff for %s failed: %v", rec.Domain, err)
 	} else if updated != nil {
@@ -174,6 +180,43 @@ func (s *Service) reconcileDomain(ctx context.Context, rec models.DomainRecord, 
 		return err
 	}
 	return nil
+}
+
+func (s *Service) ensureCertificateStatus(rec models.DomainRecord) (*models.DomainRecord, error) {
+	now := time.Now().UTC()
+	if rec.TLS.Status == models.CertificateStatusPending && hasValidCertificate(rec, now) {
+		return s.store.MutateDomain(rec.Domain, func(r *models.DomainRecord) error {
+			r.EnsureTLSDefaults()
+			if !hasValidCertificate(*r, now) {
+				return nil
+			}
+			r.TLS.Status = models.CertificateStatusActive
+			r.TLS.LastError = ""
+			r.TLS.RetryAfter = time.Time{}
+			r.TLS.LastAttemptAt = time.Time{}
+			r.TLS.UpdatedAt = now
+			r.UpdatedAt = now
+			r.Version.Counter++
+			r.Version.NodeID = s.cfg.NodeID
+			r.Version.Updated = now.Unix()
+			return nil
+		})
+	}
+	return nil, nil
+}
+
+func hasValidCertificate(rec models.DomainRecord, now time.Time) bool {
+	if rec.TLS.Certificate == nil {
+		return false
+	}
+	cert := rec.TLS.Certificate
+	if cert.CertChainPEM == "" || cert.PrivateKeyPEM == "" {
+		return false
+	}
+	if cert.NotAfter.IsZero() {
+		return false
+	}
+	return cert.NotAfter.After(now)
 }
 
 func (s *Service) effectiveMode(rec models.DomainRecord) models.EncryptionMode {
