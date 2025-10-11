@@ -18,7 +18,11 @@ up-force:
 	$(MAKE) up
 
 firewall:
-	@sudo DATA_DIR=$(PWD)/data AUTO_FIREWALL=$${AUTO_FIREWALL:-auto} ./scripts/configure_firewall.sh
+	@if [ "$$(id -u)" -eq 0 ]; then \
+		DATA_DIR=$(PWD)/data AUTO_FIREWALL=$${AUTO_FIREWALL:-auto} ./scripts/configure_firewall.sh; \
+	else \
+		sudo DATA_DIR=$(PWD)/data AUTO_FIREWALL=$${AUTO_FIREWALL:-auto} ./scripts/configure_firewall.sh; \
+	fi
 
 update:
 	ansible-playbook $(ANSIBLE_FLAGS) ansible/playbooks/update.yml
