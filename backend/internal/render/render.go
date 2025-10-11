@@ -65,11 +65,27 @@ func (g *CoreDNSGenerator) Render() error {
 	if err != nil {
 		return err
 	}
+	nodes, err := g.Store.GetNodes()
+	if err != nil {
+		return err
+	}
+	nodeMap := make(map[string]models.Node, len(nodes))
+	for _, node := range nodes {
+		nodeMap[node.ID] = node
+	}
 	nsList, err := g.Infra.ActiveNameServers()
 	if err != nil {
 		return err
 	}
 	local := g.localNodeInfo()
+	if stored, ok := nodeMap[local.NodeID]; ok {
+		if len(local.IPs) == 0 {
+			local.IPs = append([]string{}, stored.IPs...)
+		}
+		if len(local.NSIPs) == 0 {
+			local.NSIPs = append([]string{}, stored.NSIPs...)
+		}
+	}
 	filteredNS := make([]infra.NameServer, 0, len(nsList))
 	if local.NodeID != "" {
 		for _, ns := range nsList {
@@ -332,6 +348,17 @@ func (g *OpenRestyGenerator) Render() error {
 	hasHealthData := len(edgeHealth) > 0
 	healthyEdges := filterHealthyEdges(edges, edgeHealth)
 	localInfo := g.localNodeInfo()
+	if stored, ok := nodeMap[localInfo.NodeID]; ok {
+		if len(localInfo.IPs) == 0 {
+			localInfo.IPs = append([]string{}, stored.IPs...)
+		}
+		if len(localInfo.NSIPs) == 0 {
+			localInfo.NSIPs = append([]string{}, stored.NSIPs...)
+		}
+		if len(localInfo.EdgeIPs) == 0 {
+			localInfo.EdgeIPs = append([]string{}, stored.EdgeIPs...)
+		}
+	}
 	localEdges := g.localEdgeIPs(localInfo)
 	localEdgeSet := make(map[string]struct{}, len(localEdges))
 	for _, ip := range localEdges {
@@ -389,11 +416,24 @@ func (g *OpenRestyGenerator) Render() error {
 		return err
 	}
 
+	nsList, err := g.Infra.ActiveNameServers()
+	if err != nil {
+		return err
+	}
+	nsIPs := make(map[string]struct{}, len(nsList))
+	for _, ns := range nsList {
+		if ns.IPv4 == "" {
+			continue
+		}
+		nsIPs[ns.IPv4] = struct{}{}
+	}
+
 	tmpl, err := template.ParseFiles(g.SitesTmpl)
 	if err != nil {
 		return err
 	}
 
+	edgeUsage := make(map[string]bool)
 	for _, domain := range domains {
 		if !domain.Proxied {
 			continue
@@ -474,6 +514,7 @@ func (g *OpenRestyGenerator) Render() error {
 		if _, ok := localEdgeSet[assignedIP]; !ok {
 			continue
 		}
+		edgeUsage[assignedIP] = true
 		proxyPass := fmt.Sprintf("%s://%s", originScheme, domain.OriginIP)
 		challengeUpstream := "http://127.0.0.1:8080"
 		if domain.TLS.LockNodeID != "" && domain.TLS.LockNodeID != localInfo.NodeID {
@@ -516,6 +557,15 @@ func (g *OpenRestyGenerator) Render() error {
 		}
 	}
 
+	for _, ip := range localEdges {
+		if _, used := edgeUsage[ip]; used {
+			continue
+		}
+		if err := writeEdgeStub(sitesDir, ip); err != nil {
+			return err
+		}
+	}
+
 	nginxTemplate, err := template.ParseFiles(g.NginxTmpl)
 	if err != nil {
 		return err
@@ -543,6 +593,20 @@ func (g *OpenRestyGenerator) localNodeInfo() localEdgeNode {
 
 func (g *CoreDNSGenerator) localNodeInfo() localEdgeNode {
 	return loadLocalNodeInfo(g.DataDir)
+}
+
+func writeEdgeStub(dir string, ip string) error {
+	file := filepath.Join(dir, fmt.Sprintf("_stub@%s.conf", strings.ReplaceAll(ip, ":", "_")))
+	data := fmt.Sprintf(`server {
+    listen %s:80;
+    server_name _;
+
+    location / {
+        return 204;
+    }
+}
+`, ip)
+	return os.WriteFile(file, []byte(data), 0o644)
 }
 
 func ensurePlaceholderCertificate(dataDir, domain string) (string, string, error) {

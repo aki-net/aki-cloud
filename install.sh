@@ -379,10 +379,11 @@ create_admin_user() {
 }
 
 write_node_files() {
-  python3 - "$DATA_DIR" "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" <<'PY'
+python3 - "$DATA_DIR" "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" <<'PY'
 import json
 import sys
 from pathlib import Path
+from datetime import datetime, timezone
 
 data_dir, node_id, node_name, ips_csv, ns_ips_csv, edge_ips_csv, labels_csv, ns_label, ns_base, api_endpoint = sys.argv[1:10]
 
@@ -390,6 +391,12 @@ def csv_to_list(value):
     if not value:
         return []
     return [item.strip() for item in value.split(',') if item.strip()]
+
+def now_iso():
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+def now_unix():
+    return int(datetime.now(timezone.utc).timestamp())
 
 node = {
     "name": node_name,
@@ -436,6 +443,7 @@ for existing in nodes:
         break
 
 if not updated:
+    timestamp = now_iso()
     nodes.append({
         "id": node_id,
         "name": node_name,
@@ -446,6 +454,13 @@ if not updated:
         "ns_base_domain": ns_base,
         "api_endpoint": api_endpoint,
         "labels": node["labels"],
+        "created_at": timestamp,
+        "updated_at": timestamp,
+        "version": {
+            "counter": 0,
+            "node_id": node_id,
+            "updated_unix": now_unix(),
+        },
     })
 
 infra_path.parent.mkdir(parents=True, exist_ok=True)

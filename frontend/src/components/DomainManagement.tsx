@@ -258,13 +258,22 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       ? info.assigned_ip || "Pending assignment"
       : "Proxy disabled";
     const ipClass = info.proxied && info.assigned_ip ? "" : "edge-ip-muted";
+    const nodeSuffix =
+      info.proxied && info.node_name ? ` (${info.node_name})` : "";
     return (
       <div className="edge-cell">
         <div className="edge-assignment">
-          <span className={`edge-ip mono ${ipClass}`}>{displayLabel}</span>
-          {info.proxied && info.node_name && (
-            <span className="edge-node-name">{info.node_name}</span>
-          )}
+          <span
+            className={`edge-ip mono ${ipClass}`}
+            title={
+              info.node_id
+                ? `Node ${info.node_name || info.node_id} (${info.node_id})`
+                : undefined
+            }
+          >
+            {displayLabel}
+            {nodeSuffix}
+          </span>
         </div>
         {info.labels.length > 0 && (
           <div className="edge-labels">
@@ -1380,9 +1389,12 @@ function EdgeSettingsModal({
             <div className="edge-modal-assignment">
               <span className="mono edge-modal-ip">
                 {data.assigned_ip || "Pending assignment"}
+                {data.node_name ? ` (${data.node_name})` : ""}
               </span>
-              {data.node_name && (
-                <span className="edge-modal-node">{data.node_name}</span>
+              {data.node_id && (
+                <span className="edge-modal-node mono">
+                  Node ID: {data.node_id}
+                </span>
               )}
             </div>
             {!data.proxied && (

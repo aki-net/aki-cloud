@@ -264,25 +264,27 @@ func (u User) Sanitize() User {
 
 // Node represents an infrastructure node managed by the admin.
 type Node struct {
-	ID           string     `json:"id"`
-	Name         string     `json:"name"`
-	IPs          []string   `json:"ips"`
-	NSIPs        []string   `json:"ns_ips"`
-	EdgeIPs      []string   `json:"edge_ips,omitempty"`
-	NSLabel      string     `json:"ns_label,omitempty"`
-	NSBase       string     `json:"ns_base_domain,omitempty"`
-	APIEndpoint  string     `json:"api_endpoint,omitempty"`
-	Roles        []NodeRole `json:"roles,omitempty"`
-	Labels       []string   `json:"labels,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
-	ManagedNS    []string   `json:"managed_ns,omitempty"`
-	LastSeenAt   time.Time  `json:"last_seen_at,omitempty"`
-	Status       NodeStatus `json:"status,omitempty"`
-	StatusMsg    string     `json:"status_message,omitempty"`
-	HealthyEdges int        `json:"healthy_edges,omitempty"`
-	TotalEdges   int        `json:"total_edges,omitempty"`
-	LastHealthAt time.Time  `json:"last_health_at,omitempty"`
+	ID           string       `json:"id"`
+	Name         string       `json:"name"`
+	IPs          []string     `json:"ips"`
+	NSIPs        []string     `json:"ns_ips"`
+	EdgeIPs      []string     `json:"edge_ips,omitempty"`
+	NSLabel      string       `json:"ns_label,omitempty"`
+	NSBase       string       `json:"ns_base_domain,omitempty"`
+	APIEndpoint  string       `json:"api_endpoint,omitempty"`
+	Roles        []NodeRole   `json:"roles,omitempty"`
+	Labels       []string     `json:"labels,omitempty"`
+	CreatedAt    time.Time    `json:"created_at"`
+	UpdatedAt    time.Time    `json:"updated_at"`
+	DeletedAt    time.Time    `json:"deleted_at,omitempty"`
+	Version      ClockVersion `json:"version"`
+	ManagedNS    []string     `json:"managed_ns,omitempty"`
+	LastSeenAt   time.Time    `json:"last_seen_at,omitempty"`
+	Status       NodeStatus   `json:"status,omitempty"`
+	StatusMsg    string       `json:"status_message,omitempty"`
+	HealthyEdges int          `json:"healthy_edges,omitempty"`
+	TotalEdges   int          `json:"total_edges,omitempty"`
+	LastHealthAt time.Time    `json:"last_health_at,omitempty"`
 }
 
 // ComputeEdgeIPs normalises node metadata and ensures edge IPs are populated.

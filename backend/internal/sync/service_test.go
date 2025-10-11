@@ -66,6 +66,11 @@ func TestServiceApplySnapshot(t *testing.T) {
 			Name:        "node-1",
 			IPs:         []string{"10.0.0.1"},
 			APIEndpoint: "http://10.0.0.1:8080",
+			Version: models.ClockVersion{
+				Counter: 1,
+				NodeID:  "seed",
+				Updated: time.Now().Unix(),
+			},
 		}},
 	}
 
@@ -92,6 +97,75 @@ func TestServiceApplySnapshot(t *testing.T) {
 	}
 	if len(peers) != 1 || peers[0] != "http://10.0.0.1:8080" {
 		t.Fatalf("unexpected peers: %#v", peers)
+	}
+}
+
+func TestMergeNodesPrefersNewest(t *testing.T) {
+	now := time.Now().UTC()
+	local := []models.Node{
+		{
+			ID:      "node-1",
+			Name:    "node-1",
+			IPs:     []string{"10.0.0.1"},
+			Version: models.ClockVersion{Counter: 2, NodeID: "local", Updated: now.Unix()},
+		},
+	}
+	remote := []models.Node{
+		{
+			ID:      "node-1",
+			Name:    "node-1",
+			IPs:     []string{"10.0.0.1"},
+			NSIPs:   []string{"10.0.0.1"},
+			Version: models.ClockVersion{Counter: 1, NodeID: "remote", Updated: now.Add(-time.Minute).Unix()},
+		},
+	}
+	merged := mergeNodes(local, remote)
+	if len(merged) != 1 {
+		t.Fatalf("expected single node")
+	}
+	if merged[0].Version.NodeID != "local" {
+		t.Fatalf("expected local version to win, got %#v", merged[0].Version)
+	}
+
+	remoteNew := []models.Node{
+		{
+			ID:      "node-2",
+			Name:    "node-2",
+			IPs:     []string{"10.0.0.2"},
+			Version: models.ClockVersion{Counter: 1, NodeID: "remote", Updated: now.Unix()},
+		},
+	}
+	merged = mergeNodes(merged, remoteNew)
+	if len(merged) != 2 {
+		t.Fatalf("expected merged to include new node")
+	}
+}
+
+func TestMergeNodesTracksDeletion(t *testing.T) {
+	now := time.Now().UTC()
+	local := []models.Node{
+		{
+			ID:      "node-1",
+			Name:    "node-1",
+			IPs:     []string{"10.0.0.1"},
+			Version: models.ClockVersion{Counter: 3, NodeID: "local", Updated: now.Unix()},
+		},
+	}
+	remote := []models.Node{
+		{
+			ID:        "node-1",
+			Name:      "node-1",
+			IPs:       []string{"10.0.0.1"},
+			DeletedAt: now,
+			Version:   models.ClockVersion{Counter: 4, NodeID: "remote", Updated: now.Add(time.Second).Unix()},
+		},
+	}
+	merged := mergeNodes(local, remote)
+	if len(merged) != 1 {
+		t.Fatalf("expected node to remain for tombstone")
+	}
+	if merged[0].DeletedAt.IsZero() {
+		t.Fatalf("expected deletion to propagate")
 	}
 }
 

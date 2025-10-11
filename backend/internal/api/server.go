@@ -1291,6 +1291,8 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		node.ID = uuid.NewString()
 	}
 	node.Name = strings.TrimSpace(node.Name)
+	node.NSLabel = strings.TrimSpace(node.NSLabel)
+	node.NSBase = strings.TrimSpace(node.NSBase)
 	node.APIEndpoint = strings.TrimSpace(node.APIEndpoint)
 	node.IPs = filterEmpty(node.IPs)
 	node.NSIPs = filterEmpty(node.NSIPs)
@@ -1298,6 +1300,10 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 	node.Labels = filterEmpty(node.Labels)
 	node.Roles = nil
 	node.ComputeEdgeIPs()
+	now := time.Now().UTC()
+	node.Version.Counter++
+	node.Version.NodeID = s.Config.NodeID
+	node.Version.Updated = now.Unix()
 	if err := s.Store.UpsertNode(node); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1370,6 +1376,10 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	}
 	existing.Roles = nil
 	existing.ComputeEdgeIPs()
+	now := time.Now().UTC()
+	existing.Version.Counter++
+	existing.Version.NodeID = s.Config.NodeID
+	existing.Version.Updated = now.Unix()
 	if err := s.Store.UpsertNode(*existing); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1390,13 +1400,25 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	var target *models.Node
 	for _, node := range nodes {
 		if node.ID == id {
+			n2 := node
+			target = &n2
 			s.cleanupEdgeHealth(node)
 			break
 		}
 	}
-	if err := s.Store.DeleteNode(id); err != nil {
+	if target == nil {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	now := time.Now().UTC()
+	target.DeletedAt = now
+	target.Version.Counter++
+	target.Version.NodeID = s.Config.NodeID
+	target.Version.Updated = now.Unix()
+	if err := s.Store.UpsertNode(*target); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1922,7 +1944,7 @@ func (s *Server) handleNodeJoinCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	seedURL := s.seedURLFromRequest(r)
 	command := fmt.Sprintf(
-		"wget -qO install.sh %s && chmod +x install.sh && ./install.sh --mode join --seed %s --cluster-secret '%s' --jwt-secret '%s' --node-name \"<node-name>\" --ips \"<ip1,ip2>\" --ns-ips \"<ns-ip1,ns-ip2>\"",
+		"wget -qO install.sh %s && chmod +x install.sh && ./install.sh --mode join --seed %s --cluster-secret '%s' --jwt-secret '%s' --node-name \"<node-name>\" --ips \"<ip1,ip2>\" --ns-ips \"<ns-ip1,ns-ip2>\" --edge-ips \"<edge-ip1,edge-ip2>\" --labels \"<edge-labels>\"",
 		installScriptURL,
 		seedURL,
 		escapeSingleQuotes(clusterSecret),

@@ -339,8 +339,28 @@ func (s *Store) MutateDomain(domain string, mutate func(rec *models.DomainRecord
 
 // GetNodes returns infra nodes snapshot.
 func (s *Store) GetNodes() ([]models.Node, error) {
+	nodes, err := s.GetNodesIncludingDeleted()
+	if err != nil {
+		return nil, err
+	}
+	active := make([]models.Node, 0, len(nodes))
+	for _, node := range nodes {
+		if !node.DeletedAt.IsZero() {
+			continue
+		}
+		active = append(active, node)
+	}
+	return active, nil
+}
+
+// GetNodesIncludingDeleted returns all nodes, including soft-deleted entries.
+func (s *Store) GetNodesIncludingDeleted() ([]models.Node, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.readNodesLocked()
+}
+
+func (s *Store) readNodesLocked() ([]models.Node, error) {
 	path := s.nodesFile()
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {

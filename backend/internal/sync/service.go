@@ -85,7 +85,7 @@ func (s *Service) ComputeDigest() (Digest, error) {
 	if err != nil {
 		return Digest{}, err
 	}
-	nodes, err := s.store.GetNodes()
+	nodes, err := s.store.GetNodesIncludingDeleted()
 	if err != nil {
 		return Digest{}, err
 	}
@@ -185,11 +185,17 @@ func (s *Service) ApplySnapshot(snapshot Snapshot) error {
 		changed = true
 	}
 	// merge nodes + peers
-	if err := s.store.SaveNodes(snapshot.Nodes); err != nil {
+	localNodes, err := s.store.GetNodesIncludingDeleted()
+	if err != nil {
 		return err
 	}
-	s.bootstrapPendingEdgeHealth(snapshot.Nodes)
-	if err := s.updatePeers(snapshot.Nodes); err != nil {
+	mergedNodes := mergeNodes(localNodes, snapshot.Nodes)
+	if err := s.store.SaveNodes(mergedNodes); err != nil {
+		return err
+	}
+	activeNodes := filterActiveNodes(mergedNodes)
+	s.bootstrapPendingEdgeHealth(activeNodes)
+	if err := s.updatePeers(activeNodes); err != nil {
 		return err
 	}
 	if len(snapshot.Nodes) > 0 {
@@ -238,6 +244,59 @@ func mergeDomain(local models.DomainRecord, remote models.DomainRecord) models.D
 	return local
 }
 
+func mergeNodes(local []models.Node, remote []models.Node) []models.Node {
+	merged := make(map[string]models.Node, len(local)+len(remote))
+	for _, node := range local {
+		if node.ID == "" {
+			continue
+		}
+		node.ComputeEdgeIPs()
+		merged[node.ID] = node
+	}
+	for _, node := range remote {
+		if node.ID == "" {
+			continue
+		}
+		node.ComputeEdgeIPs()
+		if existing, ok := merged[node.ID]; ok {
+			if existing.Version.Counter == 0 && node.Version.Counter == 0 {
+				if node.UpdatedAt.After(existing.UpdatedAt) {
+					merged[node.ID] = node
+				}
+				continue
+			}
+			winner := models.MergeClock(existing.Version, node.Version)
+			if winner == node.Version {
+				merged[node.ID] = node
+			}
+			continue
+		}
+		merged[node.ID] = node
+	}
+	out := make([]models.Node, 0, len(merged))
+	for _, node := range merged {
+		out = append(out, node)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name == out[j].Name {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func filterActiveNodes(nodes []models.Node) []models.Node {
+	active := make([]models.Node, 0, len(nodes))
+	for _, node := range nodes {
+		if !node.DeletedAt.IsZero() {
+			continue
+		}
+		active = append(active, node)
+	}
+	return active
+}
+
 // PullFromPeer fetches a snapshot from a peer URL.
 func (s *Service) PullFromPeer(ctx context.Context, baseURL string) error {
 	if baseURL == "" {
@@ -281,6 +340,9 @@ func (s *Service) updatePeers(nodes []models.Node) error {
 	unique := make(map[string]struct{}, len(nodes))
 	peers := make([]string, 0, len(nodes))
 	for _, node := range nodes {
+		if !node.DeletedAt.IsZero() {
+			continue
+		}
 		if node.ID == s.nodeID {
 			continue
 		}
