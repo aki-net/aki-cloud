@@ -14,7 +14,6 @@ EDGE_IPS=""
 NS_LABEL=""
 NS_BASE_DOMAIN=""
 API_ENDPOINT=""
-NODE_ROLES=""
 NODE_LABELS=""
 SEED=""
 ADMIN_EMAIL=""
@@ -49,7 +48,6 @@ Options:
   --ns-label LABEL           Nameserver label (default: dns)
   --ns-base-domain DOMAIN    Base domain for NS hostnames
   --api-endpoint URL         Backend API endpoint for this node (default derives from IPs + backend port)
-  --roles edge,nameserver    Node roles (allowed: edge, nameserver; comma separated)
   --labels label1,label2     Node labels used for scheduling (comma separated)
   --seed HOST                Seed backend base URL (join mode)
   --admin-email EMAIL        Initial admin email (fresh)
@@ -118,10 +116,6 @@ parse_args() {
       --api-endpoint)
         API_ENDPOINT="$2"
         RERUN_ARGS+=(--api-endpoint "$2")
-        shift 2 ;;
-      --roles)
-        NODE_ROLES="$2"
-        RERUN_ARGS+=(--roles "$2")
         shift 2 ;;
       --labels)
         NODE_LABELS="$2"
@@ -316,37 +310,6 @@ normalize_csv() {
   echo "$input" | tr ' ' '\n' | tr ',' '\n' | awk 'NF' | paste -sd',' -
 }
 
-normalize_roles() {
-  local input="$1"
-  local -A seen=()
-  local -a out=()
-  local role
-  IFS=',' read -r -a roles <<<"$input"
-  for role in "${roles[@]}"; do
-    role="${role,,}"
-    role="${role//[$'\t\r\n ']/}"
-    if [[ -z "$role" ]]; then
-      continue
-    fi
-    case "$role" in
-      edge|nameserver)
-        if [[ -z "${seen[$role]}" ]]; then
-          out+=("$role")
-          seen[$role]=1
-        fi
-        ;;
-      *)
-        abort "Invalid node role: $role"
-        ;;
-    esac
-  done
-  if [[ ${#out[@]} -eq 0 ]]; then
-    echo ""
-  else
-    IFS=','; echo "${out[*]}"
-  fi
-}
-
 generate_uuid() {
   if command -v uuidgen >/dev/null 2>&1; then
     uuidgen
@@ -416,12 +379,12 @@ create_admin_user() {
 }
 
 write_node_files() {
-  python3 - "$DATA_DIR" "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "$10" <<'PY'
+  python3 - "$DATA_DIR" "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-data_dir, node_id, node_name, ips_csv, ns_ips_csv, edge_ips_csv, roles_csv, labels_csv, ns_label, ns_base, api_endpoint = sys.argv[1:12]
+data_dir, node_id, node_name, ips_csv, ns_ips_csv, edge_ips_csv, labels_csv, ns_label, ns_base, api_endpoint = sys.argv[1:10]
 
 def csv_to_list(value):
     if not value:
@@ -437,9 +400,15 @@ node = {
     "ns_label": ns_label,
     "ns_base_domain": ns_base,
     "api_endpoint": api_endpoint,
-    "roles": csv_to_list(roles_csv),
     "labels": csv_to_list(labels_csv),
 }
+
+roles = []
+if node["edge_ips"]:
+    roles.append("edge")
+if node["ns_ips"]:
+    roles.append("nameserver")
+node["roles"] = roles
 
 cluster_path = Path(data_dir) / "cluster" / "node.json"
 cluster_path.write_text(json.dumps(node, indent=2))
@@ -462,7 +431,6 @@ for existing in nodes:
         existing["ns_label"] = ns_label
         existing["ns_base_domain"] = ns_base
         existing["api_endpoint"] = api_endpoint
-        existing["roles"] = node["roles"]
         existing["labels"] = node["labels"]
         updated = True
         break
@@ -477,7 +445,6 @@ if not updated:
         "ns_label": ns_label,
         "ns_base_domain": ns_base,
         "api_endpoint": api_endpoint,
-        "roles": node["roles"],
         "labels": node["labels"],
     })
 
@@ -699,8 +666,6 @@ main() {
   prompt_if_empty NS_IPS "Nameserver IPs (comma separated, leave blank if none)"
   NS_IPS="$(normalize_csv "$NS_IPS")"
   local default_edge_ips=""
-  local -a default_roles=()
-  local default_roles_csv=""
   if [[ -z "$EDGE_IPS" ]]; then
     IFS=',' read -r -a __ips_arr <<<"$IPS"
     IFS=',' read -r -a __ns_arr <<<"$NS_IPS"
@@ -728,36 +693,18 @@ main() {
     fi
   fi
   EDGE_IPS="$(normalize_csv "$EDGE_IPS")"
-  if [[ -z "$NODE_ROLES" ]]; then
-    default_roles=()
-    if [[ -n "$EDGE_IPS" ]]; then
-      default_roles+=("edge")
-    fi
-    if [[ -n "$NS_IPS" ]]; then
-      default_roles+=("nameserver")
-    fi
-    if [[ ${#default_roles[@]} -eq 0 ]]; then
-      default_roles+=("edge")
-    fi
-    default_roles_csv="$(IFS=','; echo "${default_roles[*]}")"
-    read -r -p "Node roles (edge,nameserver) [default: $default_roles_csv]: " NODE_ROLES
-    NODE_ROLES="${NODE_ROLES:-$default_roles_csv}"
-  fi
-  NODE_ROLES="$(normalize_roles "$NODE_ROLES")"
-  if [[ -z "$NODE_ROLES" ]]; then
-    abort "At least one node role must be specified"
-  fi
-  if [[ ",${NODE_ROLES}," != *",edge,"* ]]; then
-    EDGE_IPS=""
-  fi
   if [[ -z "$NODE_LABELS" ]]; then
     read -r -p "Node labels (comma separated, optional): " NODE_LABELS
   fi
   NODE_LABELS="$(normalize_csv "$NODE_LABELS")"
   unset __ips_arr __ns_arr __ns_map __derived
-  unset default_roles default_roles_csv default_edge_ips
+  unset default_edge_ips
   if [[ -z "$PRIMARY_IP" ]]; then
-    PRIMARY_IP="${EDGE_IPS%%,*}"
+    if [[ -n "$EDGE_IPS" ]]; then
+      PRIMARY_IP="${EDGE_IPS%%,*}"
+    else
+      PRIMARY_IP="${IPS%%,*}"
+    fi
   fi
   prompt_if_empty NS_LABEL "NS label"
   prompt_if_empty NS_BASE_DOMAIN "NS base domain"
@@ -796,13 +743,13 @@ main() {
     admin_id="$(generate_uuid)"
     create_admin_user "$ADMIN_EMAIL" "$ADMIN_PASS" "$admin_id"
 
-    write_node_files "$NODE_ID" "$NODE_NAME" "$IPS" "$NS_IPS" "$EDGE_IPS" "$NODE_ROLES" "$NODE_LABELS" "$NS_LABEL" "$NS_BASE_DOMAIN" "$API_ENDPOINT"
+    write_node_files "$NODE_ID" "$NODE_NAME" "$IPS" "$NS_IPS" "$EDGE_IPS" "$NODE_LABELS" "$NS_LABEL" "$NS_BASE_DOMAIN" "$API_ENDPOINT"
 
     echo '{"peers":[]}' > "$DATA_DIR/cluster/peers.json"
 
     local enable_dns enable_proxy
     enable_dns="false"
-    if [[ -n "$NS_IPS" && ",${NODE_ROLES}," == *",nameserver,"* ]]; then
+    if [[ -n "$NS_IPS" ]]; then
       enable_dns="true"
     fi
     if [[ "$ENABLE_COREDNS" == "true" || "$ENABLE_COREDNS" == "false" ]]; then
@@ -810,7 +757,7 @@ main() {
     fi
 
     enable_proxy="false"
-    if [[ ",${NODE_ROLES}," == *",edge,"* ]]; then
+    if [[ -n "$EDGE_IPS" ]]; then
       enable_proxy="true"
     fi
     if [[ "$ENABLE_OPENRESTY" == "true" || "$ENABLE_OPENRESTY" == "false" ]]; then
@@ -831,17 +778,17 @@ main() {
     fi
     check_seed_reachable "$SEED"
     write_secret_files "$SECRETS_SUPPLIED" "$JWT_SECRET_INPUT"
-    write_node_files "$NODE_ID" "$NODE_NAME" "$IPS" "$NS_IPS" "$EDGE_IPS" "$NODE_ROLES" "$NODE_LABELS" "$NS_LABEL" "$NS_BASE_DOMAIN" "$API_ENDPOINT"
+    write_node_files "$NODE_ID" "$NODE_NAME" "$IPS" "$NS_IPS" "$EDGE_IPS" "$NODE_LABELS" "$NS_LABEL" "$NS_BASE_DOMAIN" "$API_ENDPOINT"
     pull_snapshot "$SEED" "$SECRETS_SUPPLIED"
     apply_snapshot
-    write_node_files "$NODE_ID" "$NODE_NAME" "$IPS" "$NS_IPS" "$EDGE_IPS" "$NODE_ROLES" "$NODE_LABELS" "$NS_LABEL" "$NS_BASE_DOMAIN" "$API_ENDPOINT"
-    # Determine service flags based on roles
+    write_node_files "$NODE_ID" "$NODE_NAME" "$IPS" "$NS_IPS" "$EDGE_IPS" "$NODE_LABELS" "$NS_LABEL" "$NS_BASE_DOMAIN" "$API_ENDPOINT"
+    # Determine service flags based on configured IPs
     local enable_dns="false"
-    if [[ -n "$NS_IPS" && ",${NODE_ROLES}," == *",nameserver,"* ]]; then
+    if [[ -n "$NS_IPS" ]]; then
       enable_dns="true"
     fi
     local enable_proxy="false"
-    if [[ ",${NODE_ROLES}," == *",edge,"* ]]; then
+    if [[ -n "$EDGE_IPS" ]]; then
       enable_proxy="true"
     fi
     if [[ "$ENABLE_COREDNS" == "true" || "$ENABLE_COREDNS" == "false" ]]; then
@@ -854,15 +801,11 @@ main() {
     configure_firewall "$enable_dns" "$enable_proxy"
   fi
 
-  if [[ -n "$NS_IPS" && ",${NODE_ROLES}," == *",nameserver,"* ]]; then
+  if [[ -n "$NS_IPS" ]]; then
     check_ports "$NS_IPS" "53" || true
   fi
-  local edge_check_ips="$EDGE_IPS"
-  if [[ -z "$edge_check_ips" ]]; then
-    edge_check_ips="$IPS"
-  fi
-  if [[ -n "$edge_check_ips" && ",${NODE_ROLES}," == *",edge,"* ]]; then
-    check_ports "$edge_check_ips" "80,443" || true
+  if [[ -n "$EDGE_IPS" ]]; then
+    check_ports "$EDGE_IPS" "80,443" || true
   fi
 
   render_configs

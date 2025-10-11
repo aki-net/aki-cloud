@@ -1270,6 +1270,7 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 	node.NSIPs = filterEmpty(node.NSIPs)
 	node.EdgeIPs = filterEmpty(node.EdgeIPs)
 	node.Labels = filterEmpty(node.Labels)
+	node.Roles = nil
 	node.ComputeEdgeIPs()
 	if err := s.Store.UpsertNode(node); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -1304,15 +1305,14 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var payload struct {
-		Name        *string            `json:"name"`
-		IPs         *[]string          `json:"ips"`
-		NSIPs       *[]string          `json:"ns_ips"`
-		EdgeIPs     *[]string          `json:"edge_ips"`
-		NSLabel     *string            `json:"ns_label"`
-		NSBase      *string            `json:"ns_base_domain"`
-		APIEndpoint *string            `json:"api_endpoint"`
-		Roles       *[]models.NodeRole `json:"roles"`
-		Labels      *[]string          `json:"labels"`
+		Name        *string   `json:"name"`
+		IPs         *[]string `json:"ips"`
+		NSIPs       *[]string `json:"ns_ips"`
+		EdgeIPs     *[]string `json:"edge_ips"`
+		NSLabel     *string   `json:"ns_label"`
+		NSBase      *string   `json:"ns_base_domain"`
+		APIEndpoint *string   `json:"api_endpoint"`
+		Labels      *[]string `json:"labels"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid payload")
@@ -1339,12 +1339,10 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	if payload.APIEndpoint != nil {
 		existing.APIEndpoint = strings.TrimSpace(*payload.APIEndpoint)
 	}
-	if payload.Roles != nil {
-		existing.Roles = append([]models.NodeRole{}, *payload.Roles...)
-	}
 	if payload.Labels != nil {
 		existing.Labels = filterEmpty(*payload.Labels)
 	}
+	existing.Roles = nil
 	existing.ComputeEdgeIPs()
 	if err := s.Store.UpsertNode(*existing); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

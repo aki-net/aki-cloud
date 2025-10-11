@@ -296,7 +296,7 @@ func (n *Node) ComputeEdgeIPs() {
 	n.NSIPs = normalizeIPs(n.NSIPs)
 	n.EdgeIPs = normalizeIPs(n.EdgeIPs)
 	n.Labels = normalizeLabels(n.Labels)
-	n.Roles = normalizeRoles(n.Roles)
+	n.Roles = nil
 
 	// Ensure NS and Edge IPs are part of the general IP list.
 	for _, ip := range append(append([]string{}, n.NSIPs...), n.EdgeIPs...) {
@@ -332,21 +332,14 @@ func (n *Node) ComputeEdgeIPs() {
 		n.EdgeIPs = normalizeIPs(candidates)
 	}
 
-	if len(n.Roles) == 0 {
-		if len(n.EdgeIPs) > 0 {
-			n.Roles = append(n.Roles, NodeRoleEdge)
-		}
-		if len(n.NSIPs) > 0 {
-			n.Roles = append(n.Roles, NodeRoleNameServer)
-		}
+	roles := make([]NodeRole, 0, 2)
+	if len(n.EdgeIPs) > 0 {
+		roles = append(roles, NodeRoleEdge)
 	}
-	if len(n.EdgeIPs) > 0 && !containsRole(n.Roles, NodeRoleEdge) {
-		n.Roles = append(n.Roles, NodeRoleEdge)
+	if len(n.NSIPs) > 0 {
+		roles = append(roles, NodeRoleNameServer)
 	}
-	if len(n.NSIPs) > 0 && !containsRole(n.Roles, NodeRoleNameServer) {
-		n.Roles = append(n.Roles, NodeRoleNameServer)
-	}
-	n.Roles = normalizeRoles(n.Roles)
+	n.Roles = roles
 }
 
 // HasRole reports whether the node is configured for the given role.

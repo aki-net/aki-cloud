@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from "axios";
 import {
   LoginCredentials,
   User,
@@ -10,33 +10,32 @@ import {
   BulkUpdateDomainPayload,
   CreateUserPayload,
   Node,
-  NodeRole,
   EdgeEndpoint,
   NameServerEntry,
   DomainOverview,
   NameServerStatus,
-} from '../types';
+} from "../types";
 
 const resolveApiBase = (): string => {
   const explicit = import.meta.env.VITE_API_BASE?.trim();
   if (explicit) {
-    return explicit.replace(/\/+$/, '');
+    return explicit.replace(/\/+$/, "");
   }
 
-  if (typeof window !== 'undefined') {
+  if (typeof window !== "undefined") {
     const current = new URL(window.location.href);
     const configuredPort = import.meta.env.VITE_API_PORT?.trim();
 
     if (configuredPort) {
       current.port = configuredPort;
-    } else if (current.port === '3000') {
-      current.port = '8080';
+    } else if (current.port === "3000") {
+      current.port = "8080";
     }
 
-    return `${current.protocol}//${current.host}`.replace(/\/+$/, '');
+    return `${current.protocol}//${current.host}`.replace(/\/+$/, "");
   }
 
-  return 'http://localhost:8080';
+  return "http://localhost:8080";
 };
 
 const API_BASE = resolveApiBase();
@@ -65,7 +64,6 @@ interface NodePayload {
   ips: string[];
   ns_ips?: string[];
   edge_ips?: string[];
-  roles?: NodeRole[];
   labels?: string[];
   ns_label?: string;
   ns_base_domain?: string;
@@ -82,7 +80,7 @@ export const auth = {
 export const validateSession = async (): Promise<boolean> => {
   try {
     // Try to fetch user domains as a way to validate the session
-    await client.get('/domains');
+    await client.get("/domains");
     return true;
   } catch (error: any) {
     if (error.response?.status === 401) {
@@ -95,35 +93,48 @@ export const validateSession = async (): Promise<boolean> => {
 
 export const domains = {
   list: async (): Promise<Domain[]> => {
-    const res = await client.get<Domain[]>('/domains');
+    const res = await client.get<Domain[]>("/domains");
     return res.data;
   },
-  
+
   create: async (payload: CreateDomainPayload): Promise<Domain> => {
-    const res = await client.post<Domain>('/domains', payload);
+    const res = await client.post<Domain>("/domains", payload);
     return res.data;
   },
-  
-  update: async (domain: string, payload: UpdateDomainPayload): Promise<Domain> => {
+
+  update: async (
+    domain: string,
+    payload: UpdateDomainPayload,
+  ): Promise<Domain> => {
     const res = await client.put<Domain>(`/domains/${domain}`, payload);
     return res.data;
   },
 
   reassignEdge: async (domain: string): Promise<Domain> => {
-    const res = await client.post<Domain>(`/domains/${domain}/edge/reassign`, {});
+    const res = await client.post<Domain>(
+      `/domains/${domain}/edge/reassign`,
+      {},
+    );
     return res.data;
   },
-  
-  bulkCreate: async (payload: BulkDomainPayload): Promise<BulkDomainResponse> => {
-    const res = await client.post<BulkDomainResponse>('/domains/bulk', payload);
+
+  bulkCreate: async (
+    payload: BulkDomainPayload,
+  ): Promise<BulkDomainResponse> => {
+    const res = await client.post<BulkDomainResponse>("/domains/bulk", payload);
     return res.data;
   },
-  
-  bulkUpdate: async (payload: BulkUpdateDomainPayload): Promise<BulkDomainResponse> => {
-    const res = await client.patch<BulkDomainResponse>('/domains/bulk', payload);
+
+  bulkUpdate: async (
+    payload: BulkUpdateDomainPayload,
+  ): Promise<BulkDomainResponse> => {
+    const res = await client.patch<BulkDomainResponse>(
+      "/domains/bulk",
+      payload,
+    );
     return res.data;
   },
-  
+
   delete: async (domain: string): Promise<void> => {
     await client.delete(`/domains/${domain}`);
   },
@@ -131,20 +142,23 @@ export const domains = {
 
 export const users = {
   list: async (): Promise<User[]> => {
-    const res = await client.get<User[]>('/admin/users');
+    const res = await client.get<User[]>("/admin/users");
     return res.data;
   },
-  
+
   create: async (payload: CreateUserPayload): Promise<User> => {
-    const res = await client.post<User>('/admin/users', payload);
+    const res = await client.post<User>("/admin/users", payload);
     return res.data;
   },
-  
-  update: async (id: string, payload: Partial<CreateUserPayload>): Promise<User> => {
+
+  update: async (
+    id: string,
+    payload: Partial<CreateUserPayload>,
+  ): Promise<User> => {
     const res = await client.put<User>(`/admin/users/${id}`, payload);
     return res.data;
   },
-  
+
   delete: async (id: string): Promise<void> => {
     await client.delete(`/admin/users/${id}`);
   },
@@ -152,20 +166,20 @@ export const users = {
 
 export const nodes = {
   list: async (): Promise<Node[]> => {
-    const res = await client.get<Node[]>('/admin/nodes');
+    const res = await client.get<Node[]>("/admin/nodes");
     return res.data;
   },
-  
+
   create: async (node: NodePayload): Promise<Node> => {
-    const res = await client.post<Node>('/admin/nodes', node);
+    const res = await client.post<Node>("/admin/nodes", node);
     return res.data;
   },
-  
+
   update: async (id: string, node: Partial<NodePayload>): Promise<Node> => {
     const res = await client.put<Node>(`/admin/nodes/${id}`, node);
     return res.data;
   },
-  
+
   delete: async (id: string): Promise<void> => {
     await client.delete(`/admin/nodes/${id}`);
   },
@@ -173,38 +187,45 @@ export const nodes = {
 
 export const infra = {
   nameservers: async (): Promise<NameServerEntry[]> => {
-    const res = await client.get<NameServerEntry[]>('/infra/nameservers');
+    const res = await client.get<NameServerEntry[]>("/infra/nameservers");
     return res.data;
   },
-  
+
   edges: async (): Promise<EdgeEndpoint[]> => {
-    const res = await client.get<EdgeEndpoint[]>('/infra/edges');
+    const res = await client.get<EdgeEndpoint[]>("/infra/edges");
     return res.data;
   },
   nameserverStatus: async (): Promise<NameServerStatus[]> => {
-    const res = await client.get<NameServerStatus[]>('/admin/infra/nameservers/status');
+    const res = await client.get<NameServerStatus[]>(
+      "/admin/infra/nameservers/status",
+    );
     return res.data;
   },
-  
+
   checkNameServers: async (targets?: string[]): Promise<NameServerStatus[]> => {
     const payload = targets && targets.length > 0 ? { targets } : {};
-    const res = await client.post<NameServerStatus[]>('/admin/infra/nameservers/check', payload);
+    const res = await client.post<NameServerStatus[]>(
+      "/admin/infra/nameservers/check",
+      payload,
+    );
     return res.data;
   },
-  
+
   joinCommand: async (): Promise<string> => {
-    const res = await client.get<{ command: string }>('/admin/nodes/join-command');
+    const res = await client.get<{ command: string }>(
+      "/admin/nodes/join-command",
+    );
     return res.data.command;
   },
-  
+
   rebuild: async (): Promise<void> => {
-    await client.post('/admin/ops/rebuild', {});
+    await client.post("/admin/ops/rebuild", {});
   },
 };
 
 export const admin = {
   domainsOverview: async (): Promise<DomainOverview[]> => {
-    const res = await client.get<DomainOverview[]>('/admin/domains/overview');
+    const res = await client.get<DomainOverview[]>("/admin/domains/overview");
     return res.data;
   },
 };
@@ -217,12 +238,12 @@ client.interceptors.response.use(
     if (error.response?.status === 401 && !isRedirecting) {
       // Prevent multiple redirects
       isRedirecting = true;
-      
+
       // Clear auth data
       setAuthToken(null);
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('user');
-      
+      localStorage.removeItem("auth_token");
+      localStorage.removeItem("user");
+
       // Use React Router navigation instead of full page reload
       // This will be handled by the AuthContext
       setTimeout(() => {
@@ -230,7 +251,7 @@ client.interceptors.response.use(
       }, 1000);
     }
     return Promise.reject(error);
-  }
+  },
 );
 
 export default client;

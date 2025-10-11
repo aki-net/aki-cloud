@@ -1,17 +1,23 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { domains as domainsApi, infra, admin } from '../api/client';
-import { Domain, CreateDomainPayload, NameServerEntry, DomainOverview, EdgeEndpoint } from '../types';
-import Table from './ui/Table';
-import Button from './ui/Button';
-import Input from './ui/Input';
-import Switch from './ui/Switch';
-import Badge from './ui/Badge';
-import Card from './ui/Card';
-import PageHeader from './PageHeader';
-import toast from 'react-hot-toast';
-import { format, formatDistanceToNow } from 'date-fns';
-import { useAuth } from '../contexts/AuthContext';
-import './DomainManagement.css';
+import React, { useState, useEffect, useRef } from "react";
+import { domains as domainsApi, infra, admin } from "../api/client";
+import {
+  Domain,
+  CreateDomainPayload,
+  NameServerEntry,
+  DomainOverview,
+  EdgeEndpoint,
+} from "../types";
+import Table from "./ui/Table";
+import Button from "./ui/Button";
+import Input from "./ui/Input";
+import Switch from "./ui/Switch";
+import Badge from "./ui/Badge";
+import Card from "./ui/Card";
+import PageHeader from "./PageHeader";
+import toast from "react-hot-toast";
+import { format, formatDistanceToNow } from "date-fns";
+import { useAuth } from "../contexts/AuthContext";
+import "./DomainManagement.css";
 
 interface Props {
   isAdmin?: boolean;
@@ -24,17 +30,21 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   const [nameservers, setNameservers] = useState<NameServerEntry[]>([]);
   const [edgeEndpoints, setEdgeEndpoints] = useState<EdgeEndpoint[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedDomains, setSelectedDomains] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedDomains, setSelectedDomains] = useState<Set<string>>(
+    new Set(),
+  );
   const [showAddDomain, setShowAddDomain] = useState(false);
   const [editingDomain, setEditingDomain] = useState<string | null>(null);
-  const [editingIP, setEditingIP] = useState('');
-  const [viewMode, setViewMode] = useState<'my' | 'all' | 'orphaned'>('my');
-  const [bulkIP, setBulkIP] = useState('');
-  const [bulkOwner, setBulkOwner] = useState('');
+  const [editingIP, setEditingIP] = useState("");
+  const [viewMode, setViewMode] = useState<"my" | "all" | "orphaned">("my");
+  const [bulkIP, setBulkIP] = useState("");
+  const [bulkOwner, setBulkOwner] = useState("");
   const [availableLabels, setAvailableLabels] = useState<string[]>([]);
-  const [labelFilter, setLabelFilter] = useState<string>('all');
-  const [edgeModalData, setEdgeModalData] = useState<EdgeModalData | null>(null);
+  const [labelFilter, setLabelFilter] = useState<string>("all");
+  const [edgeModalData, setEdgeModalData] = useState<EdgeModalData | null>(
+    null,
+  );
 
   interface EdgeModalData {
     domain: string;
@@ -59,13 +69,14 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         infra.nameservers(),
         infra.edges(),
       ];
-      
+
       if (isAdmin) {
         promises.push(admin.domainsOverview().catch(() => []));
       }
-      
-      const [domainData, nsData, edgeData, overviewData] = await Promise.all(promises);
-      
+
+      const [domainData, nsData, edgeData, overviewData] =
+        await Promise.all(promises);
+
       setDomains(domainData);
       setNameservers(nsData);
       setEdgeEndpoints(edgeData);
@@ -74,69 +85,91 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       }
 
       const labelSet = new Set<string>();
-      edgeData.forEach((edge: EdgeEndpoint) => edge.labels?.forEach((label) => labelSet.add(label)));
-      domainData.forEach((domain: Domain) => domain.edge?.labels?.forEach((label) => labelSet.add(label)));
+      edgeData.forEach((edge: EdgeEndpoint) =>
+        edge.labels?.forEach((label) => labelSet.add(label)),
+      );
+      domainData.forEach((domain: Domain) =>
+        domain.edge?.labels?.forEach((label) => labelSet.add(label)),
+      );
       if (overviewData) {
-        overviewData.forEach((overview: DomainOverview) => overview.edge_labels?.forEach((label) => labelSet.add(label)));
+        overviewData.forEach((overview: DomainOverview) =>
+          overview.edge_labels?.forEach((label) => labelSet.add(label)),
+        );
       }
-      const sortedLabels = Array.from(labelSet).sort((a, b) => a.localeCompare(b));
+      const sortedLabels = Array.from(labelSet).sort((a, b) =>
+        a.localeCompare(b),
+      );
       setAvailableLabels(sortedLabels);
-      if (labelFilter !== 'all' && labelFilter !== 'unlabeled' && !sortedLabels.includes(labelFilter)) {
-        setLabelFilter('all');
+      if (
+        labelFilter !== "all" &&
+        labelFilter !== "unlabeled" &&
+        !sortedLabels.includes(labelFilter)
+      ) {
+        setLabelFilter("all");
       }
     } catch (error) {
-      toast.error('Failed to load data');
+      toast.error("Failed to load data");
     } finally {
       setLoading(false);
     }
   };
 
   const modeLabel = (mode?: string | null) => {
-    if (!mode) return '';
+    if (!mode) return "";
     switch (mode) {
-      case 'flexible':
-        return 'Flexible';
-      case 'full':
-        return 'Full';
-      case 'full_strict':
-        return 'Full (Strict)';
-      case 'strict_origin_pull':
-        return 'Strict Origin Pull';
-      case 'off':
-        return 'Off';
+      case "flexible":
+        return "Flexible";
+      case "full":
+        return "Full";
+      case "full_strict":
+        return "Full (Strict)";
+      case "strict_origin_pull":
+        return "Strict Origin Pull";
+      case "off":
+        return "Off";
       default:
         return mode;
     }
   };
 
   const computeRetryHint = (iso?: string | null) => {
-    if (!iso) return '';
+    if (!iso) return "";
     const retry = new Date(iso);
-    if (
-      Number.isNaN(retry.getTime()) ||
-      retry.getUTCFullYear() <= 1900
-    ) {
-      return '';
+    if (Number.isNaN(retry.getTime()) || retry.getUTCFullYear() <= 1900) {
+      return "";
     }
     const now = Date.now();
     if (retry.getTime() <= now) {
-      return 'Retrying now';
+      return "Retrying now";
     }
     return `Retry ${formatDistanceToNow(retry, { addSuffix: true })}`;
   };
 
   const tlsStatusMeta: Record<
     string,
-    { variant: 'default' | 'primary' | 'success' | 'warning' | 'danger' | 'info'; label: string }
+    {
+      variant:
+        | "default"
+        | "primary"
+        | "success"
+        | "warning"
+        | "danger"
+        | "info";
+      label: string;
+    }
   > = {
-    none: { variant: 'default', label: 'inactive' },
-    pending: { variant: 'warning', label: 'pending' },
-    active: { variant: 'success', label: 'active' },
-    errored: { variant: 'danger', label: 'error' },
-    awaiting_dns: { variant: 'info', label: 'awaiting dns' },
+    none: { variant: "default", label: "inactive" },
+    pending: { variant: "warning", label: "pending" },
+    active: { variant: "success", label: "active" },
+    errored: { variant: "danger", label: "error" },
+    awaiting_dns: { variant: "info", label: "awaiting dns" },
   };
 
-  const renderStatusIndicator = (statusKey: string, error?: string, retryHint?: string) => {
+  const renderStatusIndicator = (
+    statusKey: string,
+    error?: string,
+    retryHint?: string,
+  ) => {
     const meta = tlsStatusMeta[statusKey] || tlsStatusMeta.none;
     return (
       <div className="tls-status-chip">
@@ -148,43 +181,49 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     );
   };
 
-  const findFullDomain = (domainName: string) => domains.find((d) => d.domain === domainName);
+  const findFullDomain = (domainName: string) =>
+    domains.find((d) => d.domain === domainName);
 
   const getDomainLabels = (record: Domain | DomainOverview): string[] => {
     const full = findFullDomain(record.domain);
     if (full?.edge?.labels) {
       return full.edge.labels;
     }
-    if ('edge' in record) {
+    if ("edge" in record) {
       return record.edge?.labels || [];
     }
     return record.edge_labels || [];
   };
 
-  const buildEdgeModalData = (record: Domain | DomainOverview, override?: Domain): EdgeModalData => {
+  const buildEdgeModalData = (
+    record: Domain | DomainOverview,
+    override?: Domain,
+  ): EdgeModalData => {
     const source = override ?? findFullDomain(record.domain);
     const assignedIp =
       override?.edge?.assigned_ip ??
       source?.edge?.assigned_ip ??
-      ('edge' in record ? record.edge?.assigned_ip : record.edge_ip);
+      ("edge" in record ? record.edge?.assigned_ip : record.edge_ip);
     const nodeId =
       override?.edge?.assigned_node_id ??
       source?.edge?.assigned_node_id ??
-      ('edge' in record ? record.edge?.assigned_node_id : record.edge_node_id);
+      ("edge" in record ? record.edge?.assigned_node_id : record.edge_node_id);
     const labels =
       override?.edge?.labels ??
       source?.edge?.labels ??
-      ('edge' in record ? record.edge?.labels ?? [] : record.edge_labels ?? []);
-    const originIp = override?.origin_ip ?? source?.origin_ip ?? record.origin_ip;
+      ("edge" in record
+        ? (record.edge?.labels ?? [])
+        : (record.edge_labels ?? []));
+    const originIp =
+      override?.origin_ip ?? source?.origin_ip ?? record.origin_ip;
     const proxied = override?.proxied ?? source?.proxied ?? record.proxied;
     const ttl =
       override?.ttl ??
       source?.ttl ??
-      ('ttl' in record ? ((record as any).ttl ?? 60) : 60);
-    const nodeName =
-      nodeId
-        ? edgeEndpoints.find((edge) => edge.node_id === nodeId)?.node_name
-        : assignedIp
+      ("ttl" in record ? ((record as any).ttl ?? 60) : 60);
+    const nodeName = nodeId
+      ? edgeEndpoints.find((edge) => edge.node_id === nodeId)?.node_name
+      : assignedIp
         ? edgeEndpoints.find((edge) => edge.ip === assignedIp)?.node_name
         : undefined;
     return {
@@ -205,25 +244,37 @@ export default function DomainManagement({ isAdmin = false }: Props) {
 
   const renderEdgeCell = (record: Domain | DomainOverview) => {
     const info = buildEdgeModalData(record);
+    const displayLabel = info.proxied
+      ? info.assigned_ip || "Pending assignment"
+      : "Proxy disabled";
+    const ipClass = info.proxied && info.assigned_ip ? "" : "edge-ip-muted";
     return (
       <div className="edge-cell">
         <div className="edge-assignment">
-          <span className={`edge-ip mono ${info.assigned_ip ? '' : 'edge-ip-muted'}`}>
-            {info.assigned_ip || 'Pending assignment'}
-          </span>
-          {info.node_name && <span className="edge-node-name">{info.node_name}</span>}
+          <span className={`edge-ip mono ${ipClass}`}>{displayLabel}</span>
+          {info.proxied && info.node_name && (
+            <span className="edge-node-name">{info.node_name}</span>
+          )}
         </div>
         {info.labels.length > 0 && (
           <div className="edge-labels">
             {info.labels.map((label) => (
-              <Badge key={`${record.domain}-edge-label-${label}`} variant="secondary" size="sm">
+              <Badge
+                key={`${record.domain}-edge-label-${label}`}
+                variant="secondary"
+                size="sm"
+              >
                 {label}
               </Badge>
             ))}
           </div>
         )}
         <div className="edge-actions">
-          <Button variant="ghost" size="sm" onClick={() => openEdgeModal(record)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => openEdgeModal(record)}
+          >
             Configure
           </Button>
         </div>
@@ -233,78 +284,87 @@ export default function DomainManagement({ isAdmin = false }: Props) {
 
   const handleToggleProxy = async (domain: Domain | DomainOverview) => {
     try {
-      const domainName = 'domain' in domain ? domain.domain : domain.domain;
+      const domainName = "domain" in domain ? domain.domain : domain.domain;
       const newProxied = !domain.proxied;
-      
+
       // If disabling proxy, also disable TLS
-      const tlsPayload = !newProxied ? { mode: 'off' as const, use_recommended: false } : undefined;
-      
+      const tlsPayload = !newProxied
+        ? { mode: "off" as const, use_recommended: false }
+        : undefined;
+
       const updated = await domainsApi.update(domainName, {
         origin_ip: domain.origin_ip,
         proxied: newProxied,
-        ttl: 'ttl' in domain ? domain.ttl : 60,
+        ttl: "ttl" in domain ? domain.ttl : 60,
         tls: tlsPayload,
       });
-      
-      if (viewMode === 'my') {
-        setDomains(domains.map(d => d.domain === domainName ? updated : d));
+
+      if (viewMode === "my") {
+        setDomains(domains.map((d) => (d.domain === domainName ? updated : d)));
       }
       loadData();
-      toast.success(`Proxy ${newProxied ? 'enabled' : 'disabled'} for ${domainName}`);
+      toast.success(
+        `Proxy ${newProxied ? "enabled" : "disabled"} for ${domainName}`,
+      );
     } catch (error) {
-      toast.error('Failed to update proxy setting');
+      toast.error("Failed to update proxy setting");
     }
   };
 
-  const handleChangeTLS = async (domain: Domain | DomainOverview, mode: string) => {
+  const handleChangeTLS = async (
+    domain: Domain | DomainOverview,
+    mode: string,
+  ) => {
     try {
-      const domainName = 'domain' in domain ? domain.domain : domain.domain;
-      
-      if (!domain.proxied && mode !== 'off') {
-        toast.error('Enable proxy first to use TLS');
+      const domainName = "domain" in domain ? domain.domain : domain.domain;
+
+      if (!domain.proxied && mode !== "off") {
+        toast.error("Enable proxy first to use TLS");
         return;
       }
-      
+
       let newMode: any;
       let useRecommended = false;
-      
-      if (mode === 'auto') {
-        newMode = 'flexible';
+
+      if (mode === "auto") {
+        newMode = "flexible";
         useRecommended = true;
       } else {
         newMode = mode;
       }
-      
+
       const updated = await domainsApi.update(domainName, {
         origin_ip: domain.origin_ip,
         proxied: domain.proxied,
-        ttl: 'ttl' in domain ? domain.ttl : 60,
+        ttl: "ttl" in domain ? domain.ttl : 60,
         tls: {
           mode: newMode,
           use_recommended: useRecommended,
         },
       });
-      
-      if (viewMode === 'my') {
-        setDomains(domains.map(d => d.domain === domainName ? updated : d));
+
+      if (viewMode === "my") {
+        setDomains(domains.map((d) => (d.domain === domainName ? updated : d)));
       }
       loadData();
       toast.success(`TLS mode updated for ${domainName}`);
     } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Failed to update TLS setting');
+      toast.error(
+        error.response?.data?.error || "Failed to update TLS setting",
+      );
     }
   };
 
   const handleEditIP = (domain: Domain | DomainOverview) => {
-    const domainName = 'domain' in domain ? domain.domain : domain.domain;
+    const domainName = "domain" in domain ? domain.domain : domain.domain;
     setEditingDomain(domainName);
     setEditingIP(domain.origin_ip);
     setTimeout(() => editInputRef.current?.select(), 0);
   };
 
   const handleSaveIP = async (domain: Domain | DomainOverview) => {
-    const domainName = 'domain' in domain ? domain.domain : domain.domain;
-    
+    const domainName = "domain" in domain ? domain.domain : domain.domain;
+
     if (!editingIP || editingIP === domain.origin_ip) {
       setEditingDomain(null);
       return;
@@ -314,16 +374,16 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       const updated = await domainsApi.update(domainName, {
         origin_ip: editingIP,
         proxied: domain.proxied,
-        ttl: 'ttl' in domain ? domain.ttl : 60,
+        ttl: "ttl" in domain ? domain.ttl : 60,
       });
-      
-      if (viewMode === 'my') {
-        setDomains(domains.map(d => d.domain === domainName ? updated : d));
+
+      if (viewMode === "my") {
+        setDomains(domains.map((d) => (d.domain === domainName ? updated : d)));
       }
       loadData();
       toast.success(`Updated IP for ${domainName}`);
     } catch (error) {
-      toast.error('Failed to update IP address');
+      toast.error("Failed to update IP address");
     } finally {
       setEditingDomain(null);
     }
@@ -335,13 +395,15 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     if (!confirm(`Delete ${selectedDomains.size} domain(s)?`)) return;
 
     try {
-      await Promise.all(Array.from(selectedDomains).map(d => domainsApi.delete(d)));
-      setDomains(domains.filter(d => !selectedDomains.has(d.domain)));
+      await Promise.all(
+        Array.from(selectedDomains).map((d) => domainsApi.delete(d)),
+      );
+      setDomains(domains.filter((d) => !selectedDomains.has(d.domain)));
       setSelectedDomains(new Set());
       loadData();
       toast.success(`Deleted ${selectedDomains.size} domain(s)`);
     } catch (error) {
-      toast.error('Failed to delete domains');
+      toast.error("Failed to delete domains");
     }
   };
 
@@ -349,27 +411,27 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     if (selectedDomains.size === 0) return;
 
     try {
-      const payload: any = { 
+      const payload: any = {
         domains: Array.from(selectedDomains),
         proxied: enable,
       };
-      
+
       // If disabling proxy, also disable TLS
       if (!enable) {
-        payload.tls = { mode: 'off', use_recommended: false };
+        payload.tls = { mode: "off", use_recommended: false };
       }
-      
+
       const response = await domainsApi.bulkUpdate(payload);
       toast.success(`Updated ${response.success} domain(s)`);
-      
+
       if (response.failed > 0) {
         toast.error(`Failed to update ${response.failed} domain(s)`);
       }
-      
+
       loadData();
       setSelectedDomains(new Set());
     } catch (error) {
-      toast.error('Failed to update domains');
+      toast.error("Failed to update domains");
     }
   };
 
@@ -380,20 +442,20 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       const response = await domainsApi.bulkUpdate({
         domains: Array.from(selectedDomains),
         tls: {
-          mode: mode === 'auto' ? 'flexible' : mode as any,
-          use_recommended: mode === 'auto',
+          mode: mode === "auto" ? "flexible" : (mode as any),
+          use_recommended: mode === "auto",
         },
       });
       toast.success(`Updated TLS for ${response.success} domain(s)`);
-      
+
       if (response.failed > 0) {
         toast.error(`Failed to update ${response.failed} domain(s)`);
       }
-      
+
       loadData();
       setSelectedDomains(new Set());
     } catch (error) {
-      toast.error('Failed to update TLS settings');
+      toast.error("Failed to update TLS settings");
     }
   };
 
@@ -401,7 +463,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     if (selectedDomains.size === 0) return;
     const ip = bulkIP.trim();
     if (!ip) {
-      toast.error('Enter a new origin IP address');
+      toast.error("Enter a new origin IP address");
       return;
     }
     try {
@@ -413,11 +475,11 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       if (response.failed > 0) {
         toast.error(`Failed to update ${response.failed} domain(s)`);
       }
-      setBulkIP('');
+      setBulkIP("");
       setSelectedDomains(new Set());
       loadData();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Failed to update origin IP');
+      toast.error(error.response?.data?.error || "Failed to update origin IP");
     }
   };
 
@@ -425,7 +487,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     if (selectedDomains.size === 0) return;
     const owner = bulkOwner.trim();
     if (!owner) {
-      toast.error('Enter a new owner (email or ID)');
+      toast.error("Enter a new owner (email or ID)");
       return;
     }
     try {
@@ -437,15 +499,20 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       if (response.failed > 0) {
         toast.error(`Failed to update ${response.failed} domain(s)`);
       }
-      setBulkOwner('');
+      setBulkOwner("");
       setSelectedDomains(new Set());
       loadData();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Failed to update domain owner');
+      toast.error(
+        error.response?.data?.error || "Failed to update domain owner",
+      );
     }
   };
 
-  const handleSaveEdgeLabels = async (data: EdgeModalData, labels: string[]) => {
+  const handleSaveEdgeLabels = async (
+    data: EdgeModalData,
+    labels: string[],
+  ) => {
     try {
       const updated = await domainsApi.update(data.domain, {
         origin_ip: data.origin_ip,
@@ -455,9 +522,11 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       });
       setEdgeModalData(buildEdgeModalData(updated, updated));
       await loadData();
-      toast.success('Edge labels updated');
+      toast.success("Edge labels updated");
     } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Failed to update edge labels');
+      toast.error(
+        error.response?.data?.error || "Failed to update edge labels",
+      );
     }
   };
 
@@ -466,24 +535,27 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       const updated = await domainsApi.reassignEdge(data.domain);
       setEdgeModalData(buildEdgeModalData(updated, updated));
       await loadData();
-      toast.success('Edge assignment updated');
+      toast.success("Edge assignment updated");
     } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Failed to reassign edge');
+      toast.error(error.response?.data?.error || "Failed to reassign edge");
     }
   };
 
   const getTLSDisplay = (domain: Domain | DomainOverview) => {
-    const isFullDomain = 'tls' in domain;
-    
+    const isFullDomain = "tls" in domain;
+
     if (!isFullDomain) {
       // DomainOverview - limited TLS info
-      const statusKey = domain.tls_status || 'none';
-      const currentValue = domain.tls_use_recommended ? 'auto' : (domain.tls_mode || 'off');
+      const statusKey = domain.tls_status || "none";
+      const currentValue = domain.tls_use_recommended
+        ? "auto"
+        : domain.tls_mode || "off";
       const retryHint = computeRetryHint(domain.tls_retry_after);
-      
+
       // Admin can edit all domains
-      const canEdit = isAdmin || domains.some(d => d.domain === domain.domain);
-      
+      const canEdit =
+        isAdmin || domains.some((d) => d.domain === domain.domain);
+
       return (
         <div className="tls-display">
           <select
@@ -500,12 +572,15 @@ export default function DomainManagement({ isAdmin = false }: Props) {
           </select>
           {domain.tls_use_recommended && (
             <span className="tls-auto-hint">
-              Auto → {domain.tls_recommended_mode ? modeLabel(domain.tls_recommended_mode) : 'detecting…'}
+              Auto →{" "}
+              {domain.tls_recommended_mode
+                ? modeLabel(domain.tls_recommended_mode)
+                : "detecting…"}
             </span>
           )}
           {renderStatusIndicator(statusKey, domain.tls_last_error, retryHint)}
           {/* Show error icon for errored status */}
-          {domain.tls_status === 'errored' && domain.tls_last_error && (
+          {domain.tls_status === "errored" && domain.tls_last_error && (
             <div className="tls-error-tooltip" title={domain.tls_last_error}>
               ⚠️
             </div>
@@ -513,12 +588,12 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         </div>
       );
     }
-    
+
     // Full Domain with complete TLS data
-    const statusKey = domain.tls.status || 'none';
-    const currentValue = domain.tls.use_recommended ? 'auto' : domain.tls.mode;
+    const statusKey = domain.tls.status || "none";
+    const currentValue = domain.tls.use_recommended ? "auto" : domain.tls.mode;
     const retryHint = computeRetryHint(domain.tls.retry_after);
-    
+
     return (
       <div className="tls-display">
         <select
@@ -535,12 +610,15 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         </select>
         {domain.tls.use_recommended && (
           <span className="tls-auto-hint">
-            Auto → {domain.tls.recommended_mode ? modeLabel(domain.tls.recommended_mode) : 'detecting…'}
+            Auto →{" "}
+            {domain.tls.recommended_mode
+              ? modeLabel(domain.tls.recommended_mode)
+              : "detecting…"}
           </span>
         )}
         {renderStatusIndicator(statusKey, domain.tls.last_error, retryHint)}
         {/* Show error icon for errored status */}
-        {domain.tls.status === 'errored' && domain.tls.last_error && (
+        {domain.tls.status === "errored" && domain.tls.last_error && (
           <div className="tls-error-tooltip" title={domain.tls.last_error}>
             ⚠️
           </div>
@@ -552,66 +630,76 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   const getFilteredData = () => {
     const query = searchQuery.toLowerCase();
     const matchesLabel = (record: Domain | DomainOverview) => {
-      if (labelFilter === 'all') {
+      if (labelFilter === "all") {
         return true;
       }
       const labels = getDomainLabels(record);
-      if (labelFilter === 'unlabeled') {
+      if (labelFilter === "unlabeled") {
         return labels.length === 0;
       }
       return labels.includes(labelFilter);
     };
-    
-    if (viewMode === 'my') {
-      return domains.filter(d =>
-        (d.domain.toLowerCase().includes(query) ||
-        d.origin_ip.includes(searchQuery)) && matchesLabel(d)
+
+    if (viewMode === "my") {
+      return domains.filter(
+        (d) =>
+          (d.domain.toLowerCase().includes(query) ||
+            d.origin_ip.includes(searchQuery)) &&
+          matchesLabel(d),
       );
     }
-    
-    if (viewMode === 'orphaned') {
-      return allDomains.filter(d => 
-        !d.owner_exists &&
-        (d.domain.toLowerCase().includes(query) ||
-         d.origin_ip.includes(searchQuery) ||
-         d.owner_email?.toLowerCase().includes(query)) &&
-        matchesLabel(d)
+
+    if (viewMode === "orphaned") {
+      return allDomains.filter(
+        (d) =>
+          !d.owner_exists &&
+          (d.domain.toLowerCase().includes(query) ||
+            d.origin_ip.includes(searchQuery) ||
+            d.owner_email?.toLowerCase().includes(query)) &&
+          matchesLabel(d),
       );
     }
-    
+
     // All domains mode - search by domain, IP, or email
-    return allDomains.filter(d =>
-      (d.domain.toLowerCase().includes(query) ||
-      d.owner_email?.toLowerCase().includes(query) ||
-      d.origin_ip.includes(searchQuery)) &&
-      matchesLabel(d)
+    return allDomains.filter(
+      (d) =>
+        (d.domain.toLowerCase().includes(query) ||
+          d.owner_email?.toLowerCase().includes(query) ||
+          d.origin_ip.includes(searchQuery)) &&
+        matchesLabel(d),
     );
   };
 
   const filteredData = getFilteredData();
-  const orphanedCount = allDomains.filter(d => !d.owner_exists).length;
-  const selectionEnabled = viewMode === 'my' || (isAdmin && (viewMode === 'all' || viewMode === 'orphaned'));
+  const orphanedCount = allDomains.filter((d) => !d.owner_exists).length;
+  const selectionEnabled =
+    viewMode === "my" ||
+    (isAdmin && (viewMode === "all" || viewMode === "orphaned"));
 
   // Build unified columns array
   const columns: any[] = [];
-  
+
   // Domain column - always present
   columns.push({
-    key: 'domain',
-    header: 'Domain',
+    key: "domain",
+    header: "Domain",
     accessor: (d: any) => (
       <div className="domain-cell">
         <span className="domain-name mono">{d.domain}</span>
-        {d.owner_exists === false && <Badge variant="warning" size="sm">Orphaned</Badge>}
+        {d.owner_exists === false && (
+          <Badge variant="warning" size="sm">
+            Orphaned
+          </Badge>
+        )}
       </div>
     ),
   });
-  
+
   // Owner column - only for admin in all/orphaned mode
-  if (isAdmin && viewMode !== 'my') {
+  if (isAdmin && viewMode !== "my") {
     columns.push({
-      key: 'owner',
-      header: 'Owner',
+      key: "owner",
+      header: "Owner",
       accessor: (d: any) => (
         <div className="owner-cell">
           {d.owner_email ? (
@@ -621,14 +709,14 @@ export default function DomainManagement({ isAdmin = false }: Props) {
           )}
         </div>
       ),
-      width: '180px',
+      width: "180px",
     });
   }
-  
+
   // Origin IP column - always present
   columns.push({
-    key: 'origin_ip',
-    header: 'Origin IP',
+    key: "origin_ip",
+    header: "Origin IP",
     accessor: (d: any) => (
       <div className="domain-ip">
         {editingDomain === d.domain ? (
@@ -639,14 +727,22 @@ export default function DomainManagement({ isAdmin = false }: Props) {
             onChange={(e) => setEditingIP(e.target.value)}
             onBlur={() => handleSaveIP(d)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') handleSaveIP(d);
-              if (e.key === 'Escape') setEditingDomain(null);
+              if (e.key === "Enter") handleSaveIP(d);
+              if (e.key === "Escape") setEditingDomain(null);
             }}
           />
         ) : (
           <span className="ip-display mono" onClick={() => handleEditIP(d)}>
             {d.origin_ip}
-            <svg className="edit-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg
+              className="edit-icon"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
               <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
               <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
             </svg>
@@ -655,11 +751,11 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       </div>
     ),
   });
-  
+
   // Proxy column - always present
   columns.push({
-    key: 'proxied',
-    header: 'Proxy',
+    key: "proxied",
+    header: "Proxy",
     accessor: (d: any) => (
       <Switch
         checked={d.proxied}
@@ -667,56 +763,62 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         size="sm"
       />
     ),
-    width: '100px',
-    align: 'center' as const,
+    width: "100px",
+    align: "center" as const,
   });
-  
+
   columns.push({
-    key: 'edge-assignment',
-    header: 'Edge',
+    key: "edge-assignment",
+    header: "Edge",
     accessor: (d: any) => renderEdgeCell(d),
-    width: '220px',
+    width: "220px",
   });
-  
+
   // TLS column - always present
   columns.push({
-    key: 'tls',
-    header: 'TLS',
+    key: "tls",
+    header: "TLS",
     accessor: (d: any) => getTLSDisplay(d),
-    width: '200px',
+    width: "200px",
   });
-  
+
   // TTL column - always present
   columns.push({
-    key: 'ttl',
-    header: 'TTL',
+    key: "ttl",
+    header: "TTL",
     accessor: (d: any) => <span className="mono">{d.ttl || 300}s</span>,
-    width: '80px',
-    align: 'right' as const,
+    width: "80px",
+    align: "right" as const,
   });
-  
+
   // Updated column - always present
   columns.push({
-    key: 'updated',
-    header: 'Updated',
+    key: "updated",
+    header: "Updated",
     accessor: (d: any) => (
       <span className="text-secondary">
-        {format(new Date(d.updated_at), 'MMM d, HH:mm')}
+        {format(new Date(d.updated_at), "MMM d, HH:mm")}
       </span>
     ),
-    width: '140px',
+    width: "140px",
   });
 
   return (
     <div className="domain-management">
       <PageHeader
-        title={isAdmin ? 'Domain Management' : 'Your Domains'}
+        title={isAdmin ? "Domain Management" : "Your Domains"}
         subtitle={
-          viewMode === 'my' ? `${domains.length} domains registered` :
-          viewMode === 'orphaned' ? `${orphanedCount} orphaned domains` :
-          `${allDomains.length} total domains`
+          viewMode === "my"
+            ? `${domains.length} domains registered`
+            : viewMode === "orphaned"
+              ? `${orphanedCount} orphaned domains`
+              : `${allDomains.length} total domains`
         }
-        searchPlaceholder={isAdmin && viewMode !== 'my' ? "Search domains, IPs or users..." : "Search domains or IPs..."}
+        searchPlaceholder={
+          isAdmin && viewMode !== "my"
+            ? "Search domains, IPs or users..."
+            : "Search domains or IPs..."
+        }
         searchValue={searchQuery}
         onSearchChange={setSearchQuery}
       >
@@ -724,18 +826,30 @@ export default function DomainManagement({ isAdmin = false }: Props) {
           <>
             <div className="batch-actions">
               <div className="batch-toggle-group">
-                <Button variant="secondary" size="sm" onClick={() => handleBulkProxyToggle(true)}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleBulkProxyToggle(true)}
+                >
                   Enable Proxy
                 </Button>
-                <Button variant="secondary" size="sm" onClick={() => handleBulkProxyToggle(false)}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleBulkProxyToggle(false)}
+                >
                   Disable Proxy
                 </Button>
-                <select 
+                <select
                   className="batch-tls-select"
-                  onChange={(e) => e.target.value && handleBulkTLSUpdate(e.target.value)}
+                  onChange={(e) =>
+                    e.target.value && handleBulkTLSUpdate(e.target.value)
+                  }
                   defaultValue=""
                 >
-                  <option value="" disabled>TLS Mode...</option>
+                  <option value="" disabled>
+                    TLS Mode...
+                  </option>
                   <option value="off">TLS Off</option>
                   <option value="flexible">Flexible</option>
                   <option value="full">Full</option>
@@ -750,7 +864,12 @@ export default function DomainManagement({ isAdmin = false }: Props) {
                   value={bulkIP}
                   onChange={(e) => setBulkIP(e.target.value)}
                 />
-                <Button variant="secondary" size="sm" onClick={handleBulkIPUpdate} disabled={!bulkIP.trim()}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleBulkIPUpdate}
+                  disabled={!bulkIP.trim()}
+                >
                   Update IP
                 </Button>
               </div>
@@ -762,7 +881,12 @@ export default function DomainManagement({ isAdmin = false }: Props) {
                     value={bulkOwner}
                     onChange={(e) => setBulkOwner(e.target.value)}
                   />
-                  <Button variant="secondary" size="sm" onClick={handleBulkOwnerUpdate} disabled={!bulkOwner.trim()}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleBulkOwnerUpdate}
+                    disabled={!bulkOwner.trim()}
+                  >
                     Update Owner
                   </Button>
                 </div>
@@ -775,11 +899,16 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         )}
         {availableLabels.length > 0 && (
           <div className="label-filter">
-            <select value={labelFilter} onChange={(e) => setLabelFilter(e.target.value)}>
+            <select
+              value={labelFilter}
+              onChange={(e) => setLabelFilter(e.target.value)}
+            >
               <option value="all">All labels</option>
               <option value="unlabeled">No label</option>
               {availableLabels.map((label) => (
-                <option key={label} value={label}>{label}</option>
+                <option key={label} value={label}>
+                  {label}
+                </option>
               ))}
             </select>
           </div>
@@ -792,22 +921,31 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       {isAdmin && (
         <div className="filter-tabs">
           <button
-            className={`filter-tab ${viewMode === 'my' ? 'active' : ''}`}
-            onClick={() => { setViewMode('my'); setSelectedDomains(new Set()); }}
+            className={`filter-tab ${viewMode === "my" ? "active" : ""}`}
+            onClick={() => {
+              setViewMode("my");
+              setSelectedDomains(new Set());
+            }}
           >
             My Domains
             <span className="tab-count">{domains.length}</span>
           </button>
           <button
-            className={`filter-tab ${viewMode === 'all' ? 'active' : ''}`}
-            onClick={() => { setViewMode('all'); setSelectedDomains(new Set()); }}
+            className={`filter-tab ${viewMode === "all" ? "active" : ""}`}
+            onClick={() => {
+              setViewMode("all");
+              setSelectedDomains(new Set());
+            }}
           >
             All Domains
             <span className="tab-count">{allDomains.length}</span>
           </button>
           <button
-            className={`filter-tab ${viewMode === 'orphaned' ? 'active' : ''}`}
-            onClick={() => { setViewMode('orphaned'); setSelectedDomains(new Set()); }}
+            className={`filter-tab ${viewMode === "orphaned" ? "active" : ""}`}
+            onClick={() => {
+              setViewMode("orphaned");
+              setSelectedDomains(new Set());
+            }}
           >
             Orphaned
             <span className="tab-count">{orphanedCount}</span>
@@ -821,22 +959,32 @@ export default function DomainManagement({ isAdmin = false }: Props) {
           data={filteredData as any}
           keyExtractor={(d: any) => d.domain}
           selectedRows={selectionEnabled ? selectedDomains : undefined}
-          onRowSelect={selectionEnabled ? (id, selected) => {
-            const newSelected = new Set(selectedDomains);
-            if (selected) {
-              newSelected.add(id);
-            } else {
-              newSelected.delete(id);
-            }
-            setSelectedDomains(newSelected);
-          } : undefined}
-          onSelectAll={selectionEnabled ? (selected) => {
-            if (selected) {
-              setSelectedDomains(new Set(filteredData.map((d: any) => d.domain)));
-            } else {
-              setSelectedDomains(new Set());
-            }
-          } : undefined}
+          onRowSelect={
+            selectionEnabled
+              ? (id, selected) => {
+                  const newSelected = new Set(selectedDomains);
+                  if (selected) {
+                    newSelected.add(id);
+                  } else {
+                    newSelected.delete(id);
+                  }
+                  setSelectedDomains(newSelected);
+                }
+              : undefined
+          }
+          onSelectAll={
+            selectionEnabled
+              ? (selected) => {
+                  if (selected) {
+                    setSelectedDomains(
+                      new Set(filteredData.map((d: any) => d.domain)),
+                    );
+                  } else {
+                    setSelectedDomains(new Set());
+                  }
+                }
+              : undefined
+          }
           loading={loading}
           emptyMessage="No domains found"
         />
@@ -851,11 +999,18 @@ export default function DomainManagement({ isAdmin = false }: Props) {
               </div>
             ))}
           </div>
-          <p className="ns-hint">Configure these nameservers at your domain registrar</p>
+          <p className="ns-hint">
+            Configure these nameservers at your domain registrar
+          </p>
         </Card>
       )}
 
-      {showAddDomain && <AddDomainModal onClose={() => setShowAddDomain(false)} onAdd={loadData} />}
+      {showAddDomain && (
+        <AddDomainModal
+          onClose={() => setShowAddDomain(false)}
+          onAdd={loadData}
+        />
+      )}
       {edgeModalData && (
         <EdgeSettingsModal
           data={edgeModalData}
@@ -868,20 +1023,26 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   );
 }
 
-function AddDomainModal({ onClose, onAdd }: { onClose: () => void; onAdd: () => void }) {
+function AddDomainModal({
+  onClose,
+  onAdd,
+}: {
+  onClose: () => void;
+  onAdd: () => void;
+}) {
   const [formData, setFormData] = useState<CreateDomainPayload>({
-    domain: '',
-    origin_ip: '',
+    domain: "",
+    origin_ip: "",
     proxied: true,
     ttl: 60,
     tls: {
-      mode: 'flexible',
+      mode: "flexible",
       use_recommended: true,
     },
   });
   const [bulkMode, setBulkMode] = useState(false);
-  const [bulkDomains, setBulkDomains] = useState('');
-  const [edgeLabels, setEdgeLabels] = useState('');
+  const [bulkDomains, setBulkDomains] = useState("");
+  const [edgeLabels, setEdgeLabels] = useState("");
   const [loading, setLoading] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
   const [isMouseDown, setIsMouseDown] = useState(false);
@@ -906,11 +1067,15 @@ function AddDomainModal({ onClose, onAdd }: { onClose: () => void; onAdd: () => 
     try {
       const parsedLabels = edgeLabels
         .split(/[\n,]/)
-        .map(label => label.trim())
+        .map((label) => label.trim())
         .filter(Boolean);
-      const edgePayload = parsedLabels.length > 0 ? { labels: parsedLabels } : undefined;
+      const edgePayload =
+        parsedLabels.length > 0 ? { labels: parsedLabels } : undefined;
       if (bulkMode) {
-        const domainList = bulkDomains.split('\n').map(d => d.trim()).filter(Boolean);
+        const domainList = bulkDomains
+          .split("\n")
+          .map((d) => d.trim())
+          .filter(Boolean);
         await domainsApi.bulkCreate({
           domains: domainList,
           origin_ip: formData.origin_ip,
@@ -930,31 +1095,37 @@ function AddDomainModal({ onClose, onAdd }: { onClose: () => void; onAdd: () => 
       onAdd();
       onClose();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Failed to add domain');
+      toast.error(error.response?.data?.error || "Failed to add domain");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="modal-overlay" onMouseDown={handleMouseDown} onMouseUp={handleMouseUp}>
+    <div
+      className="modal-overlay"
+      onMouseDown={handleMouseDown}
+      onMouseUp={handleMouseUp}
+    >
       <div className="modal" ref={modalRef}>
         <div className="modal-header">
           <h2>Add Domain</h2>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" onClick={onClose}>
+            ✕
+          </button>
         </div>
         <form onSubmit={handleSubmit} className="modal-body">
           <div className="form-tabs">
             <button
               type="button"
-              className={`tab ${!bulkMode ? 'tab-active' : ''}`}
+              className={`tab ${!bulkMode ? "tab-active" : ""}`}
               onClick={() => setBulkMode(false)}
             >
               Single Domain
             </button>
             <button
               type="button"
-              className={`tab ${bulkMode ? 'tab-active' : ''}`}
+              className={`tab ${bulkMode ? "tab-active" : ""}`}
               onClick={() => setBulkMode(true)}
             >
               Bulk Import
@@ -978,7 +1149,9 @@ function AddDomainModal({ onClose, onAdd }: { onClose: () => void; onAdd: () => 
               label="Domain"
               placeholder="example.com"
               value={formData.domain}
-              onChange={(e) => setFormData({ ...formData, domain: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, domain: e.target.value })
+              }
               fullWidth
               required
             />
@@ -988,7 +1161,9 @@ function AddDomainModal({ onClose, onAdd }: { onClose: () => void; onAdd: () => 
             label="Origin IP"
             placeholder="192.168.1.1"
             value={formData.origin_ip}
-            onChange={(e) => setFormData({ ...formData, origin_ip: e.target.value })}
+            onChange={(e) =>
+              setFormData({ ...formData, origin_ip: e.target.value })
+            }
             fullWidth
             required
           />
@@ -998,7 +1173,12 @@ function AddDomainModal({ onClose, onAdd }: { onClose: () => void; onAdd: () => 
               type="number"
               label="TTL (seconds)"
               value={formData.ttl}
-              onChange={(e) => setFormData({ ...formData, ttl: parseInt(e.target.value) || 60 })}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  ttl: parseInt(e.target.value) || 60,
+                })
+              }
               fullWidth
             />
             <div className="form-group">
@@ -1009,27 +1189,32 @@ function AddDomainModal({ onClose, onAdd }: { onClose: () => void; onAdd: () => 
                   const newFormData = { ...formData, proxied: checked };
                   // If disabling proxy, also disable TLS
                   if (!checked) {
-                    newFormData.tls = { mode: 'off', use_recommended: false };
-                  } else if (formData.tls?.mode === 'off') {
+                    newFormData.tls = { mode: "off", use_recommended: false };
+                  } else if (formData.tls?.mode === "off") {
                     // Re-enable TLS when enabling proxy
-                    newFormData.tls = { mode: 'flexible', use_recommended: true };
+                    newFormData.tls = {
+                      mode: "flexible",
+                      use_recommended: true,
+                    };
                   }
                   setFormData(newFormData);
                 }}
-                label={formData.proxied ? 'Enabled' : 'Disabled'}
+                label={formData.proxied ? "Enabled" : "Disabled"}
               />
             </div>
           </div>
 
           <div className="form-group">
             <label>Edge Labels</label>
-            <input
-              className="form-input"
+            <Input
               placeholder="Comma separated (e.g. edge-eu, premium)"
               value={edgeLabels}
               onChange={(e) => setEdgeLabels(e.target.value)}
+              fullWidth
             />
-            <p className="form-hint">Optional. Labels control which edge nodes serve this domain.</p>
+            <p className="form-hint">
+              Optional. Labels control which edge nodes serve this domain.
+            </p>
           </div>
 
           {formData.proxied && (
@@ -1038,13 +1223,17 @@ function AddDomainModal({ onClose, onAdd }: { onClose: () => void; onAdd: () => 
               <div className="tls-mode-select-wrapper">
                 <select
                   className="form-select"
-                  value={formData.tls?.use_recommended ? 'auto' : formData.tls?.mode || 'off'}
+                  value={
+                    formData.tls?.use_recommended
+                      ? "auto"
+                      : formData.tls?.mode || "off"
+                  }
                   onChange={(e) => {
                     const value = e.target.value;
-                    if (value === 'auto') {
+                    if (value === "auto") {
                       setFormData({
                         ...formData,
-                        tls: { mode: 'flexible', use_recommended: true },
+                        tls: { mode: "flexible", use_recommended: true },
                       });
                     } else {
                       setFormData({
@@ -1060,7 +1249,10 @@ function AddDomainModal({ onClose, onAdd }: { onClose: () => void; onAdd: () => 
                   <option value="full">Full</option>
                   <option value="full_strict">Full (Strict)</option>
                 </select>
-                <p className="tls-hint">Auto mode will detect the best TLS configuration for your origin</p>
+                <p className="tls-hint">
+                  Auto mode will detect the best TLS configuration for your
+                  origin
+                </p>
               </div>
             </div>
           )}
@@ -1070,7 +1262,7 @@ function AddDomainModal({ onClose, onAdd }: { onClose: () => void; onAdd: () => 
               Cancel
             </Button>
             <Button type="submit" variant="primary" loading={loading}>
-              Add {bulkMode ? 'Domains' : 'Domain'}
+              Add {bulkMode ? "Domains" : "Domain"}
             </Button>
           </div>
         </form>
@@ -1090,14 +1282,14 @@ function EdgeSettingsModal({
   onSaveLabels: (labels: string[]) => Promise<void>;
   onReassign: () => Promise<void>;
 }) {
-  const [labelsInput, setLabelsInput] = useState(data.labels.join(', '));
+  const [labelsInput, setLabelsInput] = useState(data.labels.join(", "));
   const [saving, setSaving] = useState(false);
   const [reassigning, setReassigning] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
   const [isMouseDown, setIsMouseDown] = useState(false);
 
   useEffect(() => {
-    setLabelsInput(data.labels.join(', '));
+    setLabelsInput(data.labels.join(", "));
   }, [data]);
 
   const parseLabels = (value: string) =>
@@ -1139,11 +1331,17 @@ function EdgeSettingsModal({
   };
 
   return (
-    <div className="modal-overlay" onMouseDown={handleMouseDown} onMouseUp={handleMouseUp}>
+    <div
+      className="modal-overlay"
+      onMouseDown={handleMouseDown}
+      onMouseUp={handleMouseUp}
+    >
       <div className="modal" ref={modalRef}>
         <div className="modal-header">
           <h2>Edge Assignment</h2>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" onClick={onClose}>
+            ✕
+          </button>
         </div>
         <form onSubmit={handleSubmit} className="modal-body">
           <div className="form-group">
@@ -1153,22 +1351,39 @@ function EdgeSettingsModal({
           <div className="form-group">
             <label>Assigned Edge IP</label>
             <div className="edge-modal-assignment">
-              <span className="mono edge-modal-ip">{data.assigned_ip || 'Pending assignment'}</span>
-              {data.node_name && <span className="edge-modal-node">{data.node_name}</span>}
+              <span className="mono edge-modal-ip">
+                {data.assigned_ip || "Pending assignment"}
+              </span>
+              {data.node_name && (
+                <span className="edge-modal-node">{data.node_name}</span>
+              )}
             </div>
+            {!data.proxied && (
+              <p className="form-hint">
+                Enable proxy to activate edge routing for this domain.
+              </p>
+            )}
           </div>
           <div className="form-group">
             <label>Labels</label>
-            <input
-              className="form-input"
+            <Input
               placeholder="Comma separated labels"
               value={labelsInput}
               onChange={(e) => setLabelsInput(e.target.value)}
+              fullWidth
             />
-            <p className="form-hint">Labels control which nodes participate in the rotation for this domain.</p>
+            <p className="form-hint">
+              Labels control which nodes participate in the rotation for this
+              domain.
+            </p>
           </div>
           <div className="modal-actions edge-modal-actions">
-            <Button variant="ghost" type="button" onClick={onClose} disabled={saving || reassigning}>
+            <Button
+              variant="ghost"
+              type="button"
+              onClick={onClose}
+              disabled={saving || reassigning}
+            >
               Close
             </Button>
             <Button
@@ -1176,6 +1391,7 @@ function EdgeSettingsModal({
               type="button"
               onClick={handleReassignClick}
               loading={reassigning}
+              disabled={!data.proxied || reassigning}
             >
               Reassign
             </Button>
