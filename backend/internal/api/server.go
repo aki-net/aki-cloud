@@ -87,6 +87,11 @@ type domainEdgePayload struct {
 	Labels []string `json:"labels,omitempty"`
 }
 
+func boolPtr(v bool) *bool {
+	b := v
+	return &b
+}
+
 type createDomainPayload struct {
 	Domain   string             `json:"domain"`
 	Owner    string             `json:"owner,omitempty"`
@@ -1366,6 +1371,7 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	}
 	if payload.EdgeIPs != nil {
 		existing.EdgeIPs = filterEmpty(*payload.EdgeIPs)
+		existing.EdgeAuto = boolPtr(false)
 	}
 	if payload.NSLabel != nil {
 		existing.NSLabel = strings.TrimSpace(*payload.NSLabel)

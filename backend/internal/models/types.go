@@ -276,6 +276,7 @@ type Node struct {
 	Labels       []string     `json:"labels,omitempty"`
 	CreatedAt    time.Time    `json:"created_at"`
 	UpdatedAt    time.Time    `json:"updated_at"`
+	EdgeAuto     *bool        `json:"edge_auto,omitempty"`
 	DeletedAt    time.Time    `json:"deleted_at,omitempty"`
 	Version      ClockVersion `json:"version"`
 	ManagedNS    []string     `json:"managed_ns,omitempty"`
@@ -299,6 +300,10 @@ func (n *Node) ComputeEdgeIPs() {
 	n.EdgeIPs = normalizeIPs(n.EdgeIPs)
 	n.Labels = normalizeLabels(n.Labels)
 	n.Roles = nil
+	autoEdges := true
+	if n.EdgeAuto != nil {
+		autoEdges = *n.EdgeAuto
+	}
 
 	// Ensure NS and Edge IPs are part of the general IP list.
 	for _, ip := range append(append([]string{}, n.NSIPs...), n.EdgeIPs...) {
@@ -312,26 +317,30 @@ func (n *Node) ComputeEdgeIPs() {
 	n.IPs = normalizeIPs(n.IPs)
 
 	if len(n.EdgeIPs) == 0 {
-		nsSet := make(map[string]struct{}, len(n.NSIPs))
-		for _, ip := range n.NSIPs {
-			if ip != "" {
-				nsSet[ip] = struct{}{}
+		if !autoEdges {
+			n.EdgeIPs = []string{}
+		} else {
+			nsSet := make(map[string]struct{}, len(n.NSIPs))
+			for _, ip := range n.NSIPs {
+				if ip != "" {
+					nsSet[ip] = struct{}{}
+				}
 			}
-		}
-		candidates := make([]string, 0, len(n.IPs))
-		for _, ip := range n.IPs {
-			if ip == "" {
-				continue
+			candidates := make([]string, 0, len(n.IPs))
+			for _, ip := range n.IPs {
+				if ip == "" {
+					continue
+				}
+				if _, isNS := nsSet[ip]; isNS {
+					continue
+				}
+				candidates = append(candidates, ip)
 			}
-			if _, isNS := nsSet[ip]; isNS {
-				continue
+			if len(candidates) == 0 {
+				candidates = append(candidates, n.NSIPs...)
 			}
-			candidates = append(candidates, ip)
+			n.EdgeIPs = normalizeIPs(candidates)
 		}
-		if len(candidates) == 0 {
-			candidates = append(candidates, n.NSIPs...)
-		}
-		n.EdgeIPs = normalizeIPs(candidates)
 	}
 
 	roles := make([]NodeRole, 0, 2)

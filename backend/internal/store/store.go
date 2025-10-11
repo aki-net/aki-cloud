@@ -398,14 +398,17 @@ func (s *Store) SaveLocalNodeSnapshot(node models.Node) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	snapshot := map[string]interface{}{
-		"name":          node.Name,
-		"node_id":       node.ID,
-		"ips":           node.IPs,
-		"ns_ips":        node.NSIPs,
-		"edge_ips":      node.EdgeIPs,
-		"ns_label":      node.NSLabel,
+		"name":           node.Name,
+		"node_id":        node.ID,
+		"ips":            node.IPs,
+		"ns_ips":         node.NSIPs,
+		"edge_ips":       node.EdgeIPs,
+		"ns_label":       node.NSLabel,
 		"ns_base_domain": node.NSBase,
-		"api_endpoint":  node.APIEndpoint,
+		"api_endpoint":   node.APIEndpoint,
+	}
+	if node.EdgeAuto != nil {
+		snapshot["edge_auto"] = node.EdgeAuto
 	}
 	path := filepath.Join(s.dataDir, "cluster", "node.json")
 	return writeJSONAtomic(path, snapshot)
