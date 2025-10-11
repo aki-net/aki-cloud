@@ -67,6 +67,7 @@ TCP_PORTS="${CONFIG[0]}"
 UDP_PORTS="${CONFIG[1]}"
 DNS_FLAG="${CONFIG[2]:-false}"
 PROXY_FLAG="${CONFIG[3]:-false}"
+export DATA_DIR PROJECT_DIR ENV_FILE DNS_FLAG PROXY_FLAG
 
 ensure_iptables_rule() {
   local proto="$1"
