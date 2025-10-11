@@ -184,7 +184,8 @@ func (s *Service) reconcileDomain(ctx context.Context, rec models.DomainRecord, 
 
 func (s *Service) ensureCertificateStatus(rec models.DomainRecord) (*models.DomainRecord, error) {
 	now := time.Now().UTC()
-	if rec.TLS.Status == models.CertificateStatusPending && hasValidCertificate(rec, now) {
+	valid := hasValidCertificate(rec, now)
+	if valid && (rec.TLS.Status != models.CertificateStatusActive || rec.TLS.LastError != "" || !rec.TLS.RetryAfter.IsZero() || !rec.TLS.LastAttemptAt.IsZero()) {
 		return s.store.MutateDomain(rec.Domain, func(r *models.DomainRecord) error {
 			r.EnsureTLSDefaults()
 			if !hasValidCertificate(*r, now) {
