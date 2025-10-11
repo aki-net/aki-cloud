@@ -61,6 +61,9 @@ func (s *Service) Flush(ctx context.Context) {
 	if err := run("generate_openresty.sh"); err != nil {
 		log.Printf("orchestrator: generate_openresty failed: %v", err)
 	}
+	if err := run("configure_firewall.sh"); err != nil {
+		log.Printf("orchestrator: configure_firewall failed: %v", err)
+	}
 	_ = run("reload_coredns.sh")
 	_ = run("reload_openresty.sh")
 	s.pending = false
@@ -81,6 +84,9 @@ func (s *Service) FlushSync(ctx context.Context) error {
 		return err
 	}
 	if err := run("generate_openresty.sh"); err != nil {
+		return err
+	}
+	if err := run("configure_firewall.sh"); err != nil {
 		return err
 	}
 	if err := run("reload_coredns.sh"); err != nil {
