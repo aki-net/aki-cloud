@@ -4,10 +4,23 @@ set -eu
 DATA_DIR="${DATA_DIR:-/data}"
 CONF_DIR="$DATA_DIR/openresty"
 SITES_DIR="$CONF_DIR/sites-enabled"
+NODE_INFO="$DATA_DIR/cluster/node.json"
 
-if [ "${ENABLE_OPENRESTY:-true}" != "true" ]; then
-  echo "OpenResty disabled on this node. Sleeping..."
-  sleep infinity
+# Check if this node has edge IPs (is an edge node)
+if [ -f "$NODE_INFO" ]; then
+  HAS_EDGE_IPS=$(jq -r '.edge_ips | length > 0' "$NODE_INFO" 2>/dev/null || echo "false")
+  if [ "$HAS_EDGE_IPS" != "true" ]; then
+    echo "This node has no edge IPs - OpenResty not needed. Sleeping..."
+    sleep infinity
+  fi
+else
+  echo "Node info not found at $NODE_INFO - waiting for initialization..."
+  # Wait for node.json to be created
+  while [ ! -f "$NODE_INFO" ]; do
+    sleep 5
+  done
+  # Restart this script now that node.json exists
+  exec "$0" "$@"
 fi
 
 mkdir -p "$SITES_DIR"

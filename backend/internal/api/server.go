@@ -1785,13 +1785,11 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 		return true
 	}
 
-	shouldHaveEdges := s.Config.EnableOpenResty
-	if !shouldHaveEdges {
-		if len(desired.EdgeIPs) > 0 || !desired.EdgeManual {
-			desired.EdgeIPs = nil
-			desired.EdgeManual = true
-			changed = true
-		}
+	// Edge role is now determined by admin configuration, not environment variables
+	// If EdgeIPs are empty and not manually set, auto-discover from node IPs
+	if len(desired.EdgeIPs) == 0 && !desired.EdgeManual && len(desired.IPs) > 0 {
+		desired.EdgeIPs = append([]string{}, desired.IPs...)
+		changed = true
 	}
 
 	shouldHaveNS := s.Config.EnableCoreDNS

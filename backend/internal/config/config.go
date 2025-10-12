@@ -74,10 +74,8 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("invalid RELOAD_DEBOUNCE_MS: %w", err)
 	}
 
-	openRestyEnabled, err := getEnvBool("ENABLE_OPENRESTY", true)
-	if err != nil {
-		return nil, fmt.Errorf("invalid ENABLE_OPENRESTY: %w", err)
-	}
+	// OpenResty is now dynamically controlled based on node roles, not environment variables
+	openRestyEnabled := true  // Keep for backward compatibility, but not used for role determination
 	coreDNSEnabled, err := getEnvBool("ENABLE_COREDNS", true)
 	if err != nil {
 		return nil, fmt.Errorf("invalid ENABLE_COREDNS: %w", err)
