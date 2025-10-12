@@ -3,6 +3,7 @@ package ssl
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -23,11 +24,13 @@ func newTestService(t *testing.T, dataDir string, st *store.Store, nodeID string
 		ACMERetryAfter: 15 * time.Minute,
 	}
 	return &Service{
-		cfg:        cfg,
-		store:      st,
-		account:    newAccountStore(cfg.DataDir),
-		backoffs:   newBackoffStore(cfg.DataDir),
-		httpClient: &http.Client{Timeout: 5 * time.Second},
+		cfg:                 cfg,
+		store:               st,
+		account:             newAccountStore(cfg.DataDir),
+		backoffs:            newBackoffStore(cfg.DataDir),
+		ledger:              newIssuanceLedger(cfg.DataDir),
+		httpClient:          &http.Client{Timeout: 5 * time.Second},
+		authoritativeLookup: defaultAuthoritativeLookup,
 	}
 }
 
@@ -234,6 +237,34 @@ func TestShouldAttemptDomainSkipsUnhealthyCoordinator(t *testing.T) {
 	svcUnhealthy := newTestService(t, dir, st, "node-b")
 	if svcUnhealthy.shouldAttemptDomain(rec) {
 		t.Fatalf("expected unhealthy node %q to skip domain %q", "node-b", domain)
+	}
+}
+
+func TestDomainReadyForIssuanceUsesAuthoritativeLookup(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.New(dir)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+
+	node := models.Node{
+		ID:      "node-a",
+		Name:    "node-a",
+		EdgeIPs: []string{"192.0.2.10"},
+		NSIPs:   []string{"127.0.0.1"},
+	}
+	if err := st.SaveNodes([]models.Node{node}); err != nil {
+		t.Fatalf("SaveNodes: %v", err)
+	}
+
+	svc := newTestService(t, dir, st, "node-a")
+	svc.authoritativeLookup = func(ctx context.Context, domain string, _ []string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("192.0.2.10")}, nil
+	}
+
+	rec := models.DomainRecord{Domain: "example.com", Proxied: true}
+	if !svc.domainReadyForIssuance(context.Background(), rec) {
+		t.Fatalf("expected authoritative lookup to mark domain ready")
 	}
 }
 

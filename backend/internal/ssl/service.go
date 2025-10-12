@@ -21,6 +21,7 @@ import (
 	"aki-cloud/backend/internal/store"
 
 	"github.com/google/uuid"
+	"github.com/miekg/dns"
 )
 
 const (
@@ -42,25 +43,27 @@ func domainNotFound(err error) bool {
 
 // Service orchestrates TLS recommendations, issuance, and renewals.
 type Service struct {
-	cfg        *config.Config
-	store      *store.Store
-	orch       *orchestrator.Service
-	account    *accountStore
-	backoffs   *backoffStore
-	ledger     *issuanceLedger
-	httpClient *http.Client
+	cfg                 *config.Config
+	store               *store.Store
+	orch                *orchestrator.Service
+	account             *accountStore
+	backoffs            *backoffStore
+	ledger              *issuanceLedger
+	httpClient          *http.Client
+	authoritativeLookup func(context.Context, string, []string) ([]net.IP, error)
 }
 
 // New constructs a TLS service bound to repository state.
 func New(cfg *config.Config, st *store.Store, orch *orchestrator.Service) *Service {
 	return &Service{
-		cfg:        cfg,
-		store:      st,
-		orch:       orch,
-		account:    newAccountStore(cfg.DataDir),
-		backoffs:   newBackoffStore(cfg.DataDir),
-		ledger:     newIssuanceLedger(cfg.DataDir),
-		httpClient: &http.Client{Timeout: 5 * time.Second},
+		cfg:                 cfg,
+		store:               st,
+		orch:                orch,
+		account:             newAccountStore(cfg.DataDir),
+		backoffs:            newBackoffStore(cfg.DataDir),
+		ledger:              newIssuanceLedger(cfg.DataDir),
+		httpClient:          &http.Client{Timeout: 5 * time.Second},
+		authoritativeLookup: defaultAuthoritativeLookup,
 	}
 }
 
@@ -346,29 +349,33 @@ func (s *Service) needsCertificate(rec models.DomainRecord, mode models.Encrypti
 }
 
 func (s *Service) domainReadyForIssuance(ctx context.Context, rec models.DomainRecord) bool {
-	nodes, err := s.store.GetNodes()
-	if err != nil {
-		log.Printf("tls: unable to list nodes for readiness: %v", err)
-		return true
-	}
-	edges := make(map[string]struct{})
-	for _, node := range nodes {
-		node.ComputeEdgeIPs()
-		for _, ip := range node.EdgeIPs {
-			if ip == "" {
-				continue
-			}
-			edges[ip] = struct{}{}
-		}
-	}
+	edges, authorities := s.clusterEdgesAndNameServers()
 	if len(edges) == 0 {
 		return true
 	}
-	parent := ctx
-	if parent == nil {
-		parent = context.Background()
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	lookupCtx, cancel := context.WithTimeout(parent, lookupTimeout)
+	if s.authoritativeLookup != nil && len(authorities) > 0 {
+		if ips, err := s.authoritativeLookup(ctx, rec.Domain, authorities); err == nil {
+			for _, ip := range ips {
+				if ip == nil {
+					continue
+				}
+				v4 := ip.To4()
+				if v4 != nil {
+					if _, ok := edges[v4.String()]; ok {
+						return true
+					}
+					continue
+				}
+				if _, ok := edges[ip.String()]; ok {
+					return true
+				}
+			}
+		}
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, lookupTimeout)
 	defer cancel()
 	addrs, err := net.DefaultResolver.LookupIPAddr(lookupCtx, rec.Domain)
 	if err != nil {
@@ -390,6 +397,73 @@ func (s *Service) domainReadyForIssuance(ctx context.Context, rec models.DomainR
 		}
 	}
 	return false
+}
+
+func (s *Service) clusterEdgesAndNameServers() (map[string]struct{}, []string) {
+	nodes, err := s.store.GetNodes()
+	if err != nil {
+		log.Printf("tls: unable to list nodes for readiness: %v", err)
+		return map[string]struct{}{}, nil
+	}
+	edges := make(map[string]struct{}, len(nodes))
+	nsSet := make(map[string]struct{})
+	for _, node := range nodes {
+		node.ComputeEdgeIPs()
+		for _, ip := range node.EdgeIPs {
+			ip = strings.TrimSpace(ip)
+			if ip == "" {
+				continue
+			}
+			edges[ip] = struct{}{}
+		}
+		for _, ip := range node.NSIPs {
+			ip = strings.TrimSpace(ip)
+			if ip == "" {
+				continue
+			}
+			nsSet[ip] = struct{}{}
+		}
+	}
+	nsList := make([]string, 0, len(nsSet))
+	for ip := range nsSet {
+		nsList = append(nsList, ip)
+	}
+	sort.Strings(nsList)
+	return edges, nsList
+}
+
+func defaultAuthoritativeLookup(ctx context.Context, domain string, servers []string) ([]net.IP, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	name := dns.Fqdn(domain)
+	client := &dns.Client{Timeout: lookupTimeout}
+	var results []net.IP
+	for _, server := range servers {
+		server = strings.TrimSpace(server)
+		if server == "" {
+			continue
+		}
+		target := server
+		if !strings.Contains(server, ":") {
+			target = net.JoinHostPort(server, "53")
+		}
+		msg := dns.Msg{}
+		msg.SetQuestion(name, dns.TypeA)
+		resp, _, err := client.ExchangeContext(ctx, &msg, target)
+		if err != nil || resp == nil {
+			continue
+		}
+		for _, ans := range resp.Answer {
+			if a, ok := ans.(*dns.A); ok {
+				results = append(results, a.A)
+			}
+		}
+	}
+	if len(results) == 0 {
+		return nil, errors.New("no authoritative response")
+	}
+	return results, nil
 }
 
 func (s *Service) markAwaitingDelegation(domain string) {

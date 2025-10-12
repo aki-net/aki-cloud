@@ -215,6 +215,44 @@ func (s *Store) DeleteEdgeHealth(ip string) error {
 	return writeJSONAtomic(path, pruned)
 }
 
+// PruneEdgeHealthByNodes removes edge health entries that do not belong to the provided nodes.
+func (s *Store) PruneEdgeHealthByNodes(nodes []models.Node) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	active := make(map[string]struct{})
+	for _, node := range nodes {
+		node.ComputeEdgeIPs()
+		for _, ip := range node.EdgeIPs {
+			ip = strings.TrimSpace(ip)
+			if ip == "" {
+				continue
+			}
+			active[ip] = struct{}{}
+		}
+	}
+
+	path := s.edgeHealthFile()
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var statuses []models.EdgeHealthStatus
+	if err := readJSON(path, &statuses); err != nil {
+		return err
+	}
+	pruned := make([]models.EdgeHealthStatus, 0, len(statuses))
+	for _, st := range statuses {
+		if _, ok := active[st.IP]; !ok {
+			continue
+		}
+		pruned = append(pruned, st)
+	}
+	return writeJSONAtomic(path, pruned)
+}
+
 // GetNameServerStatus returns the cached nameserver health results.
 func (s *Store) GetNameServerStatus() ([]models.NameServerHealth, error) {
 	s.mu.RLock()

@@ -28,7 +28,9 @@ type Monitor struct {
 	failures     int
 	failureDecay time.Duration
 
-	mu sync.Mutex
+	mu             sync.Mutex
+	lastRebalance  time.Time
+	reconcileEvery time.Duration
 }
 
 // New creates a new edge health monitor.
@@ -46,14 +48,15 @@ func New(st *store.Store, infraCtl *infra.Controller, orch *orchestrator.Service
 		failureDecay = 5 * time.Minute
 	}
 	return &Monitor{
-		store:        st,
-		infra:        infraCtl,
-		orch:         orch,
-		nodeID:       nodeID,
-		interval:     interval,
-		dialTimeout:  dialTimeout,
-		failures:     failureThreshold,
-		failureDecay: failureDecay,
+		store:          st,
+		infra:          infraCtl,
+		orch:           orch,
+		nodeID:         nodeID,
+		interval:       interval,
+		dialTimeout:    dialTimeout,
+		failures:       failureThreshold,
+		failureDecay:   failureDecay,
+		reconcileEvery: interval * 2,
 	}
 }
 
@@ -69,9 +72,27 @@ func (m *Monitor) Start(ctx context.Context) {
 		case <-ticker.C:
 			edgesUpdated := m.evaluateEdges(ctx)
 			nsUpdated := m.evaluateNameServers(ctx)
-			if edgesUpdated {
-				m.rebalanceAssignments()
-				m.orch.Trigger(context.Background())
+			rebalance := edgesUpdated
+			if !rebalance && m.reconcileEvery > 0 {
+				m.mu.Lock()
+				if time.Since(m.lastRebalance) >= m.reconcileEvery {
+					rebalance = true
+				}
+				m.mu.Unlock()
+			}
+			if rebalance {
+				now := time.Now().UTC()
+				mutated := m.rebalanceAssignments()
+				m.mu.Lock()
+				m.lastRebalance = now
+				m.mu.Unlock()
+				if mutated {
+					if m.orch != nil {
+						m.orch.Trigger(context.Background())
+					}
+				} else if edgesUpdated && m.orch != nil {
+					m.orch.Trigger(context.Background())
+				}
 			} else if nsUpdated {
 				// nothing else to do; data is persisted for passive consumers
 			}

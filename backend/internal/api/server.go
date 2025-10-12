@@ -30,16 +30,18 @@ import (
 	"github.com/google/uuid"
 	"github.com/miekg/dns"
 	"golang.org/x/crypto/bcrypt"
+	"sync"
 )
 
 // Server holds routing dependencies.
 type Server struct {
-	Config       *config.Config
-	Store        *store.Store
-	Auth         *auth.Service
-	Orchestrator *orchestrator.Service
-	Sync         *syncsvc.Service
-	Infra        *infra.Controller
+	Config          *config.Config
+	Store           *store.Store
+	Auth            *auth.Service
+	Orchestrator    *orchestrator.Service
+	Sync            *syncsvc.Service
+	Infra           *infra.Controller
+	edgeReconcileMu sync.Mutex
 }
 
 type domainOverview struct {
@@ -1659,6 +1661,7 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 
 	if !changed {
 		s.pruneUnusedEdgeHealth()
+		s.TriggerDomainReconcile(fmt.Sprintf("node-capabilities:%s", desired.ID))
 		return true
 	}
 
@@ -1692,11 +1695,7 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 	if err := s.syncPeersFromNodes(); err != nil {
 		log.Printf("infra: sync peers after capability change failed: %v", err)
 	}
-	if ctx != nil {
-		go s.reconcileDomainAssignments(ctx, fmt.Sprintf("node-capabilities:%s", desired.ID))
-	} else {
-		go s.reconcileDomainAssignments(context.Background(), fmt.Sprintf("node-capabilities:%s", desired.ID))
-	}
+	s.TriggerDomainReconcileWithContext(ctx, fmt.Sprintf("node-capabilities:%s", desired.ID))
 	go s.Orchestrator.Trigger(context.Background())
 	return true
 }
@@ -1804,6 +1803,8 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 }
 
 func (s *Server) reconcileDomainAssignments(ctx context.Context, reason string) {
+	s.edgeReconcileMu.Lock()
+	defer s.edgeReconcileMu.Unlock()
 	domains, err := s.Store.GetDomains()
 	if err != nil {
 		log.Printf("edge assignment reconcile (%s): %v", reason, err)
@@ -1841,6 +1842,38 @@ func (s *Server) reconcileDomainAssignments(ctx context.Context, reason string) 
 	if updated {
 		go s.Orchestrator.Trigger(ctx)
 	}
+}
+
+// TriggerDomainReconcile schedules a best-effort reconciliation of edge assignments using a background context.
+func (s *Server) TriggerDomainReconcile(reason string) {
+	s.TriggerDomainReconcileWithContext(context.Background(), reason)
+}
+
+// TriggerDomainReconcileWithContext schedules a best-effort reconciliation of edge assignments with the provided context.
+func (s *Server) TriggerDomainReconcileWithContext(ctx context.Context, reason string) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go s.reconcileDomainAssignments(ctx, reason)
+}
+
+// StartDomainReconciler kicks off a periodic reconciliation loop until the context is cancelled.
+func (s *Server) StartDomainReconciler(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	ticker := time.NewTicker(interval)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.reconcileDomainAssignments(context.Background(), "scheduled")
+			}
+		}
+	}()
 }
 
 func (s *Server) decorateNodesWithStatus(nodes []models.Node) []models.Node {

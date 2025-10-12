@@ -185,6 +185,9 @@ func (s *Service) ApplySnapshot(snapshot Snapshot) error {
 		return err
 	}
 	activeNodes := filterActiveNodes(mergedNodes)
+	if err := s.store.PruneEdgeHealthByNodes(activeNodes); err != nil {
+		log.Printf("sync: prune edge health failed: %v", err)
+	}
 	for _, node := range mergedNodes {
 		if node.ID == s.nodeID {
 			if err := s.store.SaveLocalNodeSnapshot(node); err != nil {

@@ -57,6 +57,7 @@ func main() {
 
 	syncSvc.SetChangeHandler(func() {
 		server.SyncLocalNodeCapabilities(context.Background())
+		server.TriggerDomainReconcile("sync-change")
 		orch.Trigger(context.Background())
 	})
 
@@ -65,6 +66,7 @@ func main() {
 	}
 
 	server.SyncLocalNodeCapabilities(context.Background())
+	server.TriggerDomainReconcile("startup")
 
 	router := server.Routes()
 
@@ -101,6 +103,7 @@ func main() {
 	go syncSvc.Start(syncCtx, cfg.SyncInterval)
 	go healthMonitor.Start(syncCtx)
 	go slSvc.Start(syncCtx)
+	server.StartDomainReconciler(syncCtx, cfg.HealthInterval)
 
 	go func() {
 		log.Printf("backend listening on %s", httpServer.Addr)
