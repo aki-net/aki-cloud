@@ -27,14 +27,14 @@ func TestEvaluateNodeStatus(t *testing.T) {
 		},
 		{
 			name:     "pending edge awaiting health",
-			node:     models.Node{IPs: []string{"10.0.0.1"}},
+			node:     models.Node{EdgeIPs: []string{"10.0.0.1"}},
 			health:   map[string]models.EdgeHealthStatus{},
 			expected: models.NodeStatusPending,
 			contains: "pending",
 		},
 		{
 			name: "all healthy",
-			node: models.Node{IPs: []string{"10.0.0.1"}},
+			node: models.Node{EdgeIPs: []string{"10.0.0.1"}},
 			health: map[string]models.EdgeHealthStatus{
 				"10.0.0.1": {IP: "10.0.0.1", Healthy: true, LastChecked: now},
 			},
@@ -42,7 +42,7 @@ func TestEvaluateNodeStatus(t *testing.T) {
 		},
 		{
 			name: "mixed health degraded",
-			node: models.Node{IPs: []string{"10.0.0.1", "10.0.0.2"}},
+			node: models.Node{EdgeIPs: []string{"10.0.0.1", "10.0.0.2"}},
 			health: map[string]models.EdgeHealthStatus{
 				"10.0.0.1": {IP: "10.0.0.1", Healthy: true, LastChecked: now},
 				"10.0.0.2": {IP: "10.0.0.2", Healthy: false, LastChecked: now, Message: "timeout"},
@@ -52,7 +52,7 @@ func TestEvaluateNodeStatus(t *testing.T) {
 		},
 		{
 			name: "all unhealthy",
-			node: models.Node{IPs: []string{"10.0.0.1"}},
+			node: models.Node{EdgeIPs: []string{"10.0.0.1"}},
 			health: map[string]models.EdgeHealthStatus{
 				"10.0.0.1": {IP: "10.0.0.1", Healthy: false, LastChecked: now},
 			},
@@ -61,7 +61,7 @@ func TestEvaluateNodeStatus(t *testing.T) {
 		},
 		{
 			name:     "nameserver degraded overrides healthy edge",
-			node:     models.Node{IPs: []string{"10.0.0.1"}, NSIPs: []string{"10.0.53.1"}},
+			node:     models.Node{EdgeIPs: []string{"10.0.0.1"}, NSIPs: []string{"10.0.53.1"}},
 			health:   map[string]models.EdgeHealthStatus{"10.0.0.1": {IP: "10.0.0.1", Healthy: true, LastChecked: now}},
 			ns:       []models.NameServerHealth{{NodeID: "node", IPv4: "10.0.53.1", FQDN: "ns1.example", Healthy: false, Message: "refused", CheckedAt: now}},
 			expected: models.NodeStatusOffline,

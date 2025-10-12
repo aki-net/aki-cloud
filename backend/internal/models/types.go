@@ -301,6 +301,9 @@ func (n *Node) ComputeEdgeIPs() {
 	n.Labels = normalizeLabels(n.Labels)
 	n.Roles = nil
 	manual := n.EdgeManual
+	if len(n.EdgeIPs) == 0 {
+		manual = true
+	}
 
 	// Ensure NS and Edge IPs are part of the general IP list.
 	for _, ip := range append(append([]string{}, n.NSIPs...), n.EdgeIPs...) {
@@ -339,6 +342,8 @@ func (n *Node) ComputeEdgeIPs() {
 			n.EdgeIPs = normalizeIPs(candidates)
 		}
 	}
+
+	n.EdgeManual = manual
 
 	roles := make([]NodeRole, 0, 2)
 	if len(n.EdgeIPs) > 0 {

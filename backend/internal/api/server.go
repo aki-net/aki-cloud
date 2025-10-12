@@ -1301,6 +1301,7 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 	node.EdgeIPs = filterEmpty(node.EdgeIPs)
 	node.Labels = filterEmpty(node.Labels)
 	node.Roles = nil
+	node.EdgeManual = true
 	node.ComputeEdgeIPs()
 	now := time.Now().UTC()
 	node.Version.Counter++

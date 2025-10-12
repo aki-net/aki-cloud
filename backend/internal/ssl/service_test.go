@@ -146,9 +146,9 @@ func TestShouldAttemptDomainPrefersCoordinator(t *testing.T) {
 	}
 
 	nodes := []models.Node{
-		{ID: "node-a", IPs: []string{"10.0.0.1"}, NSIPs: []string{}},
-		{ID: "node-b", IPs: []string{"10.0.0.2"}, NSIPs: []string{}},
-		{ID: "node-c", IPs: []string{"10.0.0.3"}, NSIPs: []string{}},
+		{ID: "node-a", EdgeIPs: []string{"10.0.0.1"}},
+		{ID: "node-b", EdgeIPs: []string{"10.0.0.2"}},
+		{ID: "node-c", EdgeIPs: []string{"10.0.0.3"}},
 	}
 	if err := st.SaveNodes(nodes); err != nil {
 		t.Fatalf("SaveNodes: %v", err)
@@ -194,8 +194,8 @@ func TestShouldAttemptDomainSkipsUnhealthyCoordinator(t *testing.T) {
 	}
 
 	nodes := []models.Node{
-		{ID: "node-a", IPs: []string{"10.1.0.1"}, NSIPs: []string{}},
-		{ID: "node-b", IPs: []string{"10.1.0.2"}, NSIPs: []string{}},
+		{ID: "node-a", EdgeIPs: []string{"10.1.0.1"}},
+		{ID: "node-b", EdgeIPs: []string{"10.1.0.2"}},
 	}
 	if err := st.SaveNodes(nodes); err != nil {
 		t.Fatalf("SaveNodes: %v", err)
@@ -245,8 +245,8 @@ func TestShouldAttemptDomainAllowsStaleFallback(t *testing.T) {
 	}
 
 	nodes := []models.Node{
-		{ID: "node-a", IPs: []string{"10.2.0.1"}, NSIPs: []string{}},
-		{ID: "node-b", IPs: []string{"10.2.0.2"}, NSIPs: []string{}},
+		{ID: "node-a", EdgeIPs: []string{"10.2.0.1"}},
+		{ID: "node-b", EdgeIPs: []string{"10.2.0.2"}},
 	}
 	if err := st.SaveNodes(nodes); err != nil {
 		t.Fatalf("SaveNodes: %v", err)
