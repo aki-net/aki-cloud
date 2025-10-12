@@ -58,7 +58,7 @@ func New(st *store.Store, dataDir string, nodeID string, secret []byte) *Service
 		nodeID:       nodeID,
 		client:       &http.Client{Timeout: 10 * time.Second},
 		secret:       secret,
-		pushDebounce: 0,
+		pushDebounce: 2 * time.Second, // Add 2 second debounce to avoid sync storms
 	}
 }
 

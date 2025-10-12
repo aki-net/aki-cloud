@@ -59,9 +59,21 @@ interface NodeFormState {
   const [nodeForm, setNodeForm] = useState<NodeFormState>(initialNodeForm);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [savingNode, setSavingNode] = useState(false);
+  const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     loadInfrastructure();
+    
+    // Set up automatic refresh every 5 seconds
+    const interval = setInterval(() => {
+      loadInfrastructure();
+    }, 5000);
+    
+    setRefreshInterval(interval);
+    
+    return () => {
+      if (interval) clearInterval(interval);
+    };
   }, []);
 
   const loadInfrastructure = async () => {

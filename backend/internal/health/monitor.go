@@ -307,25 +307,61 @@ func (m *Monitor) pruneDormantNodes(health map[string]models.EdgeHealthStatus) b
 	changed := false
 
 	// Deduplicate nodes with identical names, keeping the freshest entry.
+	// Also check for duplicate IPs to prevent conflicts
 	type nodeRef struct {
 		node models.Node
 	}
 	byName := make(map[string]nodeRef, len(nodes))
+	byIP := make(map[string]models.Node, len(nodes)*2)
 	var duplicates []models.Node
+	
 	for _, node := range nodes {
 		if node.IsDeleted() {
 			continue
 		}
+		
+		// Check for duplicate names
 		nameKey := strings.ToLower(strings.TrimSpace(node.Name))
 		if existing, ok := byName[nameKey]; ok {
+			// Found duplicate name - keep the better one
 			if preferNode(node, existing.node) {
+				log.Printf("health: found duplicate node %s (keeping %s, removing %s)", 
+					nameKey, node.ID, existing.node.ID)
 				duplicates = append(duplicates, existing.node)
 				byName[nameKey] = nodeRef{node: node}
 			} else {
+				log.Printf("health: found duplicate node %s (keeping %s, removing %s)", 
+					nameKey, existing.node.ID, node.ID)
 				duplicates = append(duplicates, node)
 			}
 		} else {
 			byName[nameKey] = nodeRef{node: node}
+		}
+		
+		// Check for duplicate IPs (edge nodes sharing same IPs is problematic)
+		for _, ip := range node.EdgeIPs {
+			ip = strings.TrimSpace(ip)
+			if ip == "" {
+				continue
+			}
+			if existing, ok := byIP[ip]; ok && existing.ID != node.ID {
+				// Two nodes claiming the same edge IP - keep the newer/better one
+				if preferNode(node, existing) {
+					log.Printf("health: IP conflict on %s between %s and %s (keeping %s)",
+						ip, node.Name, existing.Name, node.Name)
+					if !contains(duplicates, existing) {
+						duplicates = append(duplicates, existing)
+					}
+				} else {
+					log.Printf("health: IP conflict on %s between %s and %s (keeping %s)",
+						ip, node.Name, existing.Name, existing.Name)
+					if !contains(duplicates, node) {
+						duplicates = append(duplicates, node)
+					}
+				}
+			} else {
+				byIP[ip] = node
+			}
 		}
 	}
 	for _, dup := range duplicates {
@@ -420,13 +456,29 @@ func (m *Monitor) pruneDormantNodes(health map[string]models.EdgeHealthStatus) b
 }
 
 func preferNode(a, b models.Node) bool {
+	// Prefer non-deleted over deleted
+	if a.IsDeleted() != b.IsDeleted() {
+		return !a.IsDeleted()
+	}
+	// Prefer higher version counter (more recent updates)
 	if a.Version.Counter != b.Version.Counter {
 		return a.Version.Counter > b.Version.Counter
 	}
+	// Prefer more recently updated
 	if !a.UpdatedAt.Equal(b.UpdatedAt) {
 		return a.UpdatedAt.After(b.UpdatedAt)
 	}
+	// Tie-breaker: use ID comparison for deterministic choice
 	return strings.Compare(a.ID, b.ID) > 0
+}
+
+func contains(nodes []models.Node, target models.Node) bool {
+	for _, n := range nodes {
+		if n.ID == target.ID {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Monitor) checkNameServer(ctx context.Context, ns infra.NameServer) models.NameServerHealth {

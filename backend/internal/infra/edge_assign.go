@@ -30,28 +30,44 @@ func EnsureDomainEdgeAssignment(record *models.DomainRecord, endpoints []EdgeEnd
 
 	current, ok := endpointByIP[record.Edge.AssignedIP]
 	needsAssignment := !ok || record.Edge.AssignedIP == ""
-	if !needsAssignment {
-		if status, ok := health[record.Edge.AssignedIP]; ok && !status.Healthy {
-			needsAssignment = true
+	
+	// Check if current assignment is unhealthy
+	if !needsAssignment && record.Edge.AssignedIP != "" {
+		if status, ok := health[record.Edge.AssignedIP]; ok {
+			// Only reassign if the node has been unhealthy for multiple failures
+			if !status.Healthy && status.FailureCount >= 3 {
+				needsAssignment = true
+			}
 		}
 	}
 
 	if needsAssignment {
+		// Try to get healthy endpoints first
 		candidates := PreferHealthyEndpoints(eligible, health)
 		if len(candidates) == 0 {
+			// If no healthy endpoints, use all eligible ones
+			// This ensures service continues even if all nodes are degraded
 			candidates = eligible
 		}
+		
+		// Use deterministic selection with rendezvous hashing
 		key := fmt.Sprintf("%s|%s", record.Domain, record.Edge.AssignmentSalt)
 		selected := RendezvousSelect(key, candidates)
-		record.Edge.AssignedIP = selected.IP
-		record.Edge.AssignedNodeID = selected.NodeID
-		record.Edge.AssignedAt = now
-		mutated = true
+		
+		// Only update if actually changed
+		if record.Edge.AssignedIP != selected.IP {
+			record.Edge.AssignedIP = selected.IP
+			record.Edge.AssignedNodeID = selected.NodeID
+			record.Edge.AssignedAt = now
+			mutated = true
+		}
 	} else {
+		// Update node ID if it changed (e.g., node was recreated with same IP)
 		if record.Edge.AssignedNodeID != current.NodeID {
 			record.Edge.AssignedNodeID = current.NodeID
 			mutated = true
 		}
+		// Set assignment time if it was never set
 		if record.Edge.AssignedAt.IsZero() {
 			record.Edge.AssignedAt = now
 			mutated = true

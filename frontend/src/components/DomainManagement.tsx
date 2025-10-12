@@ -57,12 +57,31 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     node_id?: string;
   }
   const editInputRef = useRef<HTMLInputElement>(null);
+  const loadDataRef = useRef<() => Promise<void>>();
+  const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    loadData();
+    loadData(true);
+    
+    // Set up automatic refresh every 5 seconds for admin, 10 seconds for users
+    const interval = setInterval(() => {
+      loadData(false);
+    }, isAdmin ? 5000 : 10000);
+    
+    setRefreshInterval(interval);
+    
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isAdmin]);
+
+  useEffect(() => {
+    loadDataRef.current = loadData;
   }, []);
 
-  const loadData = async () => {
+  const loadData = async (showLoader = false) => {
+    if (showLoader) setLoading(true);
+    
     try {
       const [domainData, nsData, edgeData, overviewData] = await Promise.all([
         domainsApi.list(),
@@ -112,9 +131,12 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         }
       }
     } catch (error) {
-      toast.error("Failed to load data");
+      // Only show error toast on initial load or user-triggered refresh
+      if (showLoader) {
+        toast.error("Failed to load data");
+      }
     } finally {
-      setLoading(false);
+      if (showLoader) setLoading(false);
     }
   };
 
@@ -321,7 +343,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       if (viewMode === "my") {
         setDomains(domains.map((d) => (d.domain === domainName ? updated : d)));
       }
-      loadData();
+      loadData(false);
       toast.success(
         `Proxy ${newProxied ? "enabled" : "disabled"} for ${domainName}`,
       );
@@ -365,7 +387,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       if (viewMode === "my") {
         setDomains(domains.map((d) => (d.domain === domainName ? updated : d)));
       }
-      loadData();
+      loadData(false);
       toast.success(`TLS mode updated for ${domainName}`);
     } catch (error: any) {
       toast.error(
@@ -399,7 +421,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       if (viewMode === "my") {
         setDomains(domains.map((d) => (d.domain === domainName ? updated : d)));
       }
-      loadData();
+      loadData(false);
       toast.success(`Updated IP for ${domainName}`);
     } catch (error) {
       toast.error("Failed to update IP address");
@@ -419,7 +441,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       );
       setDomains(domains.filter((d) => !selectedDomains.has(d.domain)));
       setSelectedDomains(new Set());
-      loadData();
+      loadData(false);
       toast.success(`Deleted ${selectedDomains.size} domain(s)`);
     } catch (error) {
       toast.error("Failed to delete domains");
@@ -447,7 +469,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         toast.error(`Failed to update ${response.failed} domain(s)`);
       }
 
-      loadData();
+      loadData(false);
       setSelectedDomains(new Set());
     } catch (error) {
       toast.error("Failed to update domains");
@@ -471,7 +493,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         toast.error(`Failed to update ${response.failed} domain(s)`);
       }
 
-      loadData();
+      loadData(false);
       setSelectedDomains(new Set());
     } catch (error) {
       toast.error("Failed to update TLS settings");
@@ -496,7 +518,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       }
       setBulkIP("");
       setSelectedDomains(new Set());
-      loadData();
+      loadData(false);
     } catch (error: any) {
       toast.error(error.response?.data?.error || "Failed to update origin IP");
     }
@@ -520,7 +542,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       }
       setBulkOwner("");
       setSelectedDomains(new Set());
-      loadData();
+      loadData(false);
     } catch (error: any) {
       toast.error(
         error.response?.data?.error || "Failed to update domain owner",
@@ -543,7 +565,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         edge: { labels },
       });
       setEdgeModalData(buildEdgeModalData(updated, updated));
-      await loadData();
+      await loadData(false);
       toast.success("Edge labels updated");
     } catch (error: any) {
       toast.error(
@@ -559,7 +581,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     try {
       const updated = await domainsApi.reassignEdge(data.domain);
       setEdgeModalData(buildEdgeModalData(updated, updated));
-      await loadData();
+      await loadData(false);
       toast.success("Edge assignment updated");
     } catch (error: any) {
       toast.error(error.response?.data?.error || "Failed to reassign edge");
@@ -1057,7 +1079,7 @@ function AddDomainModal({
   isAdmin,
 }: {
   onClose: () => void;
-  onAdd: () => void;
+  onAdd: (showLoader?: boolean) => void;
   isAdmin: boolean;
 }) {
   const [formData, setFormData] = useState<CreateDomainPayload>({
@@ -1126,7 +1148,7 @@ function AddDomainModal({
         });
         toast.success(`Added ${formData.domain}`);
       }
-      onAdd();
+      onAdd(false);
       onClose();
     } catch (error: any) {
       toast.error(error.response?.data?.error || "Failed to add domain");

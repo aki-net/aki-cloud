@@ -992,10 +992,15 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 			existing.Edge.Normalize()
 		}
 		if existing.Proxied {
-			if _, err := s.ensureDomainEdgeAssignment(existing); err != nil {
+			// Use mutex to prevent concurrent edge assignments
+			s.edgeReconcileMu.Lock()
+			_, edgeErr := s.ensureDomainEdgeAssignment(existing)
+			s.edgeReconcileMu.Unlock()
+			
+			if edgeErr != nil {
 				failed++
-				errMsg := err.Error()
-				if ve, ok := err.(models.ErrValidation); ok {
+				errMsg := edgeErr.Error()
+				if ve, ok := edgeErr.(models.ErrValidation); ok {
 					errMsg = ve.Error()
 				}
 				results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: errMsg})
@@ -1136,12 +1141,17 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		existing.Edge.Normalize()
 	}
 	if existing.Proxied {
-		if _, err := s.ensureDomainEdgeAssignment(existing); err != nil {
-			if ve, ok := err.(models.ErrValidation); ok {
+		// Use mutex to prevent concurrent edge assignments
+		s.edgeReconcileMu.Lock()
+		_, edgeErr := s.ensureDomainEdgeAssignment(existing)
+		s.edgeReconcileMu.Unlock()
+		
+		if edgeErr != nil {
+			if ve, ok := edgeErr.(models.ErrValidation); ok {
 				writeError(w, http.StatusBadRequest, ve.Error())
 				return
 			}
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeError(w, http.StatusInternalServerError, edgeErr.Error())
 			return
 		}
 	} else {
@@ -1175,6 +1185,10 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleReassignDomainEdge(w http.ResponseWriter, r *http.Request) {
+	// Use mutex to prevent concurrent edge reassignments
+	s.edgeReconcileMu.Lock()
+	defer s.edgeReconcileMu.Unlock()
+	
 	domain := strings.ToLower(chi.URLParam(r, "domain"))
 	existing, err := s.Store.GetDomain(domain)
 	if err != nil {
@@ -1185,12 +1199,16 @@ func (s *Server) handleReassignDomainEdge(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "domain is not proxied")
 		return
 	}
+	
+	// Force a new assignment by changing the salt
 	newSalt := fmt.Sprintf("%s:%s", strings.ToLower(existing.Domain), uuid.NewString())
 	existing.Edge.AssignmentSalt = newSalt
 	existing.Edge.AssignedIP = ""
 	existing.Edge.AssignedNodeID = ""
 	existing.Edge.AssignedAt = time.Time{}
 	existing.Edge.Normalize()
+	
+	// Ensure edge assignment with fresh data
 	if _, err := s.ensureDomainEdgeAssignment(existing); err != nil {
 		if ve, ok := err.(models.ErrValidation); ok {
 			writeError(w, http.StatusBadRequest, ve.Error())
