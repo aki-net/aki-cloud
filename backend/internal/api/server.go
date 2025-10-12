@@ -1411,24 +1411,40 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	nodes, err := s.Store.GetNodes()
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "node id required")
+		return
+	}
+	nodes, err := s.Store.GetNodesIncludingDeleted()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	var target *models.Node
+	var (
+		target    *models.Node
+		softMatch *models.Node
+	)
 	for _, node := range nodes {
-		if node.ID == id {
-			n2 := node
-			target = &n2
-			s.cleanupEdgeHealth(node)
+		if node.ID != id {
+			continue
+		}
+		n2 := node
+		softMatch = &n2
+		if node.IsDeleted() {
 			break
 		}
+		target = &n2
+		s.cleanupEdgeHealth(node)
+		break
 	}
 	if target == nil {
-		writeError(w, http.StatusNotFound, "node not found")
-		return
+		if softMatch == nil {
+			writeError(w, http.StatusNotFound, "node not found")
+			return
+		}
+		// Node already deleted; ensure tombstone exists for consistency.
+		target = softMatch
 	}
 	now := time.Now().UTC()
 	if err := s.Store.MarkNodeDeleted(id, s.Config.NodeID, now); err != nil {
