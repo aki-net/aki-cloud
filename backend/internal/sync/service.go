@@ -235,10 +235,19 @@ func (s *Service) ApplySnapshot(snapshot Snapshot) error {
 // mergeDomain chooses between local and remote domain records.
 func mergeDomain(local models.DomainRecord, remote models.DomainRecord) models.DomainRecord {
 	if local.Domain == "" {
+		if remote.Domain == "" {
+			return local
+		}
 		return remote
 	}
 	lver := local.Version
 	rver := remote.Version
+	if remote.Domain == "" {
+		return local
+	}
+	if remote.Owner == "" && remote.OriginIP == "" && remote.DeletedAt.IsZero() {
+		return local
+	}
 	result := models.MergeClock(lver, rver)
 	if result == rver {
 		return remote

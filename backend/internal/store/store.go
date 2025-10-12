@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -335,7 +336,21 @@ func (s *Store) SaveDomain(record models.DomainRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record.EnsureTLSDefaults()
-	return writeJSONAtomic(s.domainRecordFile(record.Domain), record)
+	path := s.domainRecordFile(record.Domain)
+	if record.Domain == "" {
+		log.Printf("store: refusing to persist domain with empty name")
+		return nil
+	}
+	if record.Owner == "" && record.OriginIP == "" && record.DeletedAt.IsZero() {
+		log.Printf("store: refusing to persist incomplete domain %s (missing owner/origin)", record.Domain)
+		return nil
+	}
+	if err := writeJSONAtomic(path, record); err != nil {
+		log.Printf("store: save domain %s failed: %v", record.Domain, err)
+		return err
+	}
+	log.Printf("store: saved domain %s (owner=%s)", record.Domain, record.Owner)
+	return nil
 }
 
 // GetDomain retrieves a domain record if it exists.
@@ -441,6 +456,7 @@ func (s *Store) readNodesLocked() ([]models.Node, error) {
 func (s *Store) SaveNodes(nodes []models.Node) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	nodes = dedupeNodes(nodes)
 	for i := range nodes {
 		nodes[i].ComputeEdgeIPs()
 		nodes[i].Status = ""
@@ -485,4 +501,56 @@ func (s *Store) WalkData(fn func(path string, info fs.FileInfo) error) error {
 		}
 		return fn(path, info)
 	})
+}
+
+func dedupeNodes(nodes []models.Node) []models.Node {
+	if len(nodes) <= 1 {
+		return nodes
+	}
+	type chosen struct {
+		index int
+		node  models.Node
+	}
+	byName := make(map[string]chosen, len(nodes))
+	out := make([]models.Node, 0, len(nodes))
+	for _, node := range nodes {
+		nameKey := strings.ToLower(strings.TrimSpace(node.Name))
+		if nameKey == "" {
+			out = append(out, node)
+			continue
+		}
+		if existing, ok := byName[nameKey]; ok {
+			if preferNode(node, existing.node) {
+				out[existing.index] = node
+				byName[nameKey] = chosen{index: existing.index, node: node}
+			}
+			continue
+		}
+		byName[nameKey] = chosen{index: len(out), node: node}
+		out = append(out, node)
+	}
+	return out
+}
+
+func preferNode(candidate, current models.Node) bool {
+	if current.IsDeleted() && candidate.IsDeleted() {
+		return compareTimestamps(candidate.DeletedAt, current.DeletedAt)
+	}
+	if current.IsDeleted() != candidate.IsDeleted() {
+		return !candidate.IsDeleted()
+	}
+	if !candidate.UpdatedAt.Equal(current.UpdatedAt) {
+		return candidate.UpdatedAt.After(current.UpdatedAt)
+	}
+	if candidate.Version.Counter != current.Version.Counter {
+		return candidate.Version.Counter > current.Version.Counter
+	}
+	return strings.Compare(candidate.ID, current.ID) > 0
+}
+
+func compareTimestamps(a, b time.Time) bool {
+	if a.Equal(b) {
+		return false
+	}
+	return a.After(b)
 }
