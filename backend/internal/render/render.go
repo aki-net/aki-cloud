@@ -168,10 +168,16 @@ func (g *CoreDNSGenerator) Render() error {
 			// Only use the assigned IP, never all edge IPs
 			if ip := strings.TrimSpace(domain.Edge.AssignedIP); ip != "" {
 				arecords = append(arecords, ip)
+				fmt.Printf("DEBUG: Domain %s using assigned IP %s\n", domain.Domain, ip)
+			} else {
+				fmt.Printf("DEBUG: Domain %s has no assigned IP (Edge: %+v)\n", domain.Domain, domain.Edge)
 			}
+		} else {
+			fmt.Printf("DEBUG: Domain %s is not proxied\n", domain.Domain)
 		}
 		// Fall back to origin IP if no edge IP assigned or not proxied
 		if len(arecords) == 0 {
+			fmt.Printf("DEBUG: Domain %s falling back to origin IP %s\n", domain.Domain, domain.OriginIP)
 			arecords = append(arecords, domain.OriginIP)
 		}
 		nsRecords := make([]string, 0, len(activeNS))
