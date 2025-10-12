@@ -507,7 +507,9 @@ func (s *Server) authorizeUser(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		role, _ := claims["role"].(string)
-		ctx = withUserContext(ctx, sub, models.UserRole(role))
+		email, _ := claims["email"].(string)
+		email = strings.ToLower(strings.TrimSpace(email))
+		ctx = withUserContext(ctx, sub, email, models.UserRole(role))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}
 }
@@ -526,7 +528,9 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 			return
 		}
 		sub, _ := claims["sub"].(string)
-		ctx = withUserContext(ctx, sub, models.RoleAdmin)
+		email, _ := claims["email"].(string)
+		email = strings.ToLower(strings.TrimSpace(email))
+		ctx = withUserContext(ctx, sub, email, models.RoleAdmin)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -541,7 +545,9 @@ func (s *Server) requireRole(role models.UserRole, next http.HandlerFunc) http.H
 		}
 		sub, _ := claims["sub"].(string)
 		got, _ := claims["role"].(string)
-		ctx = withUserContext(ctx, sub, models.UserRole(got))
+		email, _ := claims["email"].(string)
+		email = strings.ToLower(strings.TrimSpace(email))
+		ctx = withUserContext(ctx, sub, email, models.UserRole(got))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}
 }
@@ -555,12 +561,13 @@ func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) {
 	if user.Role == models.RoleAdmin {
 		records, err = s.Store.GetDomains()
 	} else {
-		records, err = s.Store.ListDomainsForOwner(user.ID)
+		records, err = s.Store.ListDomainsForUser(user.ID, user.Email)
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.populateDomainOwners(&records)
 	for i := range records {
 		edge := records[i].Edge
 		records[i] = records[i].Sanitize()
@@ -569,13 +576,81 @@ func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, records)
 }
 
+func (s *Server) populateDomainOwners(records *[]models.DomainRecord) {
+	if records == nil || len(*records) == 0 {
+		return
+	}
+	users, err := s.Store.GetUsers()
+	if err != nil {
+		log.Printf("domains: fetch users for owner metadata failed: %v", err)
+		return
+	}
+	emailByID := make(map[string]string, len(users))
+	for _, u := range users {
+		if u.ID == "" {
+			continue
+		}
+		if u.Email == "" {
+			continue
+		}
+		emailByID[u.ID] = strings.ToLower(u.Email)
+	}
+	for i := range *records {
+		rec := &(*records)[i]
+		if rec.OwnerEmail != "" {
+			rec.OwnerEmail = strings.ToLower(rec.OwnerEmail)
+			continue
+		}
+		if email, ok := emailByID[rec.Owner]; ok {
+			rec.OwnerEmail = email
+			continue
+		}
+		if strings.Contains(rec.Owner, "@") {
+			rec.OwnerEmail = strings.ToLower(rec.Owner)
+		}
+	}
+}
+
+func userOwnsDomain(user userContext, domain models.DomainRecord) bool {
+	if user.Role == models.RoleAdmin {
+		return true
+	}
+	return domain.MatchesOwner(user.ID, user.Email)
+}
+
+func (s *Server) attachOwnerMetadata(domain *models.DomainRecord) {
+	if domain == nil {
+		return
+	}
+	if domain.OwnerEmail != "" {
+		domain.OwnerEmail = strings.ToLower(domain.OwnerEmail)
+		return
+	}
+	if strings.Contains(domain.Owner, "@") {
+		domain.OwnerEmail = strings.ToLower(domain.Owner)
+		return
+	}
+	users, err := s.Store.GetUsers()
+	if err != nil {
+		log.Printf("domains: fetch users for owner lookup failed: %v", err)
+		return
+	}
+	for _, u := range users {
+		if u.ID == domain.Owner {
+			domain.OwnerEmail = strings.ToLower(u.Email)
+			return
+		}
+	}
+}
+
 func (s *Server) prepareDomainRecord(user userContext, domain string, owner string, origin string, proxied *bool, ttl *int, tlsPayload *domainTLSPayload, edgePayload *domainEdgePayload) (models.DomainRecord, error) {
 	record := models.DomainRecord{
-		Domain:   strings.ToLower(strings.TrimSpace(domain)),
-		Owner:    strings.TrimSpace(owner),
-		OriginIP: strings.TrimSpace(origin),
-		TTL:      60,
-		Proxied:  true,
+		Domain:     strings.ToLower(strings.TrimSpace(domain)),
+		Owner:      strings.TrimSpace(owner),
+		OriginIP:   strings.TrimSpace(origin),
+		TTL:        60,
+		Proxied:    true,
+		OwnerEmail: strings.ToLower(strings.TrimSpace(user.Email)),
 	}
 	if record.Domain == "" {
 		return models.DomainRecord{}, models.ErrValidation("domain must be provided")
@@ -587,16 +662,21 @@ func (s *Server) prepareDomainRecord(user userContext, domain string, owner stri
 		record.Owner = user.ID
 	} else {
 		if user.Role == models.RoleAdmin {
-			resolvedOwner, err := s.resolveOwnerIdentifier(record.Owner)
+			resolvedOwner, err := s.resolveOwnerDetails(record.Owner)
 			if err != nil {
 				if errors.Is(err, store.ErrNotFound) {
 					return models.DomainRecord{}, models.ErrValidation("owner not found")
 				}
 				return models.DomainRecord{}, err
 			}
-			record.Owner = resolvedOwner
-		} else if record.Owner != user.ID {
+			record.Owner = resolvedOwner.ID
+			record.OwnerEmail = strings.ToLower(strings.TrimSpace(resolvedOwner.Email))
+		} else if record.Owner != user.ID && !strings.EqualFold(record.Owner, user.Email) {
 			return models.DomainRecord{}, errForbiddenDomainOwner
+		} else {
+			// Non-admin referencing themselves via email.
+			record.Owner = user.ID
+			record.OwnerEmail = strings.ToLower(strings.TrimSpace(user.Email))
 		}
 	}
 	if proxied != nil {
@@ -813,13 +893,13 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("too many domains (max %d)", maxBulkDomains))
 		return
 	}
-	var transferOwnerID string
+	var transferOwner *models.User
 	if payload.Owner != nil {
 		if user.Role != models.RoleAdmin {
 			writeError(w, http.StatusForbidden, "owner updates require admin")
 			return
 		}
-		resolvedOwner, err := s.resolveOwnerIdentifier(*payload.Owner)
+		resolvedOwner, err := s.resolveOwnerDetails(*payload.Owner)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				writeError(w, http.StatusBadRequest, "owner not found")
@@ -832,7 +912,7 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		transferOwnerID = resolvedOwner
+		transferOwner = resolvedOwner
 	}
 	success := 0
 	for _, domain := range normalized {
@@ -842,7 +922,8 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: "domain not found"})
 			continue
 		}
-		if user.Role != models.RoleAdmin && existing.Owner != user.ID {
+		s.attachOwnerMetadata(existing)
+		if !userOwnsDomain(user, *existing) {
 			failed++
 			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: "forbidden"})
 			continue
@@ -892,8 +973,9 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 			}
 			existing.TLS.UpdatedAt = time.Now().UTC()
 		}
-		if transferOwnerID != "" {
-			existing.Owner = transferOwnerID
+		if transferOwner != nil {
+			existing.Owner = transferOwner.ID
+			existing.OwnerEmail = strings.ToLower(strings.TrimSpace(transferOwner.Email))
 		}
 		if payload.Edge != nil {
 			if user.Role != models.RoleAdmin {
@@ -963,7 +1045,8 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "domain not found")
 		return
 	}
-	if user.Role != models.RoleAdmin && existing.Owner != user.ID {
+	s.attachOwnerMetadata(existing)
+	if !userOwnsDomain(user, *existing) {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -994,7 +1077,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
 		}
-		resolvedOwner, err := s.resolveOwnerIdentifier(*payload.Owner)
+		resolvedOwner, err := s.resolveOwnerDetails(*payload.Owner)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				writeError(w, http.StatusBadRequest, "owner not found")
@@ -1007,7 +1090,8 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		existing.Owner = resolvedOwner
+		existing.Owner = resolvedOwner.ID
+		existing.OwnerEmail = strings.ToLower(strings.TrimSpace(resolvedOwner.Email))
 	}
 	if payload.TLS != nil {
 		if payload.TLS.Mode != "" {
@@ -1129,7 +1213,8 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "domain not found")
 		return
 	}
-	if user.Role != models.RoleAdmin && existing.Owner != user.ID {
+	s.attachOwnerMetadata(existing)
+	if !userOwnsDomain(user, *existing) {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -1498,6 +1583,11 @@ func (s *Server) handleDomainsOverview(w http.ResponseWriter, r *http.Request) {
 			TLSRecMode:  domain.TLS.RecommendedMode,
 			TLSError:    domain.TLS.LastError,
 		}
+		if domain.OwnerEmail != "" {
+			entry.OwnerEmail = strings.ToLower(domain.OwnerEmail)
+		} else if strings.Contains(domain.Owner, "@") {
+			entry.OwnerEmail = strings.ToLower(domain.Owner)
+		}
 		if domain.TLS.Certificate != nil && !domain.TLS.Certificate.NotAfter.IsZero() {
 			expires := domain.TLS.Certificate.NotAfter.UTC()
 			entry.TLSExpires = &expires
@@ -1521,7 +1611,14 @@ func (s *Server) handleDomainsOverview(w http.ResponseWriter, r *http.Request) {
 		}
 		if user, ok := userMap[domain.Owner]; ok {
 			entry.OwnerExists = true
-			entry.OwnerEmail = user.Email
+			entry.OwnerEmail = strings.ToLower(user.Email)
+		} else if entry.OwnerEmail != "" {
+			for _, user := range users {
+				if strings.EqualFold(user.Email, entry.OwnerEmail) {
+					entry.OwnerExists = true
+					break
+				}
+			}
 		}
 		overview = append(overview, entry)
 	}
@@ -1591,12 +1688,13 @@ func (s *Server) handleSyncPush(w http.ResponseWriter, r *http.Request) {
 type userContextKey struct{}
 
 type userContext struct {
-	ID   string
-	Role models.UserRole
+	ID    string
+	Email string
+	Role  models.UserRole
 }
 
-func withUserContext(ctx context.Context, id string, role models.UserRole) context.Context {
-	return context.WithValue(ctx, userContextKey{}, userContext{ID: id, Role: role})
+func withUserContext(ctx context.Context, id string, email string, role models.UserRole) context.Context {
+	return context.WithValue(ctx, userContextKey{}, userContext{ID: id, Email: email, Role: role})
 }
 
 func userFromContext(ctx context.Context) userContext {
@@ -2306,25 +2404,25 @@ func isLocalhost(host string) bool {
 	return false
 }
 
-func (s *Server) resolveOwnerIdentifier(owner string) (string, error) {
+func (s *Server) resolveOwnerDetails(owner string) (*models.User, error) {
 	owner = strings.TrimSpace(owner)
 	if owner == "" {
-		return "", models.ErrValidation("owner must be provided")
+		return nil, models.ErrValidation("owner must be provided")
 	}
 	if user, err := s.Store.GetUserByID(owner); err == nil {
-		return user.ID, nil
+		return user, nil
 	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return "", err
+		return nil, err
 	}
 	lower := strings.ToLower(owner)
 	if strings.Contains(lower, "@") {
 		if user, err := s.Store.FindUserByEmail(lower); err == nil {
-			return user.ID, nil
+			return user, nil
 		} else if err != nil && !errors.Is(err, store.ErrNotFound) {
-			return "", err
+			return nil, err
 		}
 	}
-	return "", store.ErrNotFound
+	return nil, store.ErrNotFound
 }
 
 func (s *Server) handleNameServerCheck(w http.ResponseWriter, r *http.Request) {

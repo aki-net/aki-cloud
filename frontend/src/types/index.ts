@@ -59,6 +59,7 @@ export interface DomainEdgePayload {
 export interface Domain {
   domain: string;
   owner: string;
+  owner_email?: string;
   origin_ip: string;
   proxied: boolean;
   ttl: number;

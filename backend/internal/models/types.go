@@ -37,16 +37,17 @@ func MergeClock(local ClockVersion, remote ClockVersion) ClockVersion {
 
 // DomainRecord represents an apex A record for a managed zone.
 type DomainRecord struct {
-	Domain    string       `json:"domain"`
-	Owner     string       `json:"owner"`
-	OriginIP  string       `json:"origin_ip"`
-	Proxied   bool         `json:"proxied"`
-	TTL       int          `json:"ttl"`
-	UpdatedAt time.Time    `json:"updated_at"`
-	DeletedAt time.Time    `json:"deleted_at,omitempty"`
-	TLS       DomainTLS    `json:"tls,omitempty"`
-	Edge      DomainEdge   `json:"edge,omitempty"`
-	Version   ClockVersion `json:"version"`
+	Domain     string       `json:"domain"`
+	Owner      string       `json:"owner"`
+	OwnerEmail string       `json:"owner_email,omitempty"`
+	OriginIP   string       `json:"origin_ip"`
+	Proxied    bool         `json:"proxied"`
+	TTL        int          `json:"ttl"`
+	UpdatedAt  time.Time    `json:"updated_at"`
+	DeletedAt  time.Time    `json:"deleted_at,omitempty"`
+	TLS        DomainTLS    `json:"tls,omitempty"`
+	Edge       DomainEdge   `json:"edge,omitempty"`
+	Version    ClockVersion `json:"version"`
 }
 
 // Validate performs minimal sanity checks.
@@ -90,6 +91,23 @@ func (d *DomainRecord) EnsureTLSDefaults() {
 // EnsureEdgeDefaults applies default values to edge settings.
 func (d *DomainRecord) EnsureEdgeDefaults() {
 	d.Edge.Normalize()
+}
+
+// MatchesOwner reports whether the record belongs to the provided owner id or email.
+func (d DomainRecord) MatchesOwner(ownerID, ownerEmail string) bool {
+	if ownerID != "" && d.Owner == ownerID {
+		return true
+	}
+	if ownerEmail != "" {
+		lower := strings.ToLower(ownerEmail)
+		if d.OwnerEmail != "" && strings.EqualFold(d.OwnerEmail, ownerEmail) {
+			return true
+		}
+		if strings.Contains(d.Owner, "@") && strings.EqualFold(d.Owner, lower) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsDeleted reports whether the domain has been marked as deleted.

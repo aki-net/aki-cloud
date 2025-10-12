@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"aki-cloud/backend/internal/models"
@@ -16,8 +17,9 @@ func (s *Store) FindUserByEmail(email string) (*models.User, error) {
 	if err != nil {
 		return nil, err
 	}
+	lower := strings.ToLower(email)
 	for _, u := range users {
-		if u.Email == email {
+		if strings.EqualFold(u.Email, lower) {
 			return &u, nil
 		}
 	}

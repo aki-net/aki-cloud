@@ -18,18 +18,19 @@ func (s *Store) UpsertDomain(record models.DomainRecord) error {
 	return s.SaveDomain(record)
 }
 
-// ListDomainsForOwner returns domains filtered by owner id.
-func (s *Store) ListDomainsForOwner(owner string) ([]models.DomainRecord, error) {
+// ListDomainsForUser returns domains filtered by owner id/email.
+func (s *Store) ListDomainsForUser(ownerID string, ownerEmail string) ([]models.DomainRecord, error) {
+	ownerEmail = strings.ToLower(strings.TrimSpace(ownerEmail))
 	all, err := s.GetDomains()
 	if err != nil {
 		return nil, err
 	}
-	if owner == "" {
+	if ownerID == "" && ownerEmail == "" {
 		return all, nil
 	}
 	out := make([]models.DomainRecord, 0, len(all))
 	for _, d := range all {
-		if d.Owner == owner {
+		if d.MatchesOwner(ownerID, ownerEmail) {
 			out = append(out, d)
 		}
 	}
