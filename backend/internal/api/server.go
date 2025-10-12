@@ -1658,6 +1658,7 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 	desired.ComputeEdgeIPs()
 
 	if !changed {
+		s.pruneUnusedEdgeHealth()
 		return true
 	}
 
