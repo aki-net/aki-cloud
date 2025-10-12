@@ -59,6 +59,11 @@ type ZoneRecord struct {
 	Value string
 }
 
+const (
+	challengeTypeHTTP = "http-01"
+	challengeTypeDNS  = "dns-01"
+)
+
 // Render writes CoreDNS Corefile and zone files to data directory.
 func (g *CoreDNSGenerator) Render() error {
 	domains, err := g.Store.GetDomains()
@@ -139,6 +144,25 @@ func (g *CoreDNSGenerator) Render() error {
 		if ttl <= 0 {
 			ttl = 60
 		}
+		challengeExtras := make([]ZoneRecord, 0, len(domain.TLS.Challenges))
+		expiryCutoff := now.Add(-1 * time.Minute)
+		for _, ch := range domain.TLS.Challenges {
+			if ch.ChallengeType != "" && ch.ChallengeType != challengeTypeDNS {
+				continue
+			}
+			if ch.DNSName == "" || ch.DNSValue == "" {
+				continue
+			}
+			if !ch.ExpiresAt.IsZero() && ch.ExpiresAt.Before(expiryCutoff) {
+				continue
+			}
+			label := relativeLabel(ch.DNSName, domain.Domain)
+			challengeExtras = append(challengeExtras, ZoneRecord{
+				Name:  label,
+				Type:  "TXT",
+				Value: fmt.Sprintf(`"%s"`, ch.DNSValue),
+			})
+		}
 		arecords := make([]string, 0, len(healthyEdges)+1)
 		if domain.Proxied {
 			if ip := strings.TrimSpace(domain.Edge.AssignedIP); ip != "" {
@@ -165,6 +189,7 @@ func (g *CoreDNSGenerator) Render() error {
 			Serial:     serial,
 			NSRecords:  nsRecords,
 			ARecords:   uniqueStrings(arecords),
+			Extra:      dedupeRecords(challengeExtras),
 		}
 		zoneFiles = append(zoneFiles, zone)
 	}
@@ -711,6 +736,9 @@ func syncChallenges(dir string, challenges []models.ACMEChallenge) error {
 	valid := make(map[string]string, len(challenges))
 	now := time.Now().UTC()
 	for _, ch := range challenges {
+		if ch.ChallengeType != "" && ch.ChallengeType != challengeTypeHTTP {
+			continue
+		}
 		if ch.Token == "" || ch.KeyAuth == "" {
 			continue
 		}

@@ -257,7 +257,7 @@ type TLSCertificate struct {
 	CertStableURL string    `json:"cert_stable_url,omitempty"`
 }
 
-// ACMEChallenge represents a pending HTTP-01 challenge that must be published.
+// ACMEChallenge represents a pending ACME challenge that must be published.
 type ACMEChallenge struct {
 	Token          string    `json:"token"`
 	KeyAuth        string    `json:"key_authorization"`
@@ -265,6 +265,8 @@ type ACMEChallenge struct {
 	ChallengeType  string    `json:"challenge_type,omitempty"`
 	Authorization  string    `json:"authorization_url,omitempty"`
 	VerificationAt time.Time `json:"verification_at,omitempty"`
+	DNSName        string    `json:"dns_name,omitempty"`
+	DNSValue       string    `json:"dns_value,omitempty"`
 }
 
 // OriginPullMaterial stores client certificate assets for strict origin pull.

@@ -4,11 +4,18 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"strings"
 	"time"
 
 	"aki-cloud/backend/internal/models"
 
 	"github.com/go-acme/lego/v4/challenge"
+	"github.com/go-acme/lego/v4/challenge/dns01"
+)
+
+const (
+	challengeTypeHTTP = "http-01"
+	challengeTypeDNS  = "dns-01"
 )
 
 // httpChallengeProvider persists ACME http-01 responses via the shared store.
@@ -26,9 +33,68 @@ func (p *httpChallengeProvider) CleanUp(domain, token, keyAuth string) error {
 	return p.service.cleanupChallenge(domain, token)
 }
 
+type dnsChallengeProvider struct {
+	service *Service
+}
+
+var _ challenge.Provider = (*dnsChallengeProvider)(nil)
+
+func (p *dnsChallengeProvider) Present(domain, token, keyAuth string) error {
+	return p.service.publishDNSChallenge(domain, token, keyAuth)
+}
+
+func (p *dnsChallengeProvider) CleanUp(domain, token, keyAuth string) error {
+	return p.service.cleanupChallenge(domain, token)
+}
+
 func (s *Service) publishChallenge(domain, token, keyAuth string) error {
 	now := time.Now().UTC()
+	challenge := models.ACMEChallenge{
+		Token:         token,
+		KeyAuth:       keyAuth,
+		ChallengeType: challengeTypeHTTP,
+		ExpiresAt:     now.Add(20 * time.Minute),
+	}
+	if err := s.addChallenge(domain, challenge, now); err != nil {
+		return err
+	}
+	s.orch.Trigger(context.Background())
+	return nil
+}
+
+func (s *Service) publishDNSChallenge(domain, token, keyAuth string) error {
+	now := time.Now().UTC()
+	info := dns01.GetChallengeInfo(domain, keyAuth)
+	fqdn := strings.TrimSuffix(info.FQDN, ".")
+	challenge := models.ACMEChallenge{
+		Token:         token,
+		KeyAuth:       keyAuth,
+		ChallengeType: challengeTypeDNS,
+		ExpiresAt:     now.Add(30 * time.Minute),
+		DNSName:       fqdn,
+		DNSValue:      info.Value,
+	}
+	if err := s.addChallenge(domain, challenge, now); err != nil {
+		return err
+	}
+	s.orch.Trigger(context.Background())
+	return nil
+}
+
+func (s *Service) addChallenge(domain string, challenge models.ACMEChallenge, now time.Time) error {
+	if domain == "" {
+		return errors.New("domain must be provided for challenge")
+	}
+	token := strings.TrimSpace(challenge.Token)
+	if token == "" {
+		return errors.New("challenge token missing")
+	}
+	if challenge.ExpiresAt.IsZero() {
+		challenge.ExpiresAt = now.Add(20 * time.Minute)
+	}
+	challenge.Token = token
 	_, err := s.store.MutateDomain(domain, func(rec *models.DomainRecord) error {
+		rec.EnsureTLSDefaults()
 		filtered := rec.TLS.Challenges[:0]
 		for _, ch := range rec.TLS.Challenges {
 			if ch.Token == token {
@@ -39,11 +105,7 @@ func (s *Service) publishChallenge(domain, token, keyAuth string) error {
 			}
 			filtered = append(filtered, ch)
 		}
-		rec.TLS.Challenges = append(filtered, models.ACMEChallenge{
-			Token:     token,
-			KeyAuth:   keyAuth,
-			ExpiresAt: now.Add(20 * time.Minute),
-		})
+		rec.TLS.Challenges = append(filtered, challenge)
 		rec.TLS.UpdatedAt = now
 		rec.UpdatedAt = now
 		rec.Version.Counter++
@@ -57,7 +119,6 @@ func (s *Service) publishChallenge(domain, token, keyAuth string) error {
 		}
 		return err
 	}
-	s.orch.Trigger(context.Background())
 	return nil
 }
 

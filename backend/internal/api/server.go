@@ -380,6 +380,9 @@ func (s *Server) handleACMEChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	for _, challenge := range record.TLS.Challenges {
+		if challenge.ChallengeType != "" && challenge.ChallengeType != "http-01" {
+			continue
+		}
 		if challenge.Token != token {
 			continue
 		}

@@ -1,7 +1,6 @@
 package ssl
 
 import (
-	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -12,7 +11,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
-	"net"
 	"os"
 	"strings"
 	"time"
@@ -88,27 +86,21 @@ func uniqueDomains(root string) []string {
 	}
 	names := []string{base}
 	if !strings.HasPrefix(base, "*.") {
-		sub := "www." + base
-		if hasResolvableAddress(sub) {
-			names = append(names, sub)
+		names = append(names, "*."+base)
+	}
+	unique := make([]string, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if name == "" {
+			continue
 		}
-	}
-	return names
-}
-
-func hasResolvableAddress(host string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), lookupTimeout)
-	defer cancel()
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return false
-	}
-	for _, addr := range addrs {
-		if addr.IP != nil {
-			return true
+		if _, ok := seen[name]; ok {
+			continue
 		}
+		seen[name] = struct{}{}
+		unique = append(unique, name)
 	}
-	return false
+	return unique
 }
 
 func (s *Service) persistCertificate(domain string, res *certificate.Resource, lockID string) error {

@@ -791,6 +791,10 @@ func (s *Service) issueCertificate(ctx context.Context, rec models.DomainRecord,
 	if err := client.Challenge.SetHTTP01Provider(provider); err != nil {
 		return fmt.Errorf("http-01 provider: %w", err)
 	}
+	dnsProvider := &dnsChallengeProvider{service: s}
+	if err := client.Challenge.SetDNS01Provider(dnsProvider); err != nil {
+		return fmt.Errorf("dns-01 provider: %w", err)
+	}
 
 	obtained, err := s.obtainCertificate(client, rec)
 	if err != nil {
