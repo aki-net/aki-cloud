@@ -164,33 +164,14 @@ export default function AdminInfrastructure() {
       toast.error("Provide at least one IP address");
       return;
     }
-    const deriveEdgeIps = () => {
-      const nsSet = new Set(nsIps);
-      const derived = ips.filter((ip) => ip && !nsSet.has(ip));
-      if (derived.length > 0) {
-        return derived;
-      }
-      return nsIps.length > 0 ? [...nsIps] : [];
-    };
-
-    let edgeIps: string[];
-    if (explicitEdgeIps.length > 0) {
-      edgeIps = explicitEdgeIps;
-    } else if (nodeFormMode === "edit" && editingNodeId) {
-      const baseNode = nodes.find((n) => n.id === editingNodeId);
-      if (
-        baseNode &&
-        (baseNode.edge_ips?.length || 0) > 0 &&
-        nodeForm.edgeIps.trim() === ""
-      ) {
-        edgeIps = [];
-      } else if (baseNode && (baseNode.edge_ips?.length || 0) > 0) {
-        edgeIps = baseNode.edge_ips || [];
-      } else {
-        edgeIps = deriveEdgeIps();
-      }
-    } else {
-      edgeIps = deriveEdgeIps();
+    let edgeIps: string[] = explicitEdgeIps;
+    if (
+      edgeIps.length === 0 &&
+      nodeFormMode === "edit" &&
+      editingNodeId &&
+      nodeForm.edgeIps.trim() === ""
+    ) {
+      edgeIps = [];
     }
 
     const payload = {
