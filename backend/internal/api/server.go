@@ -1840,7 +1840,7 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 	if len(removed) > 0 {
 		s.cleanupEdgeHealth(models.Node{EdgeIPs: removed, EdgeManual: true})
 	}
-	if shouldHaveEdges {
+	if len(desired.EdgeIPs) > 0 {
 		s.bootstrapEdgeHealth(desired)
 	}
 	s.pruneUnusedEdgeHealth()
