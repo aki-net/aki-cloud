@@ -129,7 +129,7 @@ func (s *Service) BuildSnapshot() (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	nodes, err := s.store.GetNodes()
+	nodes, err := s.store.GetNodesIncludingDeleted()
 	if err != nil {
 		return Snapshot{}, err
 	}

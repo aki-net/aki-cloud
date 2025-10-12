@@ -340,7 +340,8 @@ func (n *Node) ComputeEdgeIPs() {
 
 	n.IPs = normalizeIPs(n.IPs)
 	n.NSIPs = normalizeIPs(n.NSIPs)
-	n.EdgeIPs = normalizeIPs(n.EdgeIPs)
+	originalEdges := normalizeIPs(n.EdgeIPs)
+	n.EdgeIPs = originalEdges
 	n.Labels = normalizeLabels(n.Labels)
 
 	if n.IsDeleted() {
@@ -352,8 +353,36 @@ func (n *Node) ComputeEdgeIPs() {
 
 	n.Roles = nil
 	manual := n.EdgeManual
-	if len(n.EdgeIPs) == 0 {
-		manual = true
+	if manual {
+		n.EdgeIPs = originalEdges
+	} else {
+		nsSet := make(map[string]struct{}, len(n.NSIPs))
+		for _, ip := range n.NSIPs {
+			if ip == "" {
+				continue
+			}
+			nsSet[ip] = struct{}{}
+		}
+		candidates := make([]string, 0, len(n.IPs))
+		for _, ip := range n.IPs {
+			if ip == "" {
+				continue
+			}
+			if _, isNS := nsSet[ip]; isNS {
+				continue
+			}
+			candidates = append(candidates, ip)
+		}
+		if len(candidates) == 0 && len(originalEdges) > 0 {
+			candidates = append(candidates, originalEdges...)
+		}
+		if len(candidates) == 0 {
+			candidates = append(candidates, n.NSIPs...)
+		}
+		n.EdgeIPs = normalizeIPs(candidates)
+		if len(n.EdgeIPs) == 0 {
+			n.EdgeIPs = []string{}
+		}
 	}
 
 	// Ensure NS and Edge IPs are part of the general IP list.
@@ -366,33 +395,6 @@ func (n *Node) ComputeEdgeIPs() {
 		}
 	}
 	n.IPs = normalizeIPs(n.IPs)
-
-	if len(n.EdgeIPs) == 0 {
-		if manual {
-			n.EdgeIPs = []string{}
-		} else {
-			nsSet := make(map[string]struct{}, len(n.NSIPs))
-			for _, ip := range n.NSIPs {
-				if ip != "" {
-					nsSet[ip] = struct{}{}
-				}
-			}
-			candidates := make([]string, 0, len(n.IPs))
-			for _, ip := range n.IPs {
-				if ip == "" {
-					continue
-				}
-				if _, isNS := nsSet[ip]; isNS {
-					continue
-				}
-				candidates = append(candidates, ip)
-			}
-			if len(candidates) == 0 {
-				candidates = append(candidates, n.NSIPs...)
-			}
-			n.EdgeIPs = normalizeIPs(candidates)
-		}
-	}
 
 	n.EdgeManual = manual
 
