@@ -139,14 +139,16 @@ func (g *CoreDNSGenerator) Render() error {
 		if ttl <= 0 {
 			ttl = 60
 		}
-		arecords := []string{}
-		if domain.Proxied && len(healthyEdges) > 0 {
-			arecords = append(arecords, healthyEdges...)
-		} else {
-			arecords = append(arecords, domain.OriginIP)
+		arecords := make([]string, 0, len(healthyEdges)+1)
+		if domain.Proxied {
+			if ip := strings.TrimSpace(domain.Edge.AssignedIP); ip != "" {
+				arecords = append(arecords, ip)
+			} else if len(healthyEdges) > 0 {
+				arecords = append(arecords, healthyEdges...)
+			}
 		}
 		if len(arecords) == 0 {
-			arecords = []string{domain.OriginIP}
+			arecords = append(arecords, domain.OriginIP)
 		}
 		nsRecords := make([]string, 0, len(activeNS))
 		for _, ns := range activeNS {

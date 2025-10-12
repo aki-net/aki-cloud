@@ -557,7 +557,9 @@ func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for i := range records {
+		edge := records[i].Edge
 		records[i] = records[i].Sanitize()
+		records[i].Edge = edge
 	}
 	writeJSON(w, http.StatusOK, records)
 }
