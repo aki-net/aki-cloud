@@ -11,6 +11,7 @@ import Input from "../components/ui/Input";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import Badge from "../components/ui/Badge";
+import Switch from "../components/ui/Switch";
 import PageHeader from "../components/PageHeader";
 import toast from "react-hot-toast";
 import "./AdminInfrastructure.css";
@@ -29,22 +30,26 @@ export default function AdminInfrastructure() {
     "idle",
   );
 
-  interface NodeFormState {
-    name: string;
-    ips: string;
-    edgeIps: string;
-    nsIps: string;
-    nsLabel: string;
-    nsBaseDomain: string;
-    apiEndpoint: string;
-    labels: string;
-  }
+interface NodeFormState {
+  name: string;
+  ips: string;
+  edgeIps: string;
+  nsIps: string;
+  edgeManual: boolean;
+  nsManual: boolean;
+  nsLabel: string;
+  nsBaseDomain: string;
+  apiEndpoint: string;
+  labels: string;
+}
 
   const initialNodeForm: NodeFormState = {
     name: "",
     ips: "",
     edgeIps: "",
     nsIps: "",
+    edgeManual: false,
+    nsManual: false,
     nsLabel: "",
     nsBaseDomain: "",
     apiEndpoint: "",
@@ -113,6 +118,19 @@ export default function AdminInfrastructure() {
       .map((entry) => entry.trim())
       .filter(Boolean);
 
+  const formatIPDisplay = (ips?: string[], manual?: boolean) => {
+    if (manual) {
+      if (ips && ips.length > 0) {
+        return ips.join(", ");
+      }
+      return "Manual (none)";
+    }
+    if (ips && ips.length > 0) {
+      return `${ips.join(", ")} (auto)`;
+    }
+    return "Auto";
+  };
+
   const resetNodeForm = () => {
     setNodeForm({ ...initialNodeForm });
     setEditingNodeId(null);
@@ -132,6 +150,8 @@ export default function AdminInfrastructure() {
       ips: node.ips.join(", "),
       edgeIps: (node.edge_ips || []).join(", "),
       nsIps: (node.ns_ips || []).join(", "),
+      edgeManual: Boolean(node.edge_manual) || (node.edge_ips?.length ?? 0) > 0,
+      nsManual: Boolean(node.ns_manual) || (node.ns_ips?.length ?? 0) > 0,
       nsLabel: node.ns_label || "",
       nsBaseDomain: node.ns_base_domain || "",
       apiEndpoint: node.api_endpoint || "",
@@ -139,8 +159,26 @@ export default function AdminInfrastructure() {
     });
   };
 
-  const handleNodeFormChange = (field: keyof NodeFormState, value: string) => {
-    setNodeForm((prev) => ({ ...prev, [field]: value }));
+  const handleNodeFormChange = (
+    field: keyof NodeFormState,
+    value: string | boolean,
+  ) => {
+    setNodeForm((prev) => {
+      const next = { ...prev, [field]: value } as NodeFormState;
+      if (field === "nsIps" && typeof value === "string") {
+        const hasValue = value.trim().length > 0;
+        if (hasValue && !prev.nsManual) {
+          next.nsManual = true;
+        }
+      }
+      if (field === "edgeIps" && typeof value === "string") {
+        const hasValue = value.trim().length > 0;
+        if (hasValue && !prev.edgeManual) {
+          next.edgeManual = true;
+        }
+      }
+      return next;
+    });
   };
 
   const handleSaveNode = async (event: React.FormEvent) => {
@@ -164,14 +202,14 @@ export default function AdminInfrastructure() {
       toast.error("Provide at least one IP address");
       return;
     }
+    const nsManual = nodeForm.nsManual || nsIps.length > 0;
+    const edgeManual = nodeForm.edgeManual || explicitEdgeIps.length > 0;
     let edgeIps: string[] = explicitEdgeIps;
-    if (
-      edgeIps.length === 0 &&
-      nodeFormMode === "edit" &&
-      editingNodeId &&
-      nodeForm.edgeIps.trim() === ""
-    ) {
+    if (!edgeManual) {
       edgeIps = [];
+    }
+    if (!nsManual) {
+      nsIps.splice(0, nsIps.length);
     }
 
     const payload = {
@@ -179,6 +217,8 @@ export default function AdminInfrastructure() {
       ips,
       ns_ips: nsIps,
       edge_ips: edgeIps,
+      ns_manual: nsManual,
+      edge_manual: edgeManual,
       labels,
       ns_label: nodeForm.nsLabel.trim() || undefined,
       ns_base_domain: nodeForm.nsBaseDomain.trim() || undefined,
@@ -555,10 +595,10 @@ export default function AdminInfrastructure() {
                     </td>
                     <td className="mono">{node.ips.join(", ")}</td>
                     <td className="mono">
-                      {(node.ns_ips || []).join(", ") || "—"}
+                      {formatIPDisplay(node.ns_ips, node.ns_manual)}
                     </td>
                     <td className="mono">
-                      {(node.edge_ips || []).join(", ") || "—"}
+                      {formatIPDisplay(node.edge_ips, node.edge_manual)}
                     </td>
                     <td>
                       <div className="node-role-badges">
@@ -645,6 +685,25 @@ export default function AdminInfrastructure() {
                   placeholder="Optional"
                 />
               </div>
+              <div className="node-role-field">
+                <span className="role-label">Manual assignment</span>
+                <Switch
+                  size="sm"
+                  checked={nodeForm.nsManual}
+                  onChange={(checked) =>
+                    handleNodeFormChange("nsManual", checked)
+                  }
+                  label="Nameserver IPs"
+                />
+                <Switch
+                  size="sm"
+                  checked={nodeForm.edgeManual}
+                  onChange={(checked) =>
+                    handleNodeFormChange("edgeManual", checked)
+                  }
+                  label="Edge IPs"
+                />
+              </div>
               <div className="node-textarea-field">
                 <label>Edge IPs</label>
                 <textarea
@@ -657,8 +716,8 @@ export default function AdminInfrastructure() {
                   placeholder="Optional (default uses IPs not serving NS)"
                 />
                 <span className="field-hint">
-                  Leave empty to auto-assign all non-NS IPs. Clear to make this
-                  node nameserver-only.
+                  Leave empty with auto mode enabled to let the system assign
+                  IPs. Toggle manual control to pin exact addresses.
                 </span>
               </div>
               <Input
