@@ -120,11 +120,9 @@ func (m *Monitor) evaluateEdges(ctx context.Context) bool {
 		}
 		seen[edge] = struct{}{}
 		prev := statusMap[edge]
-		next := m.checkEdge(ctx, edge, prev, now)
-		if changed(prev, next) {
-			if err := m.store.UpsertEdgeHealth(next); err == nil {
-				updated = true
-			}
+		next, stateChanged := m.checkEdge(ctx, edge, prev, now)
+		if err := m.store.UpsertEdgeHealth(next); err == nil && stateChanged {
+			updated = true
 		}
 	}
 
@@ -141,7 +139,7 @@ func (m *Monitor) evaluateEdges(ctx context.Context) bool {
 	return updated
 }
 
-func (m *Monitor) checkEdge(ctx context.Context, ip string, prev models.EdgeHealthStatus, now time.Time) models.EdgeHealthStatus {
+func (m *Monitor) checkEdge(ctx context.Context, ip string, prev models.EdgeHealthStatus, now time.Time) (models.EdgeHealthStatus, bool) {
 	address := net.JoinHostPort(ip, "80")
 	dialCtx, cancel := context.WithTimeout(ctx, m.dialTimeout)
 	defer cancel()
@@ -160,35 +158,63 @@ func (m *Monitor) checkEdge(ctx context.Context, ip string, prev models.EdgeHeal
 	next := prev
 	next.IP = ip
 	next.LastChecked = now
-	next.Version.Counter++
-	next.Version.NodeID = m.nodeID
-	next.Version.Updated = now.Unix()
+	stateChanged := prev.IP == ""
 	if healthy {
+		if !prev.Healthy {
+			stateChanged = true
+		}
 		next.Healthy = true
-		// decay failure count gradually
+		var desiredFailures int
 		if prev.Healthy {
-			next.FailureCount = 0
+			desiredFailures = 0
+		} else if now.Sub(prev.LastChecked) > m.failureDecay {
+			desiredFailures = 0
+		} else if prev.FailureCount > 0 {
+			desiredFailures = prev.FailureCount - 1
 		} else {
-			// allow gradual recovery
-			if now.Sub(prev.LastChecked) > m.failureDecay {
-				next.FailureCount = 0
-			} else if prev.FailureCount > 0 {
-				next.FailureCount = prev.FailureCount - 1
-			} else {
-				next.FailureCount = 0
-			}
+			desiredFailures = 0
 		}
-		next.Message = ""
+		if next.FailureCount != desiredFailures {
+			next.FailureCount = desiredFailures
+			stateChanged = true
+		}
+		if next.Message != "" {
+			next.Message = ""
+			stateChanged = true
+		}
 	} else {
-		next.Message = message
-		if prev.FailureCount < m.failures {
-			next.FailureCount = prev.FailureCount + 1
+		if prev.Healthy {
+			stateChanged = true
 		}
-		if next.FailureCount >= m.failures {
+		next.Healthy = prev.Healthy
+		failures := prev.FailureCount
+		if failures < m.failures {
+			failures++
+		}
+		if failures >= m.failures && next.Healthy {
 			next.Healthy = false
+			stateChanged = true
+		}
+		if next.FailureCount != failures {
+			next.FailureCount = failures
+			stateChanged = true
+		}
+		if next.Message != message {
+			next.Message = message
+			stateChanged = true
 		}
 	}
-	return next
+
+	if stateChanged {
+		next.Version.Counter++
+		if next.Version.Counter <= 0 {
+			next.Version.Counter = 1
+		}
+		next.Version.NodeID = m.nodeID
+		next.Version.Updated = now.Unix()
+	}
+
+	return next, stateChanged
 }
 
 func (m *Monitor) evaluateNameServers(ctx context.Context) bool {
@@ -304,23 +330,4 @@ func (m *Monitor) checkNameServer(ctx context.Context, ns infra.NameServer) mode
 	}
 	result.Healthy = true
 	return result
-}
-
-func changed(a, b models.EdgeHealthStatus) bool {
-	if a.IP == "" {
-		return true
-	}
-	if a.Healthy != b.Healthy {
-		return true
-	}
-	if a.FailureCount != b.FailureCount {
-		return true
-	}
-	if a.Message != b.Message {
-		return true
-	}
-	if a.Version != b.Version {
-		return true
-	}
-	return false
 }
