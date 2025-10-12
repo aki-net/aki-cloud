@@ -1607,11 +1607,11 @@ func (s *Server) EnsurePeers() error {
 }
 
 // SyncLocalNodeCapabilities reconciles the local node record with runtime feature flags.
-func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) {
+func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 	nodes, err := s.Store.GetNodesIncludingDeleted()
 	if err != nil {
 		log.Printf("infra: load nodes for capability sync failed: %v", err)
-		return
+		return false
 	}
 	var local *models.Node
 	for _, node := range nodes {
@@ -1622,7 +1622,7 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) {
 		}
 	}
 	if local == nil {
-		return
+		return false
 	}
 	desired := *local
 	changed := false
@@ -1638,7 +1638,7 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) {
 	}
 
 	if !changed {
-		return
+		return true
 	}
 
 	desired.Roles = nil
@@ -1654,7 +1654,7 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) {
 
 	if err := s.Store.UpsertNode(desired); err != nil {
 		log.Printf("infra: update local node capabilities failed: %v", err)
-		return
+		return true
 	}
 
 	if err := s.Store.SaveLocalNodeSnapshot(desired); err != nil {
@@ -1676,6 +1676,7 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) {
 		go s.reconcileDomainAssignments(context.Background(), fmt.Sprintf("node-capabilities:%s", desired.ID))
 	}
 	go s.Orchestrator.Trigger(context.Background())
+	return true
 }
 
 func (s *Server) syncPeersFromNodes() error {

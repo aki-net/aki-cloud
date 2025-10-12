@@ -43,10 +43,6 @@ func main() {
 	syncSvc := syncsvc.New(st, cfg.DataDir, cfg.NodeID, secret)
 	infraCtl := infra.New(st, cfg.DataDir)
 
-	syncSvc.SetChangeHandler(func() {
-		orch.Trigger(context.Background())
-	})
-
 	healthMonitor := health.New(st, infraCtl, orch, cfg.NodeID, cfg.HealthInterval, cfg.HealthDialTimeout, cfg.HealthFailureThreshold, cfg.HealthFailureDecay)
 	slSvc := ssl.New(cfg, st, orch)
 
@@ -58,6 +54,11 @@ func main() {
 		Sync:         syncSvc,
 		Infra:        infraCtl,
 	}
+
+	syncSvc.SetChangeHandler(func() {
+		server.SyncLocalNodeCapabilities(context.Background())
+		orch.Trigger(context.Background())
+	})
 
 	if err := server.EnsurePeers(); err != nil {
 		log.Printf("initial peer sync failed: %v", err)
@@ -77,6 +78,24 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	go func(ctx context.Context) {
+		if server.SyncLocalNodeCapabilities(context.Background()) {
+			return
+		}
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if server.SyncLocalNodeCapabilities(context.Background()) {
+					return
+				}
+			}
+		}
+	}(ctx)
 
 	syncCtx, syncCancel := context.WithCancel(ctx)
 	go syncSvc.Start(syncCtx, cfg.SyncInterval)
