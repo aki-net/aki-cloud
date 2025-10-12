@@ -1,6 +1,8 @@
 package store
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"time"
 
@@ -32,4 +34,37 @@ func (s *Store) ListDomainsForOwner(owner string) ([]models.DomainRecord, error)
 		}
 	}
 	return out, nil
+}
+
+// MarkDomainDeleted creates or updates a tombstone for the specified domain.
+func (s *Store) MarkDomainDeleted(domain string, nodeID string, at time.Time) error {
+	domain = strings.ToLower(domain)
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	file := s.domainRecordFile(domain)
+	var rec models.DomainRecord
+	if data, err := os.ReadFile(file); err == nil {
+		if err := json.Unmarshal(data, &rec); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	rec.Domain = domain
+	rec.EnsureTLSDefaults()
+	if rec.TTL <= 0 {
+		rec.TTL = 60
+	}
+	rec.Version.Counter++
+	if rec.Version.Counter <= 0 {
+		rec.Version.Counter = 1
+	}
+	rec.Version.NodeID = nodeID
+	rec.Version.Updated = at.Unix()
+	rec.MarkDeleted(at)
+	return writeJSONAtomic(file, rec)
 }

@@ -242,8 +242,28 @@ func (s *Store) SaveNameServerStatus(statuses []models.NameServerHealth) error {
 
 // GetDomains returns all domain records.
 func (s *Store) GetDomains() ([]models.DomainRecord, error) {
+	all, err := s.GetDomainsIncludingDeleted()
+	if err != nil {
+		return nil, err
+	}
+	active := make([]models.DomainRecord, 0, len(all))
+	for _, rec := range all {
+		if rec.IsDeleted() {
+			continue
+		}
+		active = append(active, rec)
+	}
+	return active, nil
+}
+
+// GetDomainsIncludingDeleted returns all domain records, including tombstones.
+func (s *Store) GetDomainsIncludingDeleted() ([]models.DomainRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.loadDomainsLocked()
+}
+
+func (s *Store) loadDomainsLocked() ([]models.DomainRecord, error) {
 	root := filepath.Join(s.dataDir, "domains")
 	if _, err := os.Stat(root); err != nil {
 		if os.IsNotExist(err) {
@@ -266,6 +286,7 @@ func (s *Store) GetDomains() ([]models.DomainRecord, error) {
 			return nil, fmt.Errorf("reading domain %s: %w", domain, err)
 		}
 		rec.EnsureTLSDefaults()
+		rec.Domain = strings.ToLower(domain)
 		records = append(records, rec)
 	}
 	return records, nil
@@ -277,13 +298,6 @@ func (s *Store) SaveDomain(record models.DomainRecord) error {
 	defer s.mu.Unlock()
 	record.EnsureTLSDefaults()
 	return writeJSONAtomic(s.domainRecordFile(record.Domain), record)
-}
-
-// DeleteDomain removes a domain directory.
-func (s *Store) DeleteDomain(domain string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return os.RemoveAll(s.domainDir(domain))
 }
 
 // GetDomain retrieves a domain record if it exists.
@@ -299,6 +313,10 @@ func (s *Store) GetDomain(domain string) (*models.DomainRecord, error) {
 		return nil, err
 	}
 	rec.EnsureTLSDefaults()
+	rec.Domain = strings.ToLower(domain)
+	if rec.IsDeleted() {
+		return nil, fs.ErrNotExist
+	}
 	return &rec, nil
 }
 
@@ -322,6 +340,9 @@ func (s *Store) MutateDomain(domain string, mutate func(rec *models.DomainRecord
 	}
 	rec.EnsureTLSDefaults()
 	rec.Domain = domain
+	if rec.IsDeleted() {
+		return nil, fs.ErrNotExist
+	}
 
 	if err := mutate(&rec); err != nil {
 		return nil, err

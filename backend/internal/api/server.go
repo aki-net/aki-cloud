@@ -1128,7 +1128,7 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
-	if err := s.Store.DeleteDomain(domain); err != nil {
+	if err := s.Store.MarkDomainDeleted(domain, s.Config.NodeID, time.Now().UTC()); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

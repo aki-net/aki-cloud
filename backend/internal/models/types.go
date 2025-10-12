@@ -43,6 +43,7 @@ type DomainRecord struct {
 	Proxied   bool         `json:"proxied"`
 	TTL       int          `json:"ttl"`
 	UpdatedAt time.Time    `json:"updated_at"`
+	DeletedAt time.Time    `json:"deleted_at,omitempty"`
 	TLS       DomainTLS    `json:"tls,omitempty"`
 	Edge      DomainEdge   `json:"edge,omitempty"`
 	Version   ClockVersion `json:"version"`
@@ -52,6 +53,9 @@ type DomainRecord struct {
 func (d *DomainRecord) Validate() error {
 	if d.Domain == "" {
 		return ErrValidation("domain must be provided")
+	}
+	if !d.DeletedAt.IsZero() {
+		return nil
 	}
 	if net.ParseIP(d.OriginIP) == nil {
 		return ErrValidation("origin_ip must be a valid IP address")
@@ -86,6 +90,43 @@ func (d *DomainRecord) EnsureTLSDefaults() {
 // EnsureEdgeDefaults applies default values to edge settings.
 func (d *DomainRecord) EnsureEdgeDefaults() {
 	d.Edge.Normalize()
+}
+
+// IsDeleted reports whether the domain has been marked as deleted.
+func (d DomainRecord) IsDeleted() bool {
+	return !d.DeletedAt.IsZero()
+}
+
+// MarkDeleted normalises the record for deletion tombstones.
+func (d *DomainRecord) MarkDeleted(ts time.Time) {
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+	d.DeletedAt = ts
+	d.Proxied = false
+	if d.TTL <= 0 {
+		d.TTL = 60
+	}
+	d.Edge.AssignedIP = ""
+	d.Edge.AssignedNodeID = ""
+	d.Edge.AssignedAt = time.Time{}
+	d.Edge.Normalize()
+	d.TLS.Mode = EncryptionOff
+	d.TLS.UseRecommended = false
+	d.TLS.Status = CertificateStatusNone
+	d.TLS.RecommendedMode = ""
+	d.TLS.RecommendedAt = time.Time{}
+	d.TLS.LastError = ""
+	d.TLS.LastAttemptAt = time.Time{}
+	d.TLS.RetryAfter = time.Time{}
+	d.TLS.LockID = ""
+	d.TLS.LockNodeID = ""
+	d.TLS.LockExpiresAt = time.Time{}
+	d.TLS.Challenges = nil
+	d.TLS.UpdatedAt = ts
+	d.TLS.Certificate = nil
+	d.TLS.OriginPullSecret = nil
+	d.UpdatedAt = ts
 }
 
 // Sanitize redacts sensitive TLS material before returning records via API.

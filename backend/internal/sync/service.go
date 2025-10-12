@@ -73,7 +73,7 @@ func (s *Service) SetBaseURL(url string) {
 
 // ComputeDigest builds a digest representing local data state.
 func (s *Service) ComputeDigest() (Digest, error) {
-	domains, err := s.store.GetDomains()
+	domains, err := s.store.GetDomainsIncludingDeleted()
 	if err != nil {
 		return Digest{}, err
 	}
@@ -121,7 +121,7 @@ func aggregateClock[T any](items []T, nodeID string) models.ClockVersion {
 
 // BuildSnapshot collects all data for transfer.
 func (s *Service) BuildSnapshot() (Snapshot, error) {
-	domains, err := s.store.GetDomains()
+	domains, err := s.store.GetDomainsIncludingDeleted()
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -148,7 +148,7 @@ func (s *Service) BuildSnapshot() (Snapshot, error) {
 // ApplySnapshot merges remote data using last-write-wins semantics.
 func (s *Service) ApplySnapshot(snapshot Snapshot) error {
 	// merge domains
-	localDomains, err := s.store.GetDomains()
+	localDomains, err := s.store.GetDomainsIncludingDeleted()
 	if err != nil {
 		return err
 	}
@@ -156,7 +156,6 @@ func (s *Service) ApplySnapshot(snapshot Snapshot) error {
 	for _, d := range localDomains {
 		domainMap[d.Domain] = d
 	}
-	snapshotDomains := make(map[string]struct{}, len(snapshot.Domains))
 	changed := false
 	for _, remote := range snapshot.Domains {
 		local := domainMap[remote.Domain]
@@ -165,15 +164,6 @@ func (s *Service) ApplySnapshot(snapshot Snapshot) error {
 			return err
 		}
 		if merged.Domain != "" {
-			changed = true
-		}
-		snapshotDomains[strings.ToLower(remote.Domain)] = struct{}{}
-	}
-	for _, local := range localDomains {
-		if _, ok := snapshotDomains[strings.ToLower(local.Domain)]; ok {
-			continue
-		}
-		if err := s.store.DeleteDomain(local.Domain); err == nil {
 			changed = true
 		}
 	}

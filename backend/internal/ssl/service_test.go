@@ -385,8 +385,8 @@ func TestRateLimitBackoffCarriesThroughRecreate(t *testing.T) {
 	errMsg := "acme: error: 429 :: POST :: https://acme-v02.api.letsencrypt.org/acme/new-order :: urn:ietf:params:acme:error:rateLimited :: too many certificates (5) already issued for this exact set of identifiers in the last 168h0m0s, retry after 2025-10-09 13:39:27 UTC"
 	svc.markError(rec.Domain, "lock-1", true, errors.New(errMsg))
 
-	if err := st.DeleteDomain(rec.Domain); err != nil {
-		t.Fatalf("DeleteDomain: %v", err)
+	if err := st.MarkDomainDeleted(rec.Domain, "node-a", time.Now().UTC()); err != nil {
+		t.Fatalf("MarkDomainDeleted: %v", err)
 	}
 
 	newRec := models.DomainRecord{

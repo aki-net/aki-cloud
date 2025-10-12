@@ -1,6 +1,8 @@
 package sync
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"testing"
 	"time"
@@ -46,6 +48,7 @@ func TestServiceApplySnapshot(t *testing.T) {
 	st := newTestStore(t)
 	svc := New(st, t.TempDir(), "node-a", []byte("secret"))
 
+	now := time.Now().UTC()
 	snapshot := Snapshot{
 		Domains: []models.DomainRecord{
 			{
@@ -56,7 +59,7 @@ func TestServiceApplySnapshot(t *testing.T) {
 				Version: models.ClockVersion{
 					Counter: 1,
 					NodeID:  "seed",
-					Updated: time.Now().Unix(),
+					Updated: now.Unix(),
 				},
 			},
 		},
@@ -69,7 +72,7 @@ func TestServiceApplySnapshot(t *testing.T) {
 			Version: models.ClockVersion{
 				Counter: 1,
 				NodeID:  "seed",
-				Updated: time.Now().Unix(),
+				Updated: now.Unix(),
 			},
 		}},
 	}
@@ -97,6 +100,61 @@ func TestServiceApplySnapshot(t *testing.T) {
 	}
 	if len(peers) != 1 || peers[0] != "http://10.0.0.1:8080" {
 		t.Fatalf("unexpected peers: %#v", peers)
+	}
+}
+
+func TestApplySnapshotTombstone(t *testing.T) {
+	st := newTestStore(t)
+	now := time.Now().UTC()
+	rec := models.DomainRecord{
+		Domain:   "remove.test",
+		OriginIP: "203.0.113.10",
+		TTL:      60,
+		Proxied:  true,
+		Version: models.ClockVersion{
+			Counter: 1,
+			NodeID:  "node-a",
+			Updated: now.Unix(),
+		},
+	}
+	rec.EnsureTLSDefaults()
+	if err := st.SaveDomain(rec); err != nil {
+		t.Fatalf("SaveDomain: %v", err)
+	}
+	svc := New(st, t.TempDir(), "node-b", []byte("secret"))
+
+	tombstone := rec
+	tombstone.Version = models.ClockVersion{
+		Counter: 2,
+		NodeID:  "node-b",
+		Updated: now.Add(time.Second).Unix(),
+	}
+	tombstone.MarkDeleted(now.Add(time.Second))
+
+	snapshot := Snapshot{
+		Domains: []models.DomainRecord{tombstone},
+	}
+	if err := svc.ApplySnapshot(snapshot); err != nil {
+		t.Fatalf("ApplySnapshot: %v", err)
+	}
+	if _, err := st.GetDomain("remove.test"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("expected tombstoned domain to be hidden, got %v", err)
+	}
+	all, err := st.GetDomainsIncludingDeleted()
+	if err != nil {
+		t.Fatalf("GetDomainsIncludingDeleted: %v", err)
+	}
+	found := false
+	for _, rec := range all {
+		if rec.Domain == "remove.test" {
+			if rec.DeletedAt.IsZero() {
+				t.Fatalf("expected DeletedAt to be set")
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected tombstone to remain on disk")
 	}
 }
 
