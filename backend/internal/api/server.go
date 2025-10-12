@@ -1760,6 +1760,12 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 	original := cloneNode(*local)
 	desired := cloneNode(*local)
 	changed := false
+	if desired.EdgeManual || desired.NSManual {
+		// Admin override in place; avoid mutating automatically discovered settings.
+		s.pruneUnusedEdgeHealth()
+		s.TriggerDomainReconcile(fmt.Sprintf("node-manual:%s", desired.ID))
+		return true
+	}
 
 	shouldHaveEdges := s.Config.EnableOpenResty
 	if !shouldHaveEdges {
