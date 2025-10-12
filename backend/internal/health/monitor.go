@@ -2,7 +2,9 @@ package health
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"strings"
@@ -70,9 +72,13 @@ func (m *Monitor) Start(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			edgesUpdated := m.evaluateEdges(ctx)
+			edgeHealth, edgesUpdated := m.evaluateEdges(ctx)
 			nsUpdated := m.evaluateNameServers(ctx)
+			pruned := m.pruneDormantNodes(edgeHealth)
 			rebalance := edgesUpdated
+			if pruned {
+				rebalance = true
+			}
 			if !rebalance && m.reconcileEvery > 0 {
 				m.mu.Lock()
 				if time.Since(m.lastRebalance) >= m.reconcileEvery {
@@ -93,21 +99,21 @@ func (m *Monitor) Start(ctx context.Context) {
 				} else if edgesUpdated && m.orch != nil {
 					m.orch.Trigger(context.Background())
 				}
-			} else if nsUpdated {
+			} else if nsUpdated || pruned {
 				// nothing else to do; data is persisted for passive consumers
 			}
 		}
 	}
 }
 
-func (m *Monitor) evaluateEdges(ctx context.Context) bool {
+func (m *Monitor) evaluateEdges(ctx context.Context) (map[string]models.EdgeHealthStatus, bool) {
 	edges, err := m.infra.EdgeIPs()
 	if err != nil {
-		return false
+		return nil, false
 	}
 	statusMap, err := m.store.GetEdgeHealthMap()
 	if err != nil {
-		return false
+		return nil, false
 	}
 
 	updated := false
@@ -136,7 +142,7 @@ func (m *Monitor) evaluateEdges(ctx context.Context) bool {
 		}
 	}
 
-	return updated
+	return statusMap, updated
 }
 
 func (m *Monitor) checkEdge(ctx context.Context, ip string, prev models.EdgeHealthStatus, now time.Time) (models.EdgeHealthStatus, bool) {
@@ -281,6 +287,146 @@ func (m *Monitor) rebalanceAssignments() bool {
 		mutated = true
 	}
 	return mutated
+}
+
+func (m *Monitor) pruneDormantNodes(health map[string]models.EdgeHealthStatus) bool {
+	if health == nil {
+		var err error
+		health, err = m.store.GetEdgeHealthMap()
+		if err != nil {
+			log.Printf("health: fetch edge health for pruning failed: %v", err)
+			return false
+		}
+	}
+	nodes, err := m.store.GetNodesIncludingDeleted()
+	if err != nil {
+		log.Printf("health: load nodes for pruning failed: %v", err)
+		return false
+	}
+	now := time.Now().UTC()
+	changed := false
+
+	// Deduplicate nodes with identical names, keeping the freshest entry.
+	type nodeRef struct {
+		node models.Node
+	}
+	byName := make(map[string]nodeRef, len(nodes))
+	var duplicates []models.Node
+	for _, node := range nodes {
+		if node.IsDeleted() {
+			continue
+		}
+		nameKey := strings.ToLower(strings.TrimSpace(node.Name))
+		if existing, ok := byName[nameKey]; ok {
+			if preferNode(node, existing.node) {
+				duplicates = append(duplicates, existing.node)
+				byName[nameKey] = nodeRef{node: node}
+			} else {
+				duplicates = append(duplicates, node)
+			}
+		} else {
+			byName[nameKey] = nodeRef{node: node}
+		}
+	}
+	for _, dup := range duplicates {
+		if err := m.store.MarkNodeDeleted(dup.ID, m.nodeID, now); err != nil {
+			log.Printf("health: mark duplicate node %s deleted failed: %v", dup.ID, err)
+			continue
+		}
+		log.Printf("health: removed duplicate node definition %s (%s)", dup.Name, dup.ID)
+		changed = true
+	}
+
+	// Re-load active nodes to reflect any deletions.
+	activeNodes, err := m.store.GetNodes()
+	if err != nil {
+		log.Printf("health: reload nodes after duplication pruning failed: %v", err)
+		return changed
+	}
+
+	for _, node := range activeNodes {
+		if node.ID == m.nodeID {
+			continue
+		}
+		if len(node.EdgeIPs) == 0 {
+			continue
+		}
+		if node.EdgeManual {
+			continue
+		}
+		allStale := true
+		tracked := 0
+		for _, ip := range node.EdgeIPs {
+			ip = strings.TrimSpace(ip)
+			if ip == "" {
+				continue
+			}
+			status, ok := health[ip]
+			if !ok || status.LastChecked.IsZero() {
+				allStale = false
+				continue
+			}
+			tracked++
+			if status.Healthy {
+				allStale = false
+				break
+			}
+			if status.FailureCount < m.failures {
+				allStale = false
+				break
+			}
+		}
+		if !allStale || tracked == 0 {
+			continue
+		}
+		originalIPs := append([]string{}, node.EdgeIPs...)
+		node.EdgeManual = true
+		node.EdgeIPs = nil
+		node.ComputeEdgeIPs()
+		node.UpdatedAt = now
+		node.Version.Counter++
+		if node.Version.Counter <= 0 {
+			node.Version.Counter = 1
+		}
+		node.Version.NodeID = m.nodeID
+		node.Version.Updated = now.Unix()
+		if err := m.store.UpsertNode(node); err != nil {
+			log.Printf("health: disable edges for %s failed: %v", node.Name, err)
+			continue
+		}
+		log.Printf("health: disabled edge assignments for node %s (%s) after sustained failures", node.Name, node.ID)
+		if node.ID == m.nodeID {
+			if err := m.store.SaveLocalNodeSnapshot(node); err != nil {
+				log.Printf("health: update local node snapshot failed: %v", err)
+			}
+		}
+		for _, ip := range originalIPs {
+			if err := m.store.DeleteEdgeHealth(ip); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				log.Printf("health: prune edge health %s failed: %v", ip, err)
+			}
+		}
+		changed = true
+	}
+	if changed {
+		if nodesRefreshed, err := m.store.GetNodes(); err == nil {
+			if err := m.store.PruneEdgeHealthByNodes(nodesRefreshed); err != nil {
+				log.Printf("health: prune edge health after node disable failed: %v", err)
+			}
+		} else {
+			log.Printf("health: prune edge health after node disable failed: %v", err)
+		}
+	}
+	return changed
+}
+
+func preferNode(a, b models.Node) bool {
+	if a.Version.Counter != b.Version.Counter {
+		return a.Version.Counter > b.Version.Counter
+	}
+	if !a.UpdatedAt.Equal(b.UpdatedAt) {
+		return a.UpdatedAt.After(b.UpdatedAt)
+	}
+	return strings.Compare(a.ID, b.ID) > 0
 }
 
 func (m *Monitor) checkNameServer(ctx context.Context, ns infra.NameServer) models.NameServerHealth {
