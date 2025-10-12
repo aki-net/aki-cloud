@@ -51,6 +51,7 @@ type Service struct {
 	ledger              *issuanceLedger
 	httpClient          *http.Client
 	authoritativeLookup func(context.Context, string, []string) ([]net.IP, error)
+	recursiveLookup     func(context.Context, string) ([]net.IP, error)
 }
 
 // New constructs a TLS service bound to repository state.
@@ -64,6 +65,7 @@ func New(cfg *config.Config, st *store.Store, orch *orchestrator.Service) *Servi
 		ledger:              newIssuanceLedger(cfg.DataDir),
 		httpClient:          &http.Client{Timeout: 5 * time.Second},
 		authoritativeLookup: defaultAuthoritativeLookup,
+		recursiveLookup:     defaultRecursiveLookup,
 	}
 }
 
@@ -356,33 +358,26 @@ func (s *Service) domainReadyForIssuance(ctx context.Context, rec models.DomainR
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if s.authoritativeLookup != nil && len(authorities) > 0 {
-		if ips, err := s.authoritativeLookup(ctx, rec.Domain, authorities); err == nil {
-			for _, ip := range ips {
-				if ip == nil {
-					continue
-				}
-				v4 := ip.To4()
-				if v4 != nil {
-					if _, ok := edges[v4.String()]; ok {
-						return true
-					}
-					continue
-				}
-				if _, ok := edges[ip.String()]; ok {
-					return true
-				}
+	if s.recursiveLookup != nil {
+		if ips, err := s.recursiveLookup(ctx, rec.Domain); err == nil {
+			if containsEdgeIP(ips, edges) {
+				return true
 			}
 		}
 	}
-	lookupCtx, cancel := context.WithTimeout(ctx, lookupTimeout)
-	defer cancel()
-	addrs, err := net.DefaultResolver.LookupIPAddr(lookupCtx, rec.Domain)
-	if err != nil {
-		return false
+	if s.authoritativeLookup != nil && len(authorities) > 0 {
+		if ips, err := s.authoritativeLookup(ctx, rec.Domain, authorities); err == nil {
+			if containsEdgeIP(ips, edges) {
+				// domain exists in our authority but public resolvers have not observed delegation yet
+				return false
+			}
+		}
 	}
-	for _, addr := range addrs {
-		ip := addr.IP
+	return false
+}
+
+func containsEdgeIP(ips []net.IP, edges map[string]struct{}) bool {
+	for _, ip := range ips {
 		if ip == nil {
 			continue
 		}
@@ -433,6 +428,33 @@ func (s *Service) clusterEdgesAndNameServers() (map[string]struct{}, []string) {
 }
 
 func defaultAuthoritativeLookup(ctx context.Context, domain string, servers []string) ([]net.IP, error) {
+	return resolveARecords(ctx, domain, servers)
+}
+
+func defaultRecursiveLookup(ctx context.Context, domain string) ([]net.IP, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, lookupTimeout)
+	defer cancel()
+	if addrs, err := net.DefaultResolver.LookupIPAddr(lookupCtx, domain); err == nil {
+		ips := make([]net.IP, 0, len(addrs))
+		for _, addr := range addrs {
+			if addr.IP == nil {
+				continue
+			}
+			ips = append(ips, addr.IP)
+		}
+		if len(ips) > 0 {
+			return ips, nil
+		}
+	}
+	// fall back to public recursive resolvers
+	publicResolvers := []string{"1.1.1.1:53", "8.8.8.8:53"}
+	return resolveARecords(ctx, domain, publicResolvers)
+}
+
+func resolveARecords(ctx context.Context, domain string, servers []string) ([]net.IP, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}

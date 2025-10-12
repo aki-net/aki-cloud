@@ -31,6 +31,7 @@ func newTestService(t *testing.T, dataDir string, st *store.Store, nodeID string
 		ledger:              newIssuanceLedger(cfg.DataDir),
 		httpClient:          &http.Client{Timeout: 5 * time.Second},
 		authoritativeLookup: defaultAuthoritativeLookup,
+		recursiveLookup:     defaultRecursiveLookup,
 	}
 }
 
@@ -240,7 +241,7 @@ func TestShouldAttemptDomainSkipsUnhealthyCoordinator(t *testing.T) {
 	}
 }
 
-func TestDomainReadyForIssuanceUsesAuthoritativeLookup(t *testing.T) {
+func TestDomainReadyForIssuanceRequiresEdgeResolution(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.New(dir)
 	if err != nil {
@@ -258,13 +259,40 @@ func TestDomainReadyForIssuanceUsesAuthoritativeLookup(t *testing.T) {
 	}
 
 	svc := newTestService(t, dir, st, "node-a")
-	svc.authoritativeLookup = func(ctx context.Context, domain string, _ []string) ([]net.IP, error) {
+	svc.recursiveLookup = func(ctx context.Context, domain string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil
+	}
+
+	rec := models.DomainRecord{Domain: "example.com", Proxied: true}
+	if svc.domainReadyForIssuance(context.Background(), rec) {
+		t.Fatalf("expected domain to be marked not ready when resolution misses edge IPs")
+	}
+}
+
+func TestDomainReadyForIssuanceAcceptsEdgeResolution(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.New(dir)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+
+	node := models.Node{
+		ID:      "node-a",
+		Name:    "node-a",
+		EdgeIPs: []string{"192.0.2.10"},
+	}
+	if err := st.SaveNodes([]models.Node{node}); err != nil {
+		t.Fatalf("SaveNodes: %v", err)
+	}
+
+	svc := newTestService(t, dir, st, "node-a")
+	svc.recursiveLookup = func(ctx context.Context, domain string) ([]net.IP, error) {
 		return []net.IP{net.ParseIP("192.0.2.10")}, nil
 	}
 
 	rec := models.DomainRecord{Domain: "example.com", Proxied: true}
 	if !svc.domainReadyForIssuance(context.Background(), rec) {
-		t.Fatalf("expected authoritative lookup to mark domain ready")
+		t.Fatalf("expected domain ready when public resolution matches edge IP")
 	}
 }
 
