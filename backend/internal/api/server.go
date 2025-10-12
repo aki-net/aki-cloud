@@ -1624,25 +1624,44 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 	if local == nil {
 		return false
 	}
-	desired := *local
+	original := cloneNode(*local)
+	desired := cloneNode(*local)
 	changed := false
 
-	if !s.Config.EnableOpenResty && len(desired.EdgeIPs) > 0 {
-		desired.EdgeIPs = nil
-		desired.EdgeManual = true
+	shouldHaveEdges := s.Config.EnableOpenResty
+	if !shouldHaveEdges {
+		if len(desired.EdgeIPs) > 0 || !desired.EdgeManual {
+			desired.EdgeIPs = nil
+			desired.EdgeManual = true
+			changed = true
+		}
+	} else {
+		if desired.EdgeManual {
+			desired.EdgeManual = false
+			changed = true
+		}
+	}
+
+	shouldHaveNS := s.Config.EnableCoreDNS
+	if !shouldHaveNS {
+		if len(desired.NSIPs) > 0 {
+			desired.NSIPs = nil
+			changed = true
+		}
+	}
+
+	if desired.Version.NodeID != s.Config.NodeID {
 		changed = true
 	}
-	if !s.Config.EnableCoreDNS && len(desired.NSIPs) > 0 {
-		desired.NSIPs = nil
-		changed = true
-	}
+
+	desired.Roles = nil
+	desired.ComputeEdgeIPs()
 
 	if !changed {
 		return true
 	}
 
-	desired.Roles = nil
-	desired.ComputeEdgeIPs()
+	removed := diffStrings(original.EdgeIPs, desired.EdgeIPs)
 	now := time.Now().UTC()
 	desired.Version.Counter++
 	if desired.Version.Counter <= 0 {
@@ -1661,9 +1680,10 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 		log.Printf("infra: update local node snapshot failed: %v", err)
 	}
 
-	if !s.Config.EnableOpenResty {
-		s.cleanupEdgeHealth(*local)
-	} else {
+	if len(removed) > 0 {
+		s.cleanupEdgeHealth(models.Node{EdgeIPs: removed, EdgeManual: true})
+	}
+	if shouldHaveEdges {
 		s.bootstrapEdgeHealth(desired)
 	}
 
@@ -1712,6 +1732,32 @@ func filterEmpty(values []string) []string {
 			continue
 		}
 		out = append(out, value)
+	}
+	return out
+}
+
+func cloneNode(n models.Node) models.Node {
+	clone := n
+	clone.IPs = append([]string{}, n.IPs...)
+	clone.NSIPs = append([]string{}, n.NSIPs...)
+	clone.EdgeIPs = append([]string{}, n.EdgeIPs...)
+	clone.Roles = append([]models.NodeRole{}, n.Roles...)
+	clone.Labels = append([]string{}, n.Labels...)
+	clone.ManagedNS = append([]string{}, n.ManagedNS...)
+	return clone
+}
+
+func diffStrings(a, b []string) []string {
+	set := make(map[string]struct{}, len(b))
+	for _, v := range b {
+		set[v] = struct{}{}
+	}
+	out := make([]string, 0)
+	for _, v := range a {
+		if _, ok := set[v]; ok {
+			continue
+		}
+		out = append(out, v)
 	}
 	return out
 }
