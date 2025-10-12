@@ -45,6 +45,10 @@ func (s *Store) peersFile() string {
 	return filepath.Join(s.dataDir, "cluster", "peers.json")
 }
 
+func (s *Store) nodeOverridesFile() string {
+	return filepath.Join(s.dataDir, "infra", "node_overrides.json")
+}
+
 func (s *Store) edgeHealthFile() string {
 	return filepath.Join(s.dataDir, "cluster", "edge_health.json")
 }
@@ -447,8 +451,12 @@ func (s *Store) GetNodes() ([]models.Node, error) {
 // GetNodesIncludingDeleted returns all nodes, including soft-deleted entries.
 func (s *Store) GetNodesIncludingDeleted() ([]models.Node, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.readNodesLocked()
+	nodes, err := s.readNodesLocked()
+	s.mu.RUnlock()
+	if err != nil {
+		return nil, err
+	}
+	return s.applyNodeOverrides(nodes), nil
 }
 
 func (s *Store) readNodesLocked() ([]models.Node, error) {
@@ -474,6 +482,7 @@ func (s *Store) SaveNodes(nodes []models.Node) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	nodes = dedupeNodes(nodes)
+	overrides := make(map[string]nodeOverride)
 	for i := range nodes {
 		nodes[i].ComputeEdgeIPs()
 		nodes[i].Status = ""
@@ -481,8 +490,87 @@ func (s *Store) SaveNodes(nodes []models.Node) error {
 		nodes[i].HealthyEdges = 0
 		nodes[i].TotalEdges = 0
 		nodes[i].LastHealthAt = time.Time{}
+		override := nodeOverride{}
+		if nodes[i].EdgeManual {
+			override.EdgeManual = true
+			override.EdgeIPs = append([]string{}, nodes[i].EdgeIPs...)
+		}
+		if nodes[i].NSManual {
+			override.NSManual = true
+			override.NSIPs = append([]string{}, nodes[i].NSIPs...)
+		}
+		if override.EdgeManual || override.NSManual {
+			overrides[nodes[i].ID] = override
+		}
 	}
-	return writeJSONAtomic(s.nodesFile(), nodes)
+	if err := writeJSONAtomic(s.nodesFile(), nodes); err != nil {
+		return err
+	}
+	return s.saveNodeOverrides(overrides)
+}
+
+type nodeOverride struct {
+	EdgeManual bool     `json:"edge_manual,omitempty"`
+	EdgeIPs    []string `json:"edge_ips,omitempty"`
+	NSManual   bool     `json:"ns_manual,omitempty"`
+	NSIPs      []string `json:"ns_ips,omitempty"`
+}
+
+func (s *Store) loadNodeOverrides() (map[string]nodeOverride, error) {
+	path := s.nodeOverridesFile()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return make(map[string]nodeOverride), nil
+		}
+		return nil, err
+	}
+	var overrides map[string]nodeOverride
+	if err := json.Unmarshal(data, &overrides); err != nil {
+		return nil, err
+	}
+	if overrides == nil {
+		overrides = make(map[string]nodeOverride)
+	}
+	return overrides, nil
+}
+
+func (s *Store) saveNodeOverrides(overrides map[string]nodeOverride) error {
+	path := s.nodeOverridesFile()
+	if len(overrides) == 0 {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	return writeJSONAtomic(path, overrides)
+}
+
+func (s *Store) applyNodeOverrides(nodes []models.Node) []models.Node {
+	overrides, err := s.loadNodeOverrides()
+	if err != nil {
+		log.Printf("store: load node overrides failed: %v", err)
+		return nodes
+	}
+	if len(overrides) == 0 {
+		return nodes
+	}
+	for i := range nodes {
+		override, ok := overrides[nodes[i].ID]
+		if !ok {
+			continue
+		}
+		if override.NSManual {
+			nodes[i].NSManual = true
+			nodes[i].NSIPs = append([]string{}, override.NSIPs...)
+		}
+		if override.EdgeManual {
+			nodes[i].EdgeManual = true
+			nodes[i].EdgeIPs = append([]string{}, override.EdgeIPs...)
+		}
+		nodes[i].ComputeEdgeIPs()
+	}
+	return nodes
 }
 
 // SaveLocalNodeSnapshot persists the simplified local node metadata for helper scripts.
