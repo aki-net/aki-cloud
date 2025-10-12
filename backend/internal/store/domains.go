@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -67,5 +68,6 @@ func (s *Store) MarkDomainDeleted(domain string, nodeID string, at time.Time) er
 	rec.Version.NodeID = nodeID
 	rec.Version.Updated = at.Unix()
 	rec.MarkDeleted(at)
+	log.Printf("store: tombstoned domain %s at %s (version=%+v)", domain, rec.DeletedAt.Format(time.RFC3339), rec.Version)
 	return writeJSONAtomic(file, rec)
 }

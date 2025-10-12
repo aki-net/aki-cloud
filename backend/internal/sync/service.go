@@ -58,7 +58,7 @@ func New(st *store.Store, dataDir string, nodeID string, secret []byte) *Service
 		nodeID:       nodeID,
 		client:       &http.Client{Timeout: 10 * time.Second},
 		secret:       secret,
-		pushDebounce: 2 * time.Second,
+		pushDebounce: 0,
 	}
 }
 
@@ -279,7 +279,13 @@ func (s *Service) TriggerBroadcast() {
 	s.pushMu.Lock()
 	debounce := s.pushDebounce
 	if debounce <= 0 {
-		debounce = time.Second
+		s.pushMu.Unlock()
+		go func() {
+			if err := s.Broadcast(context.Background()); err != nil {
+				log.Printf("sync: broadcast failed: %v", err)
+			}
+		}()
+		return
 	}
 	if s.pushTimer != nil {
 		s.pushTimer.Stop()
@@ -331,6 +337,30 @@ func mergeDomain(local models.DomainRecord, remote models.DomainRecord) models.D
 	}
 	if remote.Owner == "" && remote.OriginIP == "" && remote.DeletedAt.IsZero() {
 		return local
+	}
+	localDeleted := local.IsDeleted()
+	remoteDeleted := remote.IsDeleted()
+	if localDeleted && !remoteDeleted {
+		// Keep tombstone unless remote clearly represents a newer re-creation.
+		if remote.UpdatedAt.After(local.DeletedAt) && remote.Version.Counter > local.Version.Counter {
+			return remote
+		}
+		return local
+	}
+	if remoteDeleted && !localDeleted {
+		// Prefer remote tombstone unless local has since been re-created.
+		if local.UpdatedAt.After(remote.DeletedAt) && local.Version.Counter > remote.Version.Counter {
+			return local
+		}
+		return remote
+	}
+	if localDeleted && remoteDeleted {
+		if remote.DeletedAt.After(local.DeletedAt) {
+			return remote
+		}
+		if local.DeletedAt.After(remote.DeletedAt) {
+			return local
+		}
 	}
 	result := models.MergeClock(lver, rver)
 	if result == rver {

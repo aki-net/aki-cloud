@@ -719,6 +719,9 @@ func (s *Server) prepareDomainRecord(user userContext, domain string, owner stri
 	if err := record.Validate(); err != nil {
 		return models.DomainRecord{}, err
 	}
+	if existing, err := s.Store.GetDomainIncludingDeleted(record.Domain); err == nil && existing != nil {
+		record.Version = existing.Version
+	}
 	record.UpdatedAt = now
 	record.Version.Counter++
 	record.Version.NodeID = s.Config.NodeID
@@ -1472,11 +1475,10 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	}
 	if payload.EdgeIPs != nil {
 		existing.EdgeIPs = filterEmpty(*payload.EdgeIPs)
+		existing.EdgeManual = true
 	}
 	if payload.EdgeManual != nil {
 		existing.EdgeManual = *payload.EdgeManual
-	} else if payload.EdgeIPs != nil {
-		existing.EdgeManual = len(existing.EdgeIPs) > 0
 	}
 	if payload.NSLabel != nil {
 		existing.NSLabel = strings.TrimSpace(*payload.NSLabel)
@@ -1752,11 +1754,6 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 		if len(desired.EdgeIPs) > 0 || !desired.EdgeManual {
 			desired.EdgeIPs = nil
 			desired.EdgeManual = true
-			changed = true
-		}
-	} else {
-		if desired.EdgeManual {
-			desired.EdgeManual = false
 			changed = true
 		}
 	}

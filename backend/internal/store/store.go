@@ -373,6 +373,23 @@ func (s *Store) GetDomain(domain string) (*models.DomainRecord, error) {
 	return &rec, nil
 }
 
+// GetDomainIncludingDeleted retrieves a domain record even if it has been tombstoned.
+func (s *Store) GetDomainIncludingDeleted(domain string) (*models.DomainRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	file := s.domainRecordFile(domain)
+	if _, err := os.Stat(file); err != nil {
+		return nil, err
+	}
+	var rec models.DomainRecord
+	if err := readJSON(file, &rec); err != nil {
+		return nil, err
+	}
+	rec.EnsureTLSDefaults()
+	rec.Domain = strings.ToLower(domain)
+	return &rec, nil
+}
+
 // MutateDomain reads, applies the provided mutation, and persists the domain atomically.
 func (s *Store) MutateDomain(domain string, mutate func(rec *models.DomainRecord) error) (*models.DomainRecord, error) {
 	domain = strings.ToLower(domain)
