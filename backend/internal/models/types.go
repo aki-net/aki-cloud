@@ -344,6 +344,15 @@ func (n *Node) ComputeEdgeIPs() {
 	n.EdgeIPs = originalEdges
 	n.Labels = normalizeLabels(n.Labels)
 
+	if len(n.NSIPs) == 0 && strings.TrimSpace(n.NSLabel) != "" {
+		defaultNS := make([]string, 0, len(n.IPs))
+		defaultNS = append(defaultNS, n.IPs...)
+		if len(defaultNS) == 0 {
+			defaultNS = append(defaultNS, originalEdges...)
+		}
+		n.NSIPs = normalizeIPs(defaultNS)
+	}
+
 	if n.IsDeleted() {
 		n.EdgeIPs = nil
 		n.NSIPs = nil

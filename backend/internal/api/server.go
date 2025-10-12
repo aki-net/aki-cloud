@@ -1657,6 +1657,9 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 			desired.NSIPs = nil
 			changed = true
 		}
+	} else if len(desired.NSIPs) == 0 && len(desired.IPs) > 0 && strings.TrimSpace(desired.NSLabel) != "" {
+		desired.NSIPs = append([]string{}, desired.IPs...)
+		changed = true
 	}
 
 	if desired.Version.NodeID != s.Config.NodeID {
