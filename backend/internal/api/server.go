@@ -1686,6 +1686,7 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 	if shouldHaveEdges {
 		s.bootstrapEdgeHealth(desired)
 	}
+	s.pruneUnusedEdgeHealth()
 
 	if err := s.syncPeersFromNodes(); err != nil {
 		log.Printf("infra: sync peers after capability change failed: %v", err)
@@ -1697,6 +1698,35 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 	}
 	go s.Orchestrator.Trigger(context.Background())
 	return true
+}
+
+func (s *Server) pruneUnusedEdgeHealth() {
+	endpoints, err := s.Infra.EdgeEndpoints()
+	if err != nil {
+		log.Printf("infra: edge endpoint enumeration failed: %v", err)
+		return
+	}
+	active := make(map[string]struct{}, len(endpoints))
+	for _, ep := range endpoints {
+		ip := strings.TrimSpace(ep.IP)
+		if ip == "" {
+			continue
+		}
+		active[ip] = struct{}{}
+	}
+	statuses, err := s.Store.GetEdgeHealth()
+	if err != nil {
+		log.Printf("infra: fetch edge health for pruning failed: %v", err)
+		return
+	}
+	for _, st := range statuses {
+		if _, ok := active[st.IP]; ok {
+			continue
+		}
+		if err := s.Store.DeleteEdgeHealth(st.IP); err != nil {
+			log.Printf("infra: prune edge health %s failed: %v", st.IP, err)
+		}
+	}
 }
 
 func (s *Server) syncPeersFromNodes() error {
