@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"aki-cloud/backend/internal/models"
@@ -42,16 +44,21 @@ type Service struct {
 	secret   []byte
 	baseURL  string
 	onChange func()
+
+	pushMu       sync.Mutex
+	pushTimer    *time.Timer
+	pushDebounce time.Duration
 }
 
 // New creates a new sync service.
 func New(st *store.Store, dataDir string, nodeID string, secret []byte) *Service {
 	return &Service{
-		store:   st,
-		dataDir: dataDir,
-		nodeID:  nodeID,
-		client:  &http.Client{Timeout: 10 * time.Second},
-		secret:  secret,
+		store:        st,
+		dataDir:      dataDir,
+		nodeID:       nodeID,
+		client:       &http.Client{Timeout: 10 * time.Second},
+		secret:       secret,
+		pushDebounce: 2 * time.Second,
 	}
 }
 
@@ -228,6 +235,83 @@ func (s *Service) ApplySnapshot(snapshot Snapshot) error {
 	}
 	if changed {
 		s.notifyChange()
+	}
+	return nil
+}
+
+// Broadcast pushes the current snapshot to all known peers.
+func (s *Service) Broadcast(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	peers, err := s.loadPeers()
+	if err != nil {
+		return err
+	}
+	if len(peers) == 0 {
+		return nil
+	}
+	snapshot, err := s.BuildSnapshot()
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(snapshot)
+	if err != nil {
+		return err
+	}
+	for _, peer := range peers {
+		base := strings.TrimSpace(peer)
+		if base == "" {
+			continue
+		}
+		target := strings.TrimSuffix(base, "/")
+		reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		if err := s.pushPayload(reqCtx, target, payload); err != nil {
+			log.Printf("sync: push to %s failed: %v", target, err)
+		}
+		cancel()
+	}
+	return nil
+}
+
+// TriggerBroadcast schedules a best-effort broadcast to cluster peers.
+func (s *Service) TriggerBroadcast() {
+	s.pushMu.Lock()
+	debounce := s.pushDebounce
+	if debounce <= 0 {
+		debounce = time.Second
+	}
+	if s.pushTimer != nil {
+		s.pushTimer.Stop()
+	}
+	s.pushTimer = time.AfterFunc(debounce, func() {
+		if err := s.Broadcast(context.Background()); err != nil {
+			log.Printf("sync: broadcast failed: %v", err)
+		}
+		s.pushMu.Lock()
+		s.pushTimer = nil
+		s.pushMu.Unlock()
+	})
+	s.pushMu.Unlock()
+}
+
+func (s *Service) pushPayload(ctx context.Context, baseURL string, payload []byte) error {
+	if baseURL == "" {
+		return errors.New("peer base url not set")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s/api/v1/sync/push", baseURL), bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", s.authHeader())
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 	return nil
 }

@@ -768,6 +768,7 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.triggerSyncBroadcast()
 	go s.Orchestrator.Trigger(r.Context())
 	writeJSON(w, http.StatusCreated, record.Sanitize())
 }
@@ -852,6 +853,7 @@ func (s *Server) handleBulkCreateDomains(w http.ResponseWriter, r *http.Request)
 		results = append(results, bulkDomainResult{Domain: domain, Status: "created", Record: &recCopy})
 	}
 	if success > 0 {
+		s.triggerSyncBroadcast()
 		go s.Orchestrator.Trigger(r.Context())
 	}
 	resp := bulkDomainResponse{Results: results, Success: success, Failed: failed, Skipped: skipped}
@@ -1031,6 +1033,7 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 		results = append(results, bulkDomainResult{Domain: domain, Status: "updated", Record: &recCopy})
 	}
 	if success > 0 {
+		s.triggerSyncBroadcast()
 		go s.Orchestrator.Trigger(r.Context())
 	}
 	resp := bulkDomainResponse{Results: results, Success: success, Failed: failed, Skipped: skipped}
@@ -1163,6 +1166,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.triggerSyncBroadcast()
 	go s.Orchestrator.Trigger(r.Context())
 	writeJSON(w, http.StatusOK, existing.Sanitize())
 }
@@ -1201,6 +1205,7 @@ func (s *Server) handleReassignDomainEdge(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.triggerSyncBroadcast()
 	go s.Orchestrator.Trigger(r.Context())
 	writeJSON(w, http.StatusOK, existing.Sanitize())
 }
@@ -1222,6 +1227,7 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.triggerSyncBroadcast()
 	go s.Orchestrator.Trigger(r.Context())
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
@@ -1289,6 +1295,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.triggerSyncBroadcast()
 	writeJSON(w, http.StatusCreated, user.Sanitize())
 }
 
@@ -1325,6 +1332,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.triggerSyncBroadcast()
 	writeJSON(w, http.StatusOK, existing.Sanitize())
 }
 
@@ -1360,6 +1368,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.triggerSyncBroadcast()
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -1403,6 +1412,7 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.triggerSyncBroadcast()
 	if node.ID == s.Config.NodeID {
 		if err := s.Store.SaveLocalNodeSnapshot(node); err != nil {
 			log.Printf("sync local node snapshot: %v", err)
@@ -1490,6 +1500,7 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.triggerSyncBroadcast()
 	if existing.ID == s.Config.NodeID {
 		if err := s.Store.SaveLocalNodeSnapshot(*existing); err != nil {
 			log.Printf("sync local node snapshot: %v", err)
@@ -1545,6 +1556,7 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.triggerSyncBroadcast()
 	if err := s.syncPeersFromNodes(); err != nil {
 		log.Printf("sync peers after delete node: %v", err)
 	}
@@ -1787,6 +1799,7 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 		log.Printf("infra: update local node capabilities failed: %v", err)
 		return true
 	}
+	s.triggerSyncBroadcast()
 
 	if err := s.Store.SaveLocalNodeSnapshot(desired); err != nil {
 		log.Printf("infra: update local node snapshot failed: %v", err)
@@ -1910,6 +1923,13 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+func (s *Server) triggerSyncBroadcast() {
+	if s == nil || s.Sync == nil {
+		return
+	}
+	s.Sync.TriggerBroadcast()
+}
+
 func (s *Server) reconcileDomainAssignments(ctx context.Context, reason string) {
 	s.edgeReconcileMu.Lock()
 	defer s.edgeReconcileMu.Unlock()
@@ -1948,6 +1968,7 @@ func (s *Server) reconcileDomainAssignments(ctx context.Context, reason string) 
 		updated = true
 	}
 	if updated {
+		s.triggerSyncBroadcast()
 		go s.Orchestrator.Trigger(ctx)
 	}
 }
