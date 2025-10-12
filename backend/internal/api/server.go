@@ -1431,11 +1431,7 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	target.DeletedAt = now
-	target.Version.Counter++
-	target.Version.NodeID = s.Config.NodeID
-	target.Version.Updated = now.Unix()
-	if err := s.Store.UpsertNode(*target); err != nil {
+	if err := s.Store.MarkNodeDeleted(id, s.Config.NodeID, now); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1592,6 +1588,78 @@ func userFromContext(ctx context.Context) userContext {
 // EnsurePeers recomputes the peer list based on current node metadata.
 func (s *Server) EnsurePeers() error {
 	return s.syncPeersFromNodes()
+}
+
+// SyncLocalNodeCapabilities reconciles the local node record with runtime feature flags.
+func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) {
+	nodes, err := s.Store.GetNodesIncludingDeleted()
+	if err != nil {
+		log.Printf("infra: load nodes for capability sync failed: %v", err)
+		return
+	}
+	var local *models.Node
+	for _, node := range nodes {
+		if node.ID == s.Config.NodeID {
+			n := node
+			local = &n
+			break
+		}
+	}
+	if local == nil {
+		return
+	}
+	desired := *local
+	changed := false
+
+	if !s.Config.EnableOpenResty && len(desired.EdgeIPs) > 0 {
+		desired.EdgeIPs = nil
+		desired.EdgeManual = true
+		changed = true
+	}
+	if !s.Config.EnableCoreDNS && len(desired.NSIPs) > 0 {
+		desired.NSIPs = nil
+		changed = true
+	}
+
+	if !changed {
+		return
+	}
+
+	desired.Roles = nil
+	desired.ComputeEdgeIPs()
+	now := time.Now().UTC()
+	desired.Version.Counter++
+	if desired.Version.Counter <= 0 {
+		desired.Version.Counter = 1
+	}
+	desired.Version.NodeID = s.Config.NodeID
+	desired.Version.Updated = now.Unix()
+	desired.UpdatedAt = now
+
+	if err := s.Store.UpsertNode(desired); err != nil {
+		log.Printf("infra: update local node capabilities failed: %v", err)
+		return
+	}
+
+	if err := s.Store.SaveLocalNodeSnapshot(desired); err != nil {
+		log.Printf("infra: update local node snapshot failed: %v", err)
+	}
+
+	if !s.Config.EnableOpenResty {
+		s.cleanupEdgeHealth(*local)
+	} else {
+		s.bootstrapEdgeHealth(desired)
+	}
+
+	if err := s.syncPeersFromNodes(); err != nil {
+		log.Printf("infra: sync peers after capability change failed: %v", err)
+	}
+	if ctx != nil {
+		go s.reconcileDomainAssignments(ctx, fmt.Sprintf("node-capabilities:%s", desired.ID))
+	} else {
+		go s.reconcileDomainAssignments(context.Background(), fmt.Sprintf("node-capabilities:%s", desired.ID))
+	}
+	go s.Orchestrator.Trigger(context.Background())
 }
 
 func (s *Server) syncPeersFromNodes() error {

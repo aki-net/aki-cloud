@@ -161,3 +161,52 @@ func TestStoreUpsertUser(t *testing.T) {
 		t.Fatalf("password not updated")
 	}
 }
+
+func TestMarkNodeDeleted(t *testing.T) {
+	dir := tempDir(t)
+	st, err := store.New(dir)
+	if err != nil {
+		t.Fatalf("store init: %v", err)
+	}
+
+	node := models.Node{
+		ID:      "node-1",
+		Name:    "node-1",
+		IPs:     []string{"10.0.0.1"},
+		EdgeIPs: []string{"10.0.0.1"},
+		Version: models.ClockVersion{Counter: 1, NodeID: "seed", Updated: time.Now().Unix()},
+	}
+	if err := st.UpsertNode(node); err != nil {
+		t.Fatalf("upsert node: %v", err)
+	}
+
+	now := time.Now().UTC()
+	if err := st.MarkNodeDeleted("node-1", "controller", now); err != nil {
+		t.Fatalf("MarkNodeDeleted: %v", err)
+	}
+
+	active, err := st.GetNodes()
+	if err != nil {
+		t.Fatalf("GetNodes: %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("expected no active nodes, got %d", len(active))
+	}
+
+	all, err := st.GetNodesIncludingDeleted()
+	if err != nil {
+		t.Fatalf("GetNodesIncludingDeleted: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("expected tombstone entry, got %d", len(all))
+	}
+	if all[0].ID != "node-1" {
+		t.Fatalf("unexpected node id %s", all[0].ID)
+	}
+	if all[0].DeletedAt.IsZero() {
+		t.Fatalf("expected DeletedAt to be set")
+	}
+	if len(all[0].EdgeIPs) != 0 {
+		t.Fatalf("expected edge IPs cleared, got %v", all[0].EdgeIPs)
+	}
+}

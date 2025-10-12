@@ -39,6 +39,9 @@ func (c *Controller) ActiveNameServers() ([]NameServer, error) {
 	}
 	var out []NameServer
 	for _, node := range nodes {
+		if node.IsDeleted() {
+			continue
+		}
 		label := node.NSLabel
 		base := node.NSBase
 		if label == "" || base == "" {

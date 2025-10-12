@@ -15,6 +15,8 @@ type Config struct {
 	ClusterSecretFile      string
 	NodeID                 string
 	NodeName               string
+	EnableOpenResty        bool
+	EnableCoreDNS          bool
 	JWTSecret              []byte
 	SyncInterval           time.Duration
 	ReloadDebounce         time.Duration
@@ -70,6 +72,15 @@ func Load() (*Config, error) {
 	reloadDebounceMillis, err := getEnvInt("RELOAD_DEBOUNCE_MS", 1500)
 	if err != nil {
 		return nil, fmt.Errorf("invalid RELOAD_DEBOUNCE_MS: %w", err)
+	}
+
+	openRestyEnabled, err := getEnvBool("ENABLE_OPENRESTY", true)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ENABLE_OPENRESTY: %w", err)
+	}
+	coreDNSEnabled, err := getEnvBool("ENABLE_COREDNS", true)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ENABLE_COREDNS: %w", err)
 	}
 
 	healthIntervalSeconds, err := getEnvInt("HEALTH_CHECK_INTERVAL_SECONDS", 30)
@@ -130,6 +141,8 @@ func Load() (*Config, error) {
 		ClusterSecretFile:      clusterSecretFile,
 		NodeID:                 nodeID,
 		NodeName:               nodeName,
+		EnableOpenResty:        openRestyEnabled,
+		EnableCoreDNS:          coreDNSEnabled,
 		JWTSecret:              bytesTrim(jwtSecret),
 		SyncInterval:           time.Duration(syncIntervalSeconds) * time.Second,
 		ReloadDebounce:         time.Duration(reloadDebounceMillis) * time.Millisecond,

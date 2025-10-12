@@ -25,6 +25,9 @@ func (c *Controller) EdgeEndpoints() ([]EdgeEndpoint, error) {
 	endpoints := make([]EdgeEndpoint, 0, len(nodes))
 	for _, node := range nodes {
 		node.ComputeEdgeIPs()
+		if node.IsDeleted() {
+			continue
+		}
 		if !node.HasRole(models.NodeRoleEdge) {
 			continue
 		}

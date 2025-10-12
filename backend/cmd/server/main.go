@@ -63,6 +63,8 @@ func main() {
 		log.Printf("initial peer sync failed: %v", err)
 	}
 
+	server.SyncLocalNodeCapabilities(context.Background())
+
 	router := server.Routes()
 
 	httpServer := &http.Server{

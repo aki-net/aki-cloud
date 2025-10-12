@@ -342,6 +342,14 @@ func (n *Node) ComputeEdgeIPs() {
 	n.NSIPs = normalizeIPs(n.NSIPs)
 	n.EdgeIPs = normalizeIPs(n.EdgeIPs)
 	n.Labels = normalizeLabels(n.Labels)
+
+	if n.IsDeleted() {
+		n.EdgeIPs = nil
+		n.NSIPs = nil
+		n.Roles = nil
+		return
+	}
+
 	n.Roles = nil
 	manual := n.EdgeManual
 	if len(n.EdgeIPs) == 0 {
@@ -400,6 +408,9 @@ func (n *Node) ComputeEdgeIPs() {
 
 // HasRole reports whether the node is configured for the given role.
 func (n Node) HasRole(role NodeRole) bool {
+	if n.IsDeleted() {
+		return false
+	}
 	for _, r := range n.Roles {
 		if r == role {
 			return true
@@ -544,6 +555,25 @@ func containsRole(values []NodeRole, target NodeRole) bool {
 		}
 	}
 	return false
+}
+
+// IsDeleted reports whether the node has been marked as removed.
+func (n Node) IsDeleted() bool {
+	return !n.DeletedAt.IsZero()
+}
+
+// MarkDeleted applies tombstone semantics to the node.
+func (n *Node) MarkDeleted(ts time.Time) {
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+	n.DeletedAt = ts
+	n.UpdatedAt = ts
+	n.EdgeIPs = nil
+	n.NSIPs = nil
+	n.Roles = nil
+	n.EdgeManual = true
+	n.Labels = nil
 }
 
 // NodeRole defines supported infrastructure responsibilities for a node.

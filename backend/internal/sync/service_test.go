@@ -158,6 +158,48 @@ func TestApplySnapshotTombstone(t *testing.T) {
 	}
 }
 
+func TestApplySnapshotNodeDeletion(t *testing.T) {
+	st := newTestStore(t)
+	now := time.Now().UTC()
+	node := models.Node{
+		ID:      "node-1",
+		Name:    "node-1",
+		IPs:     []string{"10.0.0.1"},
+		EdgeIPs: []string{"10.0.0.1"},
+		Version: models.ClockVersion{Counter: 1, NodeID: "local", Updated: now.Add(-time.Minute).Unix()},
+	}
+	if err := st.UpsertNode(node); err != nil {
+		t.Fatalf("UpsertNode: %v", err)
+	}
+
+	svc := New(st, t.TempDir(), "node-b", []byte("secret"))
+
+	deleted := node
+	deleted.MarkDeleted(now)
+	deleted.Version = models.ClockVersion{Counter: 2, NodeID: "remote", Updated: now.Unix()}
+
+	snapshot := Snapshot{Nodes: []models.Node{deleted}}
+	if err := svc.ApplySnapshot(snapshot); err != nil {
+		t.Fatalf("ApplySnapshot: %v", err)
+	}
+
+	active, err := st.GetNodes()
+	if err != nil {
+		t.Fatalf("GetNodes: %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("expected no active nodes, got %d", len(active))
+	}
+
+	all, err := st.GetNodesIncludingDeleted()
+	if err != nil {
+		t.Fatalf("GetNodesIncludingDeleted: %v", err)
+	}
+	if len(all) != 1 || !all[0].IsDeleted() {
+		t.Fatalf("expected tombstoned node, got %#v", all)
+	}
+}
+
 func TestMergeNodesPrefersNewest(t *testing.T) {
 	now := time.Now().UTC()
 	local := []models.Node{
