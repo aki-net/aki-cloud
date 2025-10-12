@@ -823,9 +823,6 @@ func filterHealthyEdges(all []string, health map[string]models.EdgeHealthStatus)
 			filtered = append(filtered, ip)
 			continue
 		}
-		if status.LastChecked.IsZero() {
-			continue
-		}
 		if time.Since(status.LastChecked) > staleThreshold {
 			filtered = append(filtered, ip)
 		}
