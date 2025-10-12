@@ -163,14 +163,14 @@ func (g *CoreDNSGenerator) Render() error {
 				Value: fmt.Sprintf(`"%s"`, ch.DNSValue),
 			})
 		}
-		arecords := make([]string, 0, len(healthyEdges)+1)
+		arecords := make([]string, 0, 2)
 		if domain.Proxied {
+			// Only use the assigned IP, never all edge IPs
 			if ip := strings.TrimSpace(domain.Edge.AssignedIP); ip != "" {
 				arecords = append(arecords, ip)
-			} else if len(healthyEdges) > 0 {
-				arecords = append(arecords, healthyEdges...)
 			}
 		}
+		// Fall back to origin IP if no edge IP assigned or not proxied
 		if len(arecords) == 0 {
 			arecords = append(arecords, domain.OriginIP)
 		}
