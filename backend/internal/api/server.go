@@ -1402,6 +1402,9 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 	node.NSIPs = filterEmpty(node.NSIPs)
 	node.EdgeIPs = filterEmpty(node.EdgeIPs)
 	node.Labels = filterEmpty(node.Labels)
+	if len(node.NSIPs) > 0 {
+		node.NSManual = true
+	}
 	if len(node.EdgeIPs) > 0 {
 		node.EdgeManual = true
 	}
@@ -1453,6 +1456,7 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 		Name        *string   `json:"name"`
 		IPs         *[]string `json:"ips"`
 		NSIPs       *[]string `json:"ns_ips"`
+		NSManual    *bool     `json:"ns_manual"`
 		EdgeIPs     *[]string `json:"edge_ips"`
 		EdgeManual  *bool     `json:"edge_manual"`
 		NSLabel     *string   `json:"ns_label"`
@@ -1472,10 +1476,18 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	}
 	if payload.NSIPs != nil {
 		existing.NSIPs = filterEmpty(*payload.NSIPs)
+		existing.NSManual = true
 	}
 	if payload.EdgeIPs != nil {
 		existing.EdgeIPs = filterEmpty(*payload.EdgeIPs)
 		existing.EdgeManual = true
+	}
+	if payload.NSManual != nil {
+		existing.NSManual = *payload.NSManual
+		if !existing.NSManual && len(existing.NSIPs) == 0 {
+			// allow automatic discovery on next compute
+			existing.NSIPs = nil
+		}
 	}
 	if payload.EdgeManual != nil {
 		existing.EdgeManual = *payload.EdgeManual
@@ -1762,9 +1774,10 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 	if !shouldHaveNS {
 		if len(desired.NSIPs) > 0 {
 			desired.NSIPs = nil
+			desired.NSManual = false
 			changed = true
 		}
-	} else if len(desired.NSIPs) == 0 && len(desired.IPs) > 0 && strings.TrimSpace(desired.NSLabel) != "" {
+	} else if len(desired.NSIPs) == 0 && len(desired.IPs) > 0 && strings.TrimSpace(desired.NSLabel) != "" && !desired.NSManual {
 		desired.NSIPs = append([]string{}, desired.IPs...)
 		changed = true
 	}

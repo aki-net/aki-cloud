@@ -329,6 +329,7 @@ type Node struct {
 	Name         string       `json:"name"`
 	IPs          []string     `json:"ips"`
 	NSIPs        []string     `json:"ns_ips"`
+	NSManual     bool         `json:"ns_manual"`
 	EdgeIPs      []string     `json:"edge_ips,omitempty"`
 	EdgeManual   bool         `json:"edge_manual"`
 	NSLabel      string       `json:"ns_label,omitempty"`
@@ -362,7 +363,7 @@ func (n *Node) ComputeEdgeIPs() {
 	n.EdgeIPs = originalEdges
 	n.Labels = normalizeLabels(n.Labels)
 
-	if len(n.NSIPs) == 0 && strings.TrimSpace(n.NSLabel) != "" {
+	if len(n.NSIPs) == 0 && strings.TrimSpace(n.NSLabel) != "" && !n.NSManual {
 		defaultNS := make([]string, 0, len(n.IPs))
 		defaultNS = append(defaultNS, n.IPs...)
 		if len(defaultNS) == 0 {
@@ -374,6 +375,7 @@ func (n *Node) ComputeEdgeIPs() {
 	if n.IsDeleted() {
 		n.EdgeIPs = nil
 		n.NSIPs = nil
+		n.NSManual = false
 		n.Roles = nil
 		return
 	}
