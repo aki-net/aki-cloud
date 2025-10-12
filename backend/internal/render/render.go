@@ -129,7 +129,7 @@ func (g *CoreDNSGenerator) Render() error {
 	// build zone files
 	zoneFiles := make([]ZoneFile, 0, len(domains))
 	now := time.Now().UTC()
-	serial := now.Format("2006010215")
+	serial := fmt.Sprintf("%d", now.Unix())
 	primaryNS := "ns1.local.invalid."
 	if len(activeNS) > 0 {
 		primaryNS = ensureDot(activeNS[0].FQDN)
