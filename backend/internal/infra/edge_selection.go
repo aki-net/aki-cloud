@@ -12,7 +12,7 @@ func PreferHealthyEndpoints(endpoints []EdgeEndpoint, health map[string]models.E
 	healthy := make([]EdgeEndpoint, 0, len(endpoints))
 	for _, endpoint := range endpoints {
 		status, ok := health[endpoint.IP]
-		if !ok || status.Healthy {
+		if ok && status.Healthy {
 			healthy = append(healthy, endpoint)
 		}
 	}

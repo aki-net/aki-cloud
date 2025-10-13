@@ -31,6 +31,10 @@ func (c *Controller) EdgeEndpoints() ([]EdgeEndpoint, error) {
 		if !node.HasRole(models.NodeRoleEdge) {
 			continue
 		}
+		switch node.Status {
+		case models.NodeStatusOffline, models.NodeStatusIdle:
+			continue
+		}
 		for _, ip := range node.EdgeIPs {
 			endpoint := EdgeEndpoint{
 				NodeID:   node.ID,
