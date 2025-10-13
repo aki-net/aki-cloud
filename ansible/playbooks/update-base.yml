@@ -1,232 +1,51 @@
 ---
-- name: Gather root credentials for aki-cloud update
+- name: Update aki-cloud nodes from credentials file
   hosts: localhost
   gather_facts: false
   vars:
-    aki_target_group_effective: "{{ aki_target_group | default('aki_nodes', true) }}"
     repo_root: "{{ playbook_dir | dirname | dirname }}"
-    nodes_state_file: "{{ aki_nodes_state_file | default(repo_root ~ '/data/infra/nodes.json') }}"
-    default_project_root: "{{ aki_project_root_default | default('/opt/aki-cloud') }}"
-    root_password_file: "{{ aki_root_password_file | default(repo_root ~ '/ansible/credentials/root-passwords.yml') }}"
+    credentials_file: "{{ aki_root_password_file | default(repo_root ~ '/ansible/credentials/root-passwords.yml') }}"
   tasks:
-    - name: Gather hosts from inventory
-      ansible.builtin.set_fact:
-        inventory_hosts: >-
-          {{ (groups.get(aki_target_group_effective, []))
-               | reject('equalto', 'localhost') | list }}
-
-    - name: Decide whether to use existing inventory
-      ansible.builtin.set_fact:
-        use_existing_group: "{{ (inventory_hosts | length) > 0 }}"
-
-    - name: Initialise host accumulator
-      ansible.builtin.set_fact:
-        managed_nodes: []
-
-    - name: Append hosts from existing inventory
-      ansible.builtin.set_fact:
-        managed_nodes: "{{ managed_nodes + [ {
-          'name': item,
-          'ansible_host': hostvars[item].ansible_host | default(item),
-          'project_root': hostvars[item].project_root | default(default_project_root)
-        } ] }}"
-      when: use_existing_group
-      loop: "{{ inventory_hosts }}"
-      loop_control:
-        label: "{{ item }}"
-
-    - name: Check cluster inventory file exists
+    - name: Check for credentials file
       ansible.builtin.stat:
-        path: "{{ nodes_state_file }}"
-      register: nodes_state_file_stat
-      when: not use_existing_group
+        path: "{{ credentials_file }}"
+      register: credentials_file_stat
 
-    - name: Ensure cluster inventory file is available
+    - name: Ensure credentials file exists
       ansible.builtin.fail:
         msg: >-
-          File {{ nodes_state_file }} not found. Provide hosts via an Ansible inventory
-          or set aki_nodes_state_file to the correct path.
-      when: not use_existing_group and not nodes_state_file_stat.stat.exists
+          Credentials file not found at {{ credentials_file }}.
+          Create the file with node configurations before running this playbook.
+      when: not credentials_file_stat.stat.exists
 
-    - name: Load cluster inventory from state
-      ansible.builtin.set_fact:
-        cluster_nodes: "{{ lookup('file', nodes_state_file) | from_json }}"
-      when: not use_existing_group
-
-    - name: Append hosts from cluster inventory
-      ansible.builtin.set_fact:
-        managed_nodes: "{{ managed_nodes + [ {
-          'name': item.name,
-          'ansible_host': (
-              item.ssh_host
-              | default((item.ips | default([])) | first)
-              | default((item.edge_ips | default([])) | first)
-              | default((item.ns_ips | default([])) | first)
-            ),
-          'project_root': item.project_root | default(default_project_root)
-        } ] }}"
-      loop: "{{ cluster_nodes | default([]) }}"
-      when: not use_existing_group
-      loop_control:
-        label: "{{ item.name }}"
-
-    - name: Ensure hosts are available for update
-      ansible.builtin.assert:
-        that:
-          - managed_nodes | length > 0
-        fail_msg: >-
-          No remote hosts resolved. Add them to the Ansible inventory or to
-          {{ nodes_state_file }} before running this playbook.
-
-    - name: Ensure each host has connection endpoint
-      ansible.builtin.assert:
-        that:
-          - item.ansible_host is defined
-          - (item.ansible_host | string | length) > 0
-        fail_msg: >-
-          Unable to determine a connection address for {{ item.name }}.
-          Provide ssh_host or populate ips/edge_ips/ns_ips in the inventory.
-      loop: "{{ managed_nodes }}"
-      loop_control:
-        label: "{{ item.name }}"
-
-    - name: Check for stored root password file
-      ansible.builtin.stat:
-        path: "{{ root_password_file }}"
-      register: root_password_store_stat
-
-    - name: Load stored root passwords
-      ansible.builtin.set_fact:
-        stored_root_passwords: "{{ lookup('file', root_password_file) | from_yaml }}"
-      when: root_password_store_stat.stat.exists
-
-    - name: Ensure stored root password map is initialised
-      ansible.builtin.set_fact:
-        stored_root_passwords: "{{ stored_root_passwords | default({}) }}"
-
-    - name: Merge stored passwords with node metadata
-      ansible.builtin.set_fact:
-        nodes_with_credentials: >-
-          {{ (nodes_with_credentials | default([]))
-               + [ item | combine({'password': stored_root_passwords.get(item.name, '')}) ] }}
-      loop: "{{ managed_nodes }}"
-      loop_control:
-        label: "{{ item.name }}"
-
-    - name: Separate nodes by credential availability
-      ansible.builtin.set_fact:
-        nodes_missing_password: "{{ nodes_with_credentials | selectattr('password', 'equalto', '') | list }}"
-        nodes_with_password: "{{ nodes_with_credentials | rejectattr('password', 'equalto', '') | list }}"
-
-    - name: Prompt for missing root passwords
-      ansible.builtin.pause:
-        prompt: "Enter the root password for {{ item.name }} ({{ item.ansible_host }})"
-        echo: no
-      loop: "{{ nodes_missing_password }}"
-      loop_control:
-        label: "{{ item.name }}"
-      when: nodes_missing_password | length > 0
-      register: prompted_root_passwords
-
-    - name: Build password lookup from stored entries
-      ansible.builtin.set_fact:
-        root_password_lookup: "{{ root_password_lookup | default({}) | combine({ item.name: item.password }) }}"
-      loop: "{{ nodes_with_password }}"
-      loop_control:
-        label: "{{ item.name }}"
-
-    - name: Merge prompted passwords into lookup
-      ansible.builtin.set_fact:
-        root_password_lookup: "{{ root_password_lookup | default({}) | combine({ item.item.name: item.user_input }) }}"
-      loop: "{{ prompted_root_passwords.results | default([]) }}"
-      loop_control:
-        label: "{{ item.item.name }}"
-
-    - name: Track newly collected passwords
-      ansible.builtin.set_fact:
-        newly_collected_passwords: "{{ newly_collected_passwords | default({}) | combine({ item.item.name: item.user_input }) }}"
-      loop: "{{ prompted_root_passwords.results | default([]) }}"
-      loop_control:
-        label: "{{ item.item.name }}"
-
-    - name: Ensure passwords are available for all nodes
-      ansible.builtin.assert:
-        that:
-          - root_password_lookup[item.name] is defined
-          - (root_password_lookup[item.name] | string | length) > 0
-        fail_msg: >-
-          Missing root password for {{ item.name }}. Re-run the playbook to provide one.
-      loop: "{{ managed_nodes }}"
-      loop_control:
-        label: "{{ item.name }}"
-
-    - name: Ask whether to persist newly collected passwords
-      ansible.builtin.pause:
-        prompt: >-
-          Persist the newly provided root passwords to {{ root_password_file }} for future runs? [y/N]
-      when: (newly_collected_passwords | default({})).keys() | length > 0
-      register: persist_password_prompt
-
-    - name: Decide on password persistence
-      ansible.builtin.set_fact:
-        persist_root_passwords: "{{ (persist_password_prompt.user_input | default('n')) | lower in ['y', 'yes'] }}"
-      when: persist_password_prompt is defined
-
-    - name: Prepare password store content
-      ansible.builtin.set_fact:
-        desired_password_store: "{{ stored_root_passwords | combine(newly_collected_passwords | default({})) }}"
-      when: persist_root_passwords | default(false)
-
-    - name: Ensure password store directory exists
-      ansible.builtin.file:
-        path: "{{ root_password_file | dirname }}"
-        state: directory
-        mode: "0700"
-      when: persist_root_passwords | default(false)
-
-    - name: Write password store to disk
-      ansible.builtin.copy:
-        dest: "{{ root_password_file }}"
-        content: "{{ desired_password_store | to_nice_yaml(indent=2) }}"
-        mode: "0600"
-      when: persist_root_passwords | default(false)
-
-    - name: Inject gathered credentials into inventory
+    - name: Load node credentials
+      ansible.builtin.include_vars:
+        file: "{{ credentials_file }}"
+      
+    - name: Add hosts to inventory
       ansible.builtin.add_host:
-        name: "{{ item.name }}"
-        groups: aki_update_targets
-        ansible_host: "{{ item.ansible_host }}"
+        name: "{{ item.key }}"
+        ansible_host: "{{ item.value.host }}"
         ansible_user: root
-        ansible_password: "{{ root_password_lookup[item.name] }}"
-        project_root: "{{ item.project_root | default(default_project_root) }}"
-      loop: "{{ managed_nodes }}"
+        ansible_ssh_pass: "{{ item.value.password }}"
+        project_root: /opt/aki-cloud
+        groups: aki_nodes
+      loop: "{{ nodes | dict2items }}"
       loop_control:
-        label: "{{ item.name }}"
+        label: "{{ item.key }}"
 
-- name: Apply aki-cloud update
-  hosts: aki_update_targets
-  strategy: free
+- name: Apply aki-cloud update to nodes
+  hosts: aki_nodes
   gather_facts: false
+  become: false
   vars:
-    update_make_target: "{{ aki_make_target | default('up') }}"
-    default_project_root: "{{ aki_project_root_default | default('/opt/aki-cloud') }}"
-    project_root: "{{ hostvars[inventory_hostname].project_root | default(default_project_root) }}"
-    git_pull_cmd: "{{ aki_git_pull_cmd | default('git pull --ff-only') }}"
-    make_async_enabled: "{{ (aki_make_async | default(true)) | bool }}"
-    make_async_timeout: "{{ (aki_make_async_timeout | default(1800)) | int }}"
-    make_async_poll: "{{ (aki_make_async_poll | default(10)) | int }}"
-    make_async_retries: "{{ [ ((make_async_timeout | int) // (make_async_poll | int)), 1 ] | max | int }}"
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+    git_pull_cmd: "git pull --ff-only"
+    make_target: "{{ aki_make_target | default('up') }}"
+    make_async_enabled: "{{ aki_make_async | default(true) | bool }}"
+    make_async_timeout: "{{ aki_make_async_timeout | default(1800) | int }}"
+    make_async_poll: "{{ aki_make_async_poll | default(10) | int }}"
   tasks:
-    - name: Validate async configuration
-      ansible.builtin.assert:
-        that:
-          - make_async_timeout | int > 0
-          - make_async_poll | int > 0
-        fail_msg: >-
-          When aki_make_async is enabled both aki_make_async_timeout and
-          aki_make_async_poll must be positive integers.
-      when: make_async_enabled
-
     - name: Verify repository exists on remote host
       ansible.builtin.stat:
         path: "{{ project_root }}/.git"
@@ -236,8 +55,13 @@
       ansible.builtin.fail:
         msg: >-
           Git repository not found at {{ project_root }}.
-          Set project_root via host vars or pass aki_project_root_default before updating.
+          Clone the repository first or check the project_root setting.
       when: not repo_git_dir.stat.exists
+
+    - name: Configure Git safe directory
+      ansible.builtin.command: git config --global --add safe.directory {{ project_root }}
+      changed_when: true
+      ignore_errors: yes
 
     - name: Pull latest changes
       ansible.builtin.command: "{{ git_pull_cmd }}"
@@ -248,29 +72,29 @@
         'Already up to date' not in
         ((git_pull.stdout | default('')) ~ (git_pull.stderr | default('')))
 
-    - name: Run make {{ update_make_target }} (async)
-      ansible.builtin.command: "make {{ update_make_target }}"
+    - name: Run make {{ make_target }} (async)
+      ansible.builtin.command: "make {{ make_target }}"
       args:
         chdir: "{{ project_root }}"
       async: "{{ make_async_timeout }}"
       poll: 0
-      register: make_async_job
+      register: make_job
+      changed_when: true
       when: make_async_enabled
 
-    - name: Wait for make {{ update_make_target }} completion
+    - name: Wait for make {{ make_target }} completion
       ansible.builtin.async_status:
-        jid: "{{ make_async_job.ansible_job_id }}"
-      register: make_async_result
-      until: make_async_result.finished
-      retries: "{{ make_async_retries }}"
+        jid: "{{ make_job.ansible_job_id }}"
+      register: make_result
+      until: make_result.finished
+      retries: 180
       delay: "{{ make_async_poll }}"
       when: make_async_enabled
-      failed_when: >
-        make_async_result.finished and
-        (make_async_result.rc is defined and make_async_result.rc != 0)
 
-    - name: Run make {{ update_make_target }} (synchronous)
-      ansible.builtin.command: "make {{ update_make_target }}"
+    - name: Run make {{ make_target }} (synchronous)
+      ansible.builtin.command: "make {{ make_target }}"
       args:
         chdir: "{{ project_root }}"
+      register: make_output
+      changed_when: true
       when: not make_async_enabled
