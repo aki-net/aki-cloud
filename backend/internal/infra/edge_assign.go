@@ -1,6 +1,8 @@
 package infra
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -18,6 +20,10 @@ func EnsureDomainEdgeAssignment(record *models.DomainRecord, endpoints []EdgeEnd
 	if record.Edge.AssignmentSalt == "" {
 		record.Edge.AssignmentSalt = strings.ToLower(strings.TrimSpace(record.Domain))
 	}
+	mutated := false
+	if ensureAssignmentSalt(&record.Edge, record.Domain) {
+		mutated = true
+	}
 
 	eligible := FilterEdgeEndpointsByLabels(endpoints, record.Edge.Labels)
 	if len(eligible) == 0 {
@@ -30,8 +36,6 @@ func EnsureDomainEdgeAssignment(record *models.DomainRecord, endpoints []EdgeEnd
 	}
 
 	now := time.Now().UTC()
-	mutated := false
-
 	assign := func(ep EdgeEndpoint) {
 		changed := false
 		if record.Edge.AssignedIP != ep.IP {
@@ -124,4 +128,25 @@ func EnsureDomainEdgeAssignment(record *models.DomainRecord, endpoints []EdgeEnd
 
 	record.Edge.Normalize()
 	return mutated, nil
+}
+
+func ensureAssignmentSalt(edge *models.DomainEdge, domain string) bool {
+	domainKey := strings.ToLower(strings.TrimSpace(domain))
+	current := strings.ToLower(strings.TrimSpace(edge.AssignmentSalt))
+	updated := false
+	if current == "" {
+		current = domainKey
+		updated = true
+	}
+	if current == domainKey {
+		hasher := sha256.Sum256([]byte(domainKey))
+		// Use 16 hex chars (64 bits) to keep salt compact but stable.
+		current = hex.EncodeToString(hasher[:8])
+		updated = true
+	}
+	if current != edge.AssignmentSalt {
+		edge.AssignmentSalt = current
+		return true
+	}
+	return updated
 }
