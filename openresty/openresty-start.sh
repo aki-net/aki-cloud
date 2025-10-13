@@ -4,9 +4,12 @@ set -eu
 DATA_DIR="${DATA_DIR:-/data}"
 CONF_DIR="$DATA_DIR/openresty"
 SITES_DIR="$CONF_DIR/sites-enabled"
+SENTINEL="$CONF_DIR/.reload"
 
 mkdir -p "$SITES_DIR"
 mkdir -p /var/log/nginx
+mkdir -p "$(dirname "$SENTINEL")"
+: > "$SENTINEL"
 
 # Generate nginx.conf if missing
 if [ ! -f "$CONF_DIR/nginx.conf" ]; then
@@ -44,6 +47,22 @@ fi
 
 # Test config
 nginx -t -c "$CONF_DIR/nginx.conf"
+
+watch_reload() {
+  local last_mtime="$(stat -c %Y "$SENTINEL" 2>/dev/null || echo "")"
+  while true; do
+    if [ -f "$SENTINEL" ]; then
+      current_mtime="$(stat -c %Y "$SENTINEL" 2>/dev/null || echo "")"
+      if [ -n "$current_mtime" ] && [ "$current_mtime" != "$last_mtime" ]; then
+        last_mtime="$current_mtime"
+        nginx -s reload >/dev/null 2>&1 || true
+      fi
+    fi
+    sleep 2
+  done
+}
+
+watch_reload &
 
 # Start nginx
 exec nginx -c "$CONF_DIR/nginx.conf" -g "daemon off;"
