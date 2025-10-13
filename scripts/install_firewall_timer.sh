@@ -18,7 +18,49 @@ fi
 service_path="/etc/systemd/system/aki-firewall.service"
 timer_path="/etc/systemd/system/aki-firewall.timer"
 
-cat >"$service_path" <<EOF
+require_root_tools() {
+  if [[ $EUID -eq 0 ]]; then
+    return 0
+  fi
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "sudo not available; skipping firewall timer install" >&2
+    exit 0
+  fi
+}
+
+write_unit_file() {
+  local path="$1"
+  local tmp
+  tmp="$(mktemp)"
+  cat >"$tmp"
+  if [[ $EUID -eq 0 ]]; then
+    if ! mv "$tmp" "$path"; then
+      rm -f "$tmp"
+      exit 1
+    fi
+  else
+    if ! sudo mv "$tmp" "$path"; then
+      rm -f "$tmp"
+      exit 1
+    fi
+  fi
+  rm -f "$tmp"
+}
+
+run_systemctl() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ $EUID -eq 0 ]]; then
+    systemctl "$@"
+  else
+    sudo systemctl "$@"
+  fi
+}
+
+require_root_tools
+
+write_unit_file "$service_path" <<EOF
 [Unit]
 Description=aki-cloud firewall synchronisation
 After=network.target
@@ -33,7 +75,7 @@ Environment=ENABLE_PROXY=${ENABLE_PROXY}
 ExecStart=${PROJECT_DIR}/scripts/configure_firewall.sh
 EOF
 
-cat >"$timer_path" <<'EOF'
+write_unit_file "$timer_path" <<'EOF'
 [Unit]
 Description=Run aki-cloud firewall synchronisation periodically
 
@@ -47,8 +89,8 @@ Persistent=true
 WantedBy=timers.target
 EOF
 
-systemctl daemon-reload
-systemctl enable --now aki-firewall.timer >/dev/null 2>&1 || true
-systemctl start aki-firewall.service >/dev/null 2>&1 || true
+run_systemctl daemon-reload
+run_systemctl enable --now aki-firewall.timer >/dev/null 2>&1 || true
+run_systemctl start aki-firewall.service >/dev/null 2>&1 || true
 
 exit 0
