@@ -63,9 +63,7 @@ interface NodePayload {
   name: string;
   ips: string[];
   ns_ips?: string[];
-  ns_manual?: boolean;
   edge_ips?: string[];
-  edge_manual?: boolean;
   labels?: string[];
   ns_label?: string;
   ns_base_domain?: string;

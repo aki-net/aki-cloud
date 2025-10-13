@@ -1788,24 +1788,6 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 	desired := cloneNode(*local)
 	changed := false
 
-	// Auto-discover Edge IPs if not configured
-	if len(desired.EdgeIPs) == 0 && len(desired.IPs) > 0 {
-		desired.EdgeIPs = append([]string{}, desired.IPs...)
-		changed = true
-	}
-
-	// Auto-discover NS IPs if CoreDNS is enabled and not configured
-	shouldHaveNS := s.Config.EnableCoreDNS
-	if !shouldHaveNS {
-		if len(desired.NSIPs) > 0 {
-			desired.NSIPs = nil
-			changed = true
-		}
-	} else if len(desired.NSIPs) == 0 && len(desired.IPs) > 0 && strings.TrimSpace(desired.NSLabel) != "" {
-		desired.NSIPs = append([]string{}, desired.IPs...)
-		changed = true
-	}
-
 	if desired.Version.NodeID != s.Config.NodeID {
 		changed = true
 	}

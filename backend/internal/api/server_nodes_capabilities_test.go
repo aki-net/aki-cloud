@@ -14,7 +14,7 @@ import (
 	"aki-cloud/backend/internal/store"
 )
 
-func TestSyncLocalNodeCapabilitiesDisablesEdges(t *testing.T) {
+func TestSyncLocalNodeCapabilitiesPreservesExplicitRoles(t *testing.T) {
 	dir := t.TempDir()
 
 	if err := os.MkdirAll(filepath.Join(dir, "cluster"), 0o755); err != nil {
@@ -31,11 +31,10 @@ func TestSyncLocalNodeCapabilitiesDisablesEdges(t *testing.T) {
 	}
 
 	node := models.Node{
-		ID:         "node-a",
-		Name:       "node-a",
-		IPs:        []string{"10.0.0.1"},
-		EdgeIPs:    []string{"10.0.0.1"},
-		EdgeManual: false,
+		ID:      "node-a",
+		Name:    "node-a",
+		IPs:     []string{"10.0.0.1"},
+		EdgeIPs: []string{"10.0.0.1"},
 		Version: models.ClockVersion{
 			Counter: 1,
 			NodeID:  "seed",
@@ -88,11 +87,11 @@ func TestSyncLocalNodeCapabilitiesDisablesEdges(t *testing.T) {
 		t.Fatalf("expected single node, got %d", len(nodes))
 	}
 	synced := nodes[0]
-	if len(synced.EdgeIPs) != 0 {
-		t.Fatalf("expected edge IPs to be cleared, got %v", synced.EdgeIPs)
+	if len(synced.EdgeIPs) != 1 || synced.EdgeIPs[0] != "10.0.0.1" {
+		t.Fatalf("expected edge IPs to be preserved, got %v", synced.EdgeIPs)
 	}
-	if !synced.EdgeManual {
-		t.Fatalf("expected edge manual to be true")
+	if !synced.HasRole(models.NodeRoleEdge) {
+		t.Fatalf("expected edge role to remain active")
 	}
 	if synced.Version.NodeID != "node-a" {
 		t.Fatalf("expected version node id to be local, got %s", synced.Version.NodeID)
@@ -102,7 +101,7 @@ func TestSyncLocalNodeCapabilitiesDisablesEdges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEdgeHealth: %v", err)
 	}
-	if len(health) != 0 {
-		t.Fatalf("expected edge health to be pruned, got %v", health)
+	if len(health) != 1 {
+		t.Fatalf("expected edge health to remain, got %v", health)
 	}
 }

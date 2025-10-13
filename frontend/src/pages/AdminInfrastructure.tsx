@@ -11,7 +11,6 @@ import Input from "../components/ui/Input";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import Badge from "../components/ui/Badge";
-import Switch from "../components/ui/Switch";
 import PageHeader from "../components/PageHeader";
 import toast from "react-hot-toast";
 import "./AdminInfrastructure.css";
@@ -35,8 +34,6 @@ interface NodeFormState {
   ips: string;
   edgeIps: string;
   nsIps: string;
-  edgeManual: boolean;
-  nsManual: boolean;
   nsLabel: string;
   nsBaseDomain: string;
   apiEndpoint: string;
@@ -48,8 +45,6 @@ interface NodeFormState {
     ips: "",
     edgeIps: "",
     nsIps: "",
-    edgeManual: false,
-    nsManual: false,
     nsLabel: "",
     nsBaseDomain: "",
     apiEndpoint: "",
@@ -130,17 +125,11 @@ interface NodeFormState {
       .map((entry) => entry.trim())
       .filter(Boolean);
 
-  const formatIPDisplay = (ips?: string[], manual?: boolean) => {
-    if (manual) {
-      if (ips && ips.length > 0) {
-        return ips.join(", ");
-      }
-      return "Manual (none)";
-    }
+  const formatIPDisplay = (ips?: string[]) => {
     if (ips && ips.length > 0) {
-      return `${ips.join(", ")} (auto)`;
+      return ips.join(", ");
     }
-    return "Auto";
+    return "—";
   };
 
   const resetNodeForm = () => {
@@ -162,8 +151,6 @@ interface NodeFormState {
       ips: node.ips.join(", "),
       edgeIps: (node.edge_ips || []).join(", "),
       nsIps: (node.ns_ips || []).join(", "),
-      edgeManual: Boolean(node.edge_manual) || (node.edge_ips?.length ?? 0) > 0,
-      nsManual: Boolean(node.ns_manual) || (node.ns_ips?.length ?? 0) > 0,
       nsLabel: node.ns_label || "",
       nsBaseDomain: node.ns_base_domain || "",
       apiEndpoint: node.api_endpoint || "",
@@ -171,26 +158,8 @@ interface NodeFormState {
     });
   };
 
-  const handleNodeFormChange = (
-    field: keyof NodeFormState,
-    value: string | boolean,
-  ) => {
-    setNodeForm((prev) => {
-      const next = { ...prev, [field]: value } as NodeFormState;
-      if (field === "nsIps" && typeof value === "string") {
-        const hasValue = value.trim().length > 0;
-        if (hasValue && !prev.nsManual) {
-          next.nsManual = true;
-        }
-      }
-      if (field === "edgeIps" && typeof value === "string") {
-        const hasValue = value.trim().length > 0;
-        if (hasValue && !prev.edgeManual) {
-          next.edgeManual = true;
-        }
-      }
-      return next;
-    });
+  const handleNodeFormChange = (field: keyof NodeFormState, value: string) => {
+    setNodeForm((prev) => ({ ...prev, [field]: value } as NodeFormState));
   };
 
   const handleSaveNode = async (event: React.FormEvent) => {
@@ -214,23 +183,11 @@ interface NodeFormState {
       toast.error("Provide at least one IP address");
       return;
     }
-    const nsManual = nodeForm.nsManual || nsIps.length > 0;
-    const edgeManual = nodeForm.edgeManual || explicitEdgeIps.length > 0;
-    let edgeIps: string[] = explicitEdgeIps;
-    if (!edgeManual) {
-      edgeIps = [];
-    }
-    if (!nsManual) {
-      nsIps.splice(0, nsIps.length);
-    }
-
     const payload = {
       name,
       ips,
       ns_ips: nsIps,
-      edge_ips: edgeIps,
-      ns_manual: nsManual,
-      edge_manual: edgeManual,
+      edge_ips: explicitEdgeIps,
       labels,
       ns_label: nodeForm.nsLabel.trim() || undefined,
       ns_base_domain: nodeForm.nsBaseDomain.trim() || undefined,
@@ -607,10 +564,10 @@ interface NodeFormState {
                     </td>
                     <td className="mono">{node.ips.join(", ")}</td>
                     <td className="mono">
-                      {formatIPDisplay(node.ns_ips, node.ns_manual)}
+                      {formatIPDisplay(node.ns_ips)}
                     </td>
                     <td className="mono">
-                      {formatIPDisplay(node.edge_ips, node.edge_manual)}
+                      {formatIPDisplay(node.edge_ips)}
                     </td>
                     <td>
                       <div className="node-role-badges">
@@ -694,26 +651,7 @@ interface NodeFormState {
                   }
                   className="node-textarea"
                   rows={2}
-                  placeholder="Optional"
-                />
-              </div>
-              <div className="node-role-field">
-                <span className="role-label">Manual assignment</span>
-                <Switch
-                  size="sm"
-                  checked={nodeForm.nsManual}
-                  onChange={(checked) =>
-                    handleNodeFormChange("nsManual", checked)
-                  }
-                  label="Nameserver IPs"
-                />
-                <Switch
-                  size="sm"
-                  checked={nodeForm.edgeManual}
-                  onChange={(checked) =>
-                    handleNodeFormChange("edgeManual", checked)
-                  }
-                  label="Edge IPs"
+                  placeholder="Optional — blank disables nameserver role"
                 />
               </div>
               <div className="node-textarea-field">
@@ -725,11 +663,10 @@ interface NodeFormState {
                   }
                   className="node-textarea"
                   rows={2}
-                  placeholder="Optional (default uses IPs not serving NS)"
+                  placeholder="Optional — blank disables edge role"
                 />
                 <span className="field-hint">
-                  Leave empty with auto mode enabled to let the system assign
-                  IPs. Toggle manual control to pin exact addresses.
+                  Provide explicit IPs for this role; leave blank to omit it.
                 </span>
               </div>
               <Input

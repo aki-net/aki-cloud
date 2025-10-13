@@ -293,33 +293,6 @@
   color: var(--color-text-tertiary);
 }
 
-.node-role-field {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.node-role-field .role-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-}
-
-.role-option {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--color-text-primary);
-}
-
-.role-option input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--color-accent);
-}
-
 .node-textarea {
   padding: 8px;
   border: 1px solid var(--color-border);

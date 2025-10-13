@@ -141,11 +141,9 @@ export interface Node {
   name: string;
   ips: string[];
   ns_ips: string[];
-  ns_manual?: boolean;
   ns_label?: string;
   ns_base_domain?: string;
   edge_ips?: string[];
-  edge_manual?: boolean;
   api_endpoint?: string;
   roles?: NodeRole[];
   labels?: string[];
