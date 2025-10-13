@@ -39,6 +39,7 @@ NODE_LABELS_FLAG_SET=0
 
 declare -a RERUN_ARGS=()
 FIREWALL_WARNED=0
+DETECTED_IPS_PRINTED=0
 
 usage() {
   cat <<'EOF'
@@ -696,6 +697,39 @@ firewall_warn_once() {
   fi
 }
 
+detect_host_ips() {
+  if command -v ip >/dev/null 2>&1; then
+    ip -4 addr show scope global | awk '/inet / {print $2}' | cut -d/ -f1
+    return
+  fi
+  if command -v hostname >/dev/null 2>&1; then
+    hostname -I 2>/dev/null | tr ' ' '\n'
+    return
+  fi
+  if command -v ifconfig >/dev/null 2>&1; then
+    ifconfig | awk '/inet / && $2 !~ /127\.0\.0\.1/ {print $2}'
+  fi
+}
+
+print_detected_ips_once() {
+  if [[ "$DETECTED_IPS_PRINTED" == "1" ]]; then
+    return
+  fi
+  local detected
+  detected="$(detect_host_ips | awk 'NF' | sort -u)"
+  if [[ -n "$detected" ]]; then
+    log "Detected host IPv4 addresses:"
+    while IFS= read -r ip; do
+      [[ -z "$ip" ]] && continue
+      log "  - $ip"
+    done <<<"$detected"
+    log "Use the list above as a guide when choosing IPs; you can still override it if needed."
+  else
+    log "Could not auto-detect host IPv4 addresses. Please enter the values manually."
+  fi
+  DETECTED_IPS_PRINTED=1
+}
+
 ensure_firewall_rule() {
   local proto="$1"
   local port="$2"
@@ -791,6 +825,9 @@ main() {
     abort "Mode must be 'fresh' or 'join'"
   fi
 
+  if [[ -z "$IPS" ]]; then
+    print_detected_ips_once
+  fi
   prompt_if_empty NODE_NAME "Node name"
   prompt_if_empty IPS "All node IPs (comma separated)"
   IPS="$(normalize_csv "$IPS")"
