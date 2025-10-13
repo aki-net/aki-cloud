@@ -6,7 +6,7 @@
     errors
     log
 {{- range .Zones }}
-    file {{ .ZonesDir }}/{{ .FileName }} {{ .Domain }} {
+    file {{ $.ZonesDir }}/{{ .FileName }} {{ .Domain }} {
         reload 5s
     }
 {{- end }}
