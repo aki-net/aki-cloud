@@ -89,10 +89,6 @@ parse_args() {
         NODE_NAME="$2"
         RERUN_ARGS+=(--node-name "$2")
         shift 2 ;;
-      --node-id)
-        NODE_ID="$2"
-        RERUN_ARGS+=(--node-id "$2")
-        shift 2 ;;
       --ips)
         IPS="$2"
         RERUN_ARGS+=(--ips "$2")
@@ -490,7 +486,6 @@ write_env_file() {
 BACKEND_PORT=$BACKEND_PORT
 FRONTEND_PORT=$FRONTEND_PORT
 FRONTEND_API_BASE=$api_base
-NODE_ID=$NODE_ID
 NODE_NAME=$NODE_NAME
 ENABLE_COREDNS=$enable_coredns
 ENABLE_OPENRESTY=$enable_openresty
@@ -736,14 +731,8 @@ main() {
     NS_LABEL="dns"
   fi
 
-  if [[ -z "$NODE_ID" ]]; then
-    # Generate deterministic NODE_ID based on cluster secret and node name
-    cluster_id=$(echo -n "$CLUSTER_SECRET" | sha256sum | cut -c1-16)
-    node_name_lower=$(echo "$NODE_NAME" | tr '[:upper:]' '[:lower:]')
-    data="cluster:${cluster_id}:node:${node_name_lower}"
-    hash=$(echo -n "$data" | sha256sum | cut -c1-32)
-    NODE_ID="${hash:0:8}-${hash:8:4}-5${hash:13:3}-${hash:16:4}-${hash:20:12}"
-  fi
+  # NODE_ID will be generated deterministically in backend from cluster_secret + node_name
+  # No need to generate or store it here
 
   ensure_directories
 

@@ -4,11 +4,8 @@ FRONTEND_PORT=3000
 FRONTEND_API_BASE=http://YOUR_IP:8080
 
 # Node identification
-# NODE_ID is auto-generated deterministically based on:
-# - Cluster ID (SHA256 of CLUSTER_SECRET, first 16 chars)
-# - Node name (lowercase)
-# Formula: SHA256("cluster:{cluster_id}:node:{node_name_lower}")
-NODE_ID=auto-generated
+# NODE_ID is auto-generated deterministically from CLUSTER_SECRET + NODE_NAME
+# No need to specify it in .env
 NODE_NAME=node-1
 
 # Secrets (must be consistent across cluster)

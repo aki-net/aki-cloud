@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
@@ -49,14 +51,31 @@ func Load() (*Config, error) {
 	}
 
 	clusterSecretFile := getEnvDefault("CLUSTER_SECRET_FILE", fmt.Sprintf("%s/cluster/secret", dataDir))
-	nodeID := os.Getenv("NODE_ID")
 	nodeName := os.Getenv("NODE_NAME")
-	if nodeID == "" {
-		return nil, fmt.Errorf("NODE_ID must be provided")
-	}
 	if nodeName == "" {
 		return nil, fmt.Errorf("NODE_NAME must be provided")
 	}
+	
+	// Read cluster secret for NODE_ID generation
+	clusterSecretBytes, err := os.ReadFile(clusterSecretFile)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read cluster secret file: %w", err)
+	}
+	clusterSecret := strings.TrimSpace(string(clusterSecretBytes))
+	
+	// Generate NODE_ID deterministically from cluster_secret + node_name
+	data := fmt.Sprintf("%s:%s", clusterSecret, strings.ToLower(nodeName))
+	hash := sha256.Sum256([]byte(data))
+	hashStr := hex.EncodeToString(hash[:])
+	
+	// Format as UUID-like string
+	nodeID := fmt.Sprintf("%s-%s-%s-%s-%s",
+		hashStr[0:8],
+		hashStr[8:12],
+		hashStr[12:16],
+		hashStr[16:20],
+		hashStr[20:32],
+	)
 
 	jwtSecretFile := getEnvDefault("JWT_SECRET_FILE", fmt.Sprintf("%s/cluster/jwt_secret", dataDir))
 	jwtSecret, err := os.ReadFile(jwtSecretFile)

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,7 +25,6 @@ import (
 	"aki-cloud/backend/internal/orchestrator"
 	"aki-cloud/backend/internal/store"
 	syncsvc "aki-cloud/backend/internal/sync"
-	"aki-cloud/backend/internal/utils"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
@@ -1412,17 +1412,9 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if node.ID == "" {
-		// Generate deterministic ID based on cluster secret and node name
-		clusterSecretBytes, err := os.ReadFile(s.Config.ClusterSecretFile)
-		if err != nil {
-			// Fallback to UUID if cluster secret unavailable
-			node.ID = uuid.NewString()
-		} else {
-			clusterSecret := strings.TrimSpace(string(clusterSecretBytes))
-			hashBytes := sha256.Sum256([]byte(clusterSecret))
-			clusterID := fmt.Sprintf("%x", hashBytes[:8])
-			node.ID = utils.GenerateDeterministicNodeID(clusterID, node.Name)
-		}
+		// Generate new UUID for new nodes
+		// Nodes should provide their persistent ID from /data/cluster/node_id
+		node.ID = uuid.NewString()
 	}
 	node.Name = strings.TrimSpace(node.Name)
 	node.NSLabel = strings.TrimSpace(node.NSLabel)
@@ -1498,8 +1490,38 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid payload")
 		return
 	}
+	oldName := existing.Name
 	if payload.Name != nil {
 		existing.Name = strings.TrimSpace(*payload.Name)
+		
+		// If name changed, NODE_ID will change too (it's deterministic based on name)
+		if oldName != existing.Name {
+			// Calculate new NODE_ID
+			clusterSecretBytes, err := os.ReadFile(s.Config.ClusterSecretFile)
+			if err == nil {
+				clusterSecret := strings.TrimSpace(string(clusterSecretBytes))
+				data := fmt.Sprintf("%s:%s", clusterSecret, strings.ToLower(existing.Name))
+				hash := sha256.Sum256([]byte(data))
+				hashStr := hex.EncodeToString(hash[:])
+				
+				newID := fmt.Sprintf("%s-%s-%s-%s-%s",
+					hashStr[0:8],
+					hashStr[8:12],
+					hashStr[12:16],
+					hashStr[16:20],
+					hashStr[20:32],
+				)
+				
+				// Delete old node record
+				if err := s.Store.DeleteNode(existing.ID); err != nil {
+					writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to remove old node: %v", err))
+					return
+				}
+				
+				// Update to new ID
+				existing.ID = newID
+			}
+		}
 	}
 	if payload.IPs != nil {
 		existing.IPs = filterEmpty(*payload.IPs)
