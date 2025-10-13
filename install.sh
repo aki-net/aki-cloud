@@ -689,7 +689,7 @@ main() {
     __derived=()
     for ip in "${__ips_arr[@]}"; do
       [[ -z "$ip" ]] && continue
-      if [[ -z "${__ns_map[$ip]}" ]]; then
+      if [[ ! -v "__ns_map[$ip]" ]] || [[ -z "${__ns_map[$ip]}" ]]; then
         __derived+=("$ip")
       fi
     done
