@@ -52,6 +52,14 @@ export interface DomainEdge {
   assigned_at?: string;
 }
 
+export interface ReassignAllEdgesResponse {
+  reassigned: number;
+  unchanged: number;
+  skipped: number;
+  failed: number;
+  errors?: string[];
+}
+
 export interface DomainEdgePayload {
   labels?: string[];
 }

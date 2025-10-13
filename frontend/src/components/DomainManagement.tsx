@@ -45,6 +45,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   const [edgeModalData, setEdgeModalData] = useState<EdgeModalData | null>(
     null,
   );
+  const [rebalancingEdges, setRebalancingEdges] = useState(false);
 
   interface EdgeModalData {
     domain: string;
@@ -588,6 +589,49 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     }
   };
 
+  const handleReassignAllEdges = async () => {
+    if (!isAdmin || rebalancingEdges) {
+      return;
+    }
+    const confirmed = window.confirm(
+      "Rebalance edge assignments for all proxied domains? This will redistribute domains across the current edge pool.",
+    );
+    if (!confirmed) {
+      return;
+    }
+    setRebalancingEdges(true);
+    try {
+      const result = await domainsApi.reassignAllEdges();
+      if (result.reassigned > 0) {
+        toast.success(
+          `Reassigned ${result.reassigned} domain${result.reassigned === 1 ? "" : "s"} to new edges`,
+        );
+      }
+      if (result.unchanged > 0) {
+        toast.success(
+          `${result.unchanged} domain${result.unchanged === 1 ? "" : "s"} already optimal`,
+        );
+      }
+      if (result.skipped > 0) {
+        toast(
+          `${result.skipped} domain${result.skipped === 1 ? "" : "s"} not proxied and skipped`,
+        );
+      }
+      if (result.failed > 0) {
+        toast.error(
+          `Failed to rebalance ${result.failed} domain${result.failed === 1 ? "" : "s"}`,
+        );
+      }
+      await loadData(false);
+    } catch (error: any) {
+      toast.error(
+        error.response?.data?.error || "Failed to rebalance edge assignments",
+      );
+    } finally {
+      setRebalancingEdges(false);
+    }
+  };
+
   const getTLSDisplay = (domain: Domain | DomainOverview) => {
     const isFullDomain = "tls" in domain;
 
@@ -961,6 +1005,15 @@ export default function DomainManagement({ isAdmin = false }: Props) {
               ))}
             </select>
           </div>
+        )}
+        {isAdmin && (
+          <Button
+            variant="secondary"
+            onClick={handleReassignAllEdges}
+            loading={rebalancingEdges}
+          >
+            Rebalance Edges
+          </Button>
         )}
         <Button variant="primary" onClick={() => setShowAddDomain(true)}>
           Add Domain

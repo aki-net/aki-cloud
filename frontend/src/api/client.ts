@@ -14,6 +14,7 @@ import {
   NameServerEntry,
   DomainOverview,
   NameServerStatus,
+  ReassignAllEdgesResponse,
 } from "../types";
 
 const resolveApiBase = (): string => {
@@ -113,6 +114,14 @@ export const domains = {
   reassignEdge: async (domain: string): Promise<Domain> => {
     const res = await client.post<Domain>(
       `/domains/${domain}/edge/reassign`,
+      {},
+    );
+    return res.data;
+  },
+
+  reassignAllEdges: async (): Promise<ReassignAllEdgesResponse> => {
+    const res = await client.post<ReassignAllEdgesResponse>(
+      "/domains/edge/reassign-all",
       {},
     );
     return res.data;

@@ -268,6 +268,9 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/domains/{domain}/edge/reassign", func(w http.ResponseWriter, req *http.Request) {
 				s.requireAdmin(http.HandlerFunc(s.handleReassignDomainEdge)).ServeHTTP(w, req)
 			})
+			r.Post("/domains/edge/reassign-all", func(w http.ResponseWriter, req *http.Request) {
+				s.requireAdmin(http.HandlerFunc(s.handleReassignAllDomainEdges)).ServeHTTP(w, req)
+			})
 			r.Delete("/domains/{domain}", s.authorizeUser(s.handleDeleteDomain))
 
 			r.Get("/infra/nameservers", s.requireRole(models.RoleUser, s.handleInfraNS))
@@ -998,7 +1001,7 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 			s.edgeReconcileMu.Lock()
 			_, edgeErr := s.ensureDomainEdgeAssignment(existing)
 			s.edgeReconcileMu.Unlock()
-			
+
 			if edgeErr != nil {
 				failed++
 				errMsg := edgeErr.Error()
@@ -1147,7 +1150,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		s.edgeReconcileMu.Lock()
 		_, edgeErr := s.ensureDomainEdgeAssignment(existing)
 		s.edgeReconcileMu.Unlock()
-		
+
 		if edgeErr != nil {
 			if ve, ok := edgeErr.(models.ErrValidation); ok {
 				writeError(w, http.StatusBadRequest, ve.Error())
@@ -1190,7 +1193,7 @@ func (s *Server) handleReassignDomainEdge(w http.ResponseWriter, r *http.Request
 	// Use mutex to prevent concurrent edge reassignments
 	s.edgeReconcileMu.Lock()
 	defer s.edgeReconcileMu.Unlock()
-	
+
 	domain := strings.ToLower(chi.URLParam(r, "domain"))
 	existing, err := s.Store.GetDomain(domain)
 	if err != nil {
@@ -1201,7 +1204,7 @@ func (s *Server) handleReassignDomainEdge(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "domain is not proxied")
 		return
 	}
-	
+
 	// Force a new assignment by changing the salt
 	newSalt := fmt.Sprintf("%s:%s", strings.ToLower(existing.Domain), uuid.NewString())
 	existing.Edge.AssignmentSalt = newSalt
@@ -1209,7 +1212,7 @@ func (s *Server) handleReassignDomainEdge(w http.ResponseWriter, r *http.Request
 	existing.Edge.AssignedNodeID = ""
 	existing.Edge.AssignedAt = time.Time{}
 	existing.Edge.Normalize()
-	
+
 	// Ensure edge assignment with fresh data
 	if _, err := s.ensureDomainEdgeAssignment(existing); err != nil {
 		if ve, ok := err.(models.ErrValidation); ok {
@@ -1231,6 +1234,73 @@ func (s *Server) handleReassignDomainEdge(w http.ResponseWriter, r *http.Request
 	s.triggerSyncBroadcast()
 	go s.Orchestrator.Trigger(r.Context())
 	writeJSON(w, http.StatusOK, existing.Sanitize())
+}
+
+func (s *Server) handleReassignAllDomainEdges(w http.ResponseWriter, r *http.Request) {
+	// Prevent overlapping global reassign operations
+	s.edgeReconcileMu.Lock()
+	defer s.edgeReconcileMu.Unlock()
+
+	domains, err := s.Store.GetDomains()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	type summary struct {
+		Reassigned int      `json:"reassigned"`
+		Unchanged  int      `json:"unchanged"`
+		Skipped    int      `json:"skipped"`
+		Failed     int      `json:"failed"`
+		Errors     []string `json:"errors,omitempty"`
+	}
+	result := summary{}
+
+	for _, rec := range domains {
+		if !rec.Proxied {
+			result.Skipped++
+			continue
+		}
+
+		prevIP := rec.Edge.AssignedIP
+		prevNode := rec.Edge.AssignedNodeID
+
+		rec.Edge.AssignedIP = ""
+		rec.Edge.AssignedNodeID = ""
+		rec.Edge.AssignedAt = time.Time{}
+		rec.Edge.Normalize()
+
+		if _, err := s.ensureDomainEdgeAssignment(&rec); err != nil {
+			result.Failed++
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", rec.Domain, err))
+			continue
+		}
+
+		changed := rec.Edge.AssignedIP != prevIP || rec.Edge.AssignedNodeID != prevNode
+		if !changed {
+			result.Unchanged++
+			continue
+		}
+
+		now := time.Now().UTC()
+		rec.UpdatedAt = now
+		rec.Version.Counter++
+		rec.Version.NodeID = s.Config.NodeID
+		rec.Version.Updated = now.Unix()
+		if err := s.Store.UpsertDomain(rec); err != nil {
+			result.Failed++
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", rec.Domain, err))
+			continue
+		}
+		result.Reassigned++
+	}
+
+	if result.Reassigned > 0 {
+		s.triggerSyncBroadcast()
+		go s.Orchestrator.Trigger(r.Context())
+	}
+
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
@@ -1417,7 +1487,7 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		node.ID = uuid.NewString()
 	}
 	node.Name = strings.TrimSpace(node.Name)
-	node.NSLabel = s.Config.NSLabel // Always use config value
+	node.NSLabel = s.Config.NSLabel     // Always use config value
 	node.NSBase = s.Config.NSBaseDomain // Always use config value
 	node.APIEndpoint = strings.TrimSpace(node.APIEndpoint)
 	node.IPs = filterEmpty(node.IPs)
@@ -1482,7 +1552,7 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	oldName := existing.Name
 	if payload.Name != nil {
 		existing.Name = strings.TrimSpace(*payload.Name)
-		
+
 		// If name changed, NODE_ID will change too (it's deterministic based on name)
 		if oldName != existing.Name {
 			// Calculate new NODE_ID
@@ -1492,7 +1562,7 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 				data := fmt.Sprintf("%s:%s", clusterSecret, strings.ToLower(existing.Name))
 				hash := sha256.Sum256([]byte(data))
 				hashStr := hex.EncodeToString(hash[:])
-				
+
 				newID := fmt.Sprintf("%s-%s-%s-%s-%s",
 					hashStr[0:8],
 					hashStr[8:12],
@@ -1500,14 +1570,14 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 					hashStr[16:20],
 					hashStr[20:32],
 				)
-				
+
 				// Mark old node as deleted
 				now := time.Now().UTC()
 				if err := s.Store.MarkNodeDeleted(existing.ID, s.Config.NodeID, now); err != nil {
 					writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to remove old node: %v", err))
 					return
 				}
-				
+
 				// Update to new ID
 				existing.ID = newID
 			}
