@@ -1413,9 +1413,16 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 	}
 	if node.ID == "" {
 		// Generate deterministic ID based on cluster secret and node name
-		clusterSecret, _ := s.Store.GetClusterSecret()
-		clusterID := fmt.Sprintf("%x", sha256.Sum256(clusterSecret)[:8])
-		node.ID = utils.GenerateDeterministicNodeID(clusterID, node.Name)
+		clusterSecretBytes, err := os.ReadFile(s.Config.ClusterSecretFile)
+		if err != nil {
+			// Fallback to UUID if cluster secret unavailable
+			node.ID = uuid.NewString()
+		} else {
+			clusterSecret := strings.TrimSpace(string(clusterSecretBytes))
+			hashBytes := sha256.Sum256([]byte(clusterSecret))
+			clusterID := fmt.Sprintf("%x", hashBytes[:8])
+			node.ID = utils.GenerateDeterministicNodeID(clusterID, node.Name)
+		}
 	}
 	node.Name = strings.TrimSpace(node.Name)
 	node.NSLabel = strings.TrimSpace(node.NSLabel)
