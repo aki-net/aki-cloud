@@ -99,8 +99,19 @@ func (g *CoreDNSGenerator) Render() error {
 			}
 		}
 	}
-	if len(filteredNS) == 0 {
-		filteredNS = nsList
+	// If no NS found by NodeID, create NS from local node.json NSIPs
+	if len(filteredNS) == 0 && len(local.NSIPs) > 0 {
+		for _, ip := range local.NSIPs {
+			ip = strings.TrimSpace(ip)
+			if ip == "" {
+				continue
+			}
+			// Create a minimal NS entry for local IP binding
+			filteredNS = append(filteredNS, infra.NameServer{
+				IPv4: ip,
+				FQDN: fmt.Sprintf("%s.%s.%s", local.Name, local.NSLabel, local.NSBaseDomain),
+			})
+		}
 	}
 	activeNS := filteredNS
 	edges, err := g.Infra.EdgeIPs()

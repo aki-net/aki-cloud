@@ -1,17 +1,16 @@
 {{- if .NameServers -}}
-{{- range .NameServers }}
 .:53 {
+{{- range .NameServers }}
     bind {{ .IPv4 }}
+{{- end }}
     errors
     log
-{{- range $.Zones }}
-    file {{ $.ZonesDir }}/{{ .FileName }} {{ .Domain }} {
+{{- range .Zones }}
+    file {{ .ZonesDir }}/{{ .FileName }} {{ .Domain }} {
         reload 5s
     }
 {{- end }}
 }
-
-{{ end -}}
 {{- else -}}
 .:53 {
     errors
