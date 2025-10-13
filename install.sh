@@ -375,13 +375,15 @@ create_admin_user() {
 }
 
 write_node_files() {
-python3 - "$DATA_DIR" "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" <<'PY'
+  local data_dir="$DATA_DIR"
+  shift  # remove DATA_DIR from positional parameters
+python3 - "$data_dir" "$@" <<'PY'
 import json
 import sys
 from pathlib import Path
 from datetime import datetime, timezone
 
-data_dir, node_id, node_name, ips_csv, ns_ips_csv, edge_ips_csv, labels_csv, ns_label, ns_base, api_endpoint = sys.argv[1:10]
+data_dir, node_id, node_name, ips_csv, ns_ips_csv, edge_ips_csv, labels_csv, ns_label, ns_base, api_endpoint = sys.argv[1:11]
 
 def csv_to_list(value):
     if not value:
