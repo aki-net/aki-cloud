@@ -38,6 +38,7 @@ EDGE_IPS_FLAG_SET=0
 NODE_LABELS_FLAG_SET=0
 
 declare -a RERUN_ARGS=()
+FIREWALL_WARNED=0
 
 usage() {
   cat <<'EOF'
@@ -253,12 +254,67 @@ install_docker_packages() {
   systemctl start docker
 }
 
+configure_passwordless_sudo() {
+  local user="$1"
+  if [[ -z "$user" ]]; then
+    return
+  fi
+  if [[ $EUID -ne 0 ]]; then
+    return
+  fi
+  if ! command -v sudo >/dev/null 2>&1; then
+    return
+  fi
+  local -a binaries=(
+    systemctl
+    ufw
+    iptables
+    nft
+    true
+    mv
+  )
+  declare -A dedup=()
+  local bin path
+  for bin in "${binaries[@]}"; do
+    path="$(type -P "$bin" 2>/dev/null || command -v "$bin" 2>/dev/null || true)"
+    if [[ -n "$path" ]]; then
+      dedup["$path"]=1
+    fi
+  done
+  if ((${#dedup[@]} == 0)); then
+    return
+  fi
+  local sudoers_dir="/etc/sudoers.d"
+  local sudoers_file="$sudoers_dir/${user}-aki-cloud"
+  mkdir -p "$sudoers_dir"
+  local tmp_file
+  tmp_file="$(mktemp)"
+  {
+    printf 'Defaults:%s !requiretty\n' "$user"
+    printf '%s ALL=(root) NOPASSWD: ' "$user"
+    local first=1
+    local -a sorted_paths=()
+    mapfile -t sorted_paths < <(printf '%s\n' "${!dedup[@]}" | sort)
+    for path in "${sorted_paths[@]}"; do
+      if [[ $first -eq 0 ]]; then
+        printf ', '
+      fi
+      printf '%s' "$path"
+      first=0
+    done
+    printf '\n'
+  } >"$tmp_file"
+  chmod 440 "$tmp_file"
+  mv "$tmp_file" "$sudoers_file"
+}
+
 ensure_system_user() {
   if ! id "$SYSTEM_USER" >/dev/null 2>&1; then
     log "Creating system user $SYSTEM_USER"
     useradd -m -s /bin/bash "$SYSTEM_USER"
   fi
   usermod -aG docker "$SYSTEM_USER"
+  configure_passwordless_sudo "$SYSTEM_USER"
 }
 
 clone_or_update_repo() {
@@ -617,14 +673,41 @@ check_seed_reachable() {
   fi
 }
 
+run_root_cmd() {
+  if [[ $EUID -eq 0 ]]; then
+    "$@"
+    return $?
+  fi
+  if command -v sudo >/dev/null 2>&1; then
+    sudo -n "$@"
+    return $?
+  fi
+  if command -v doas >/dev/null 2>&1; then
+    doas "$@"
+    return $?
+  fi
+  return 1
+}
+
+firewall_warn_once() {
+  if [[ "$FIREWALL_WARNED" -eq 0 ]]; then
+    echo "WARNING: automatic firewall configuration failed; ensure ports 22, 53, 80, 443, $BACKEND_PORT, and $FRONTEND_PORT are open on this host." >&2
+    FIREWALL_WARNED=1
+  fi
+}
+
 ensure_firewall_rule() {
   local proto="$1"
   local port="$2"
-  if ! command -v iptables >/dev/null 2>&1; then
+  local iptables_cmd
+  if ! iptables_cmd="$(command -v iptables 2>/dev/null)"; then
     return 1
   fi
-  if ! iptables -C INPUT -p "$proto" --dport "$port" -j ACCEPT >/dev/null 2>&1; then
-    iptables -I INPUT -p "$proto" --dport "$port" -j ACCEPT >/dev/null 2>&1 || return 1
+  if ! run_root_cmd "$iptables_cmd" -C INPUT -p "$proto" --dport "$port" -j ACCEPT >/dev/null 2>&1; then
+    if ! run_root_cmd "$iptables_cmd" -I INPUT -p "$proto" --dport "$port" -j ACCEPT >/dev/null 2>&1; then
+      firewall_warn_once
+      return 1
+    fi
   fi
   return 0
 }
@@ -632,13 +715,22 @@ ensure_firewall_rule() {
 ensure_ufw_rule() {
   local proto="$1"
   local port="$2"
-  if ! command -v ufw >/dev/null 2>&1; then
+  local ufw_cmd
+  if ! ufw_cmd="$(command -v ufw 2>/dev/null)"; then
     return 1
   fi
-  if ! ufw status | grep -q "Status: active"; then
+  local status
+  status="$(run_root_cmd "$ufw_cmd" status 2>/dev/null)" || {
+    firewall_warn_once
+    return 1
+  }
+  if ! grep -q "Status: active" <<<"$status"; then
     return 1
   fi
-  ufw --force allow proto "$proto" from any to any port "$port" >/dev/null 2>&1 || return 1
+  if ! run_root_cmd "$ufw_cmd" --force allow "$port"/"$proto" >/dev/null 2>&1; then
+    firewall_warn_once
+    return 1
+  fi
   return 0
 }
 
