@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 	"aki-cloud/backend/internal/orchestrator"
 	"aki-cloud/backend/internal/store"
 	syncsvc "aki-cloud/backend/internal/sync"
+	"aki-cloud/backend/internal/utils"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
@@ -1410,7 +1412,10 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if node.ID == "" {
-		node.ID = uuid.NewString()
+		// Generate deterministic ID based on cluster secret and node name
+		clusterSecret, _ := s.Store.GetClusterSecret()
+		clusterID := fmt.Sprintf("%x", sha256.Sum256(clusterSecret)[:8])
+		node.ID = utils.GenerateDeterministicNodeID(clusterID, node.Name)
 	}
 	node.Name = strings.TrimSpace(node.Name)
 	node.NSLabel = strings.TrimSpace(node.NSLabel)
@@ -1533,6 +1538,7 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.triggerSyncBroadcast()
+	// Save local node snapshot if this is our node
 	if existing.ID == s.Config.NodeID {
 		if err := s.Store.SaveLocalNodeSnapshot(*existing); err != nil {
 			log.Printf("sync local node snapshot: %v", err)

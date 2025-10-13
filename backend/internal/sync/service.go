@@ -40,6 +40,7 @@ type Service struct {
 	store    *store.Store
 	dataDir  string
 	nodeID   string
+	nodeName string
 	client   *http.Client
 	secret   []byte
 	baseURL  string

@@ -737,7 +737,12 @@ main() {
   fi
 
   if [[ -z "$NODE_ID" ]]; then
-    NODE_ID="$(generate_uuid)"
+    # Generate deterministic NODE_ID based on cluster secret and node name
+    cluster_id=$(echo -n "$CLUSTER_SECRET" | sha256sum | cut -c1-16)
+    node_name_lower=$(echo "$NODE_NAME" | tr '[:upper:]' '[:lower:]')
+    data="cluster:${cluster_id}:node:${node_name_lower}"
+    hash=$(echo -n "$data" | sha256sum | cut -c1-32)
+    NODE_ID="${hash:0:8}-${hash:8:4}-5${hash:13:3}-${hash:16:4}-${hash:20:12}"
   fi
 
   ensure_directories

@@ -4,52 +4,45 @@ set -eu
 DATA_DIR="${DATA_DIR:-/data}"
 CONF_DIR="$DATA_DIR/openresty"
 SITES_DIR="$CONF_DIR/sites-enabled"
-NODE_INFO="$DATA_DIR/cluster/node.json"
-
-# Check if this node has edge IPs (is an edge node)
-if [ -f "$NODE_INFO" ]; then
-  HAS_EDGE_IPS=$(jq -r '.edge_ips | length > 0' "$NODE_INFO" 2>/dev/null || echo "false")
-  if [ "$HAS_EDGE_IPS" != "true" ]; then
-    echo "This node has no edge IPs - OpenResty not needed. Sleeping..."
-    sleep infinity
-  fi
-else
-  echo "Node info not found at $NODE_INFO - waiting for initialization..."
-  # Wait for node.json to be created
-  while [ ! -f "$NODE_INFO" ]; do
-    sleep 5
-  done
-  # Restart this script now that node.json exists
-  exec "$0" "$@"
-fi
 
 mkdir -p "$SITES_DIR"
-mkdir -p /var/log/nginx
 
+# Generate nginx.conf if missing
 if [ ! -f "$CONF_DIR/nginx.conf" ]; then
   cat <<'EOF' > "$CONF_DIR/nginx.conf"
-worker_processes 1;
+worker_processes 2;
+error_log stderr warn;
 events {
-    worker_connections 1024;
+    worker_connections 4096;
 }
 http {
-    include /usr/local/openresty/nginx/conf/mime.types;
+    access_log off;
+    client_max_body_size 32M;
     default_type application/octet-stream;
-    sendfile on;
-    keepalive_timeout 65;
+    
+    server {
+        listen 80 default_server;
+        listen 443 ssl default_server;
+        ssl_certificate /data/openresty/default.crt;
+        ssl_certificate_key /data/openresty/default.key;
+        return 204;
+    }
+    
+    include /data/openresty/sites-enabled/*.conf;
 }
 EOF
 fi
 
-openresty -t -c "$CONF_DIR/nginx.conf" || {
-  echo "initial nginx configuration test failed" >&2
-}
+# Generate default self-signed cert if missing
+if [ ! -f "$CONF_DIR/default.crt" ] || [ ! -f "$CONF_DIR/default.key" ]; then
+  openssl req -x509 -newkey rsa:2048 -nodes \
+    -keyout "$CONF_DIR/default.key" \
+    -out "$CONF_DIR/default.crt" \
+    -days 365 -subj "/CN=default"
+fi
 
-inotifywait -mq -e modify,create,delete,move "$CONF_DIR" "$SITES_DIR" 2>/dev/null |
-while read -r _ _ _; do
-  openresty -s reload -c "$CONF_DIR/nginx.conf" 2>/dev/null || true
-done &
+# Test config
+nginx -t -c "$CONF_DIR/nginx.conf"
 
-trap 'openresty -s quit -c "$CONF_DIR/nginx.conf" 2>/dev/null || true; exit 0' INT TERM
-
-exec openresty -g 'daemon off;' -c "$CONF_DIR/nginx.conf"
+# Start nginx
+exec nginx -c "$CONF_DIR/nginx.conf" -g "daemon off;"
