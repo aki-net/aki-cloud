@@ -33,6 +33,10 @@ SYSTEM_USER="${SYSTEM_USER:-akicloud}"
 SKIP_BOOTSTRAP="${SKIP_BOOTSTRAP:-0}"
 PRIMARY_IP=""
 
+NS_IPS_FLAG_SET=0
+EDGE_IPS_FLAG_SET=0
+NODE_LABELS_FLAG_SET=0
+
 declare -a RERUN_ARGS=()
 
 usage() {
@@ -94,13 +98,29 @@ parse_args() {
         RERUN_ARGS+=(--ips "$2")
         shift 2 ;;
       --ns-ips)
-        NS_IPS="$2"
-        RERUN_ARGS+=(--ns-ips "$2")
-        shift 2 ;;
+        local value=""
+        NS_IPS_FLAG_SET=1
+        if [[ $# -gt 1 && "$2" != --* ]]; then
+          value="$2"
+          shift 2
+        else
+          shift 1
+        fi
+        NS_IPS="$value"
+        RERUN_ARGS+=(--ns-ips "$value")
+        ;;
       --edge-ips)
-        EDGE_IPS="$2"
-        RERUN_ARGS+=(--edge-ips "$2")
-        shift 2 ;;
+        local value=""
+        EDGE_IPS_FLAG_SET=1
+        if [[ $# -gt 1 && "$2" != --* ]]; then
+          value="$2"
+          shift 2
+        else
+          shift 1
+        fi
+        EDGE_IPS="$value"
+        RERUN_ARGS+=(--edge-ips "$value")
+        ;;
       --ns-label)
         NS_LABEL="$2"
         RERUN_ARGS+=(--ns-label "$2")
@@ -114,9 +134,17 @@ parse_args() {
         RERUN_ARGS+=(--api-endpoint "$2")
         shift 2 ;;
       --labels)
-        NODE_LABELS="$2"
-        RERUN_ARGS+=(--labels "$2")
-        shift 2 ;;
+        local value=""
+        NODE_LABELS_FLAG_SET=1
+        if [[ $# -gt 1 && "$2" != --* ]]; then
+          value="$2"
+          shift 2
+        else
+          shift 1
+        fi
+        NODE_LABELS="$value"
+        RERUN_ARGS+=(--labels "$value")
+        ;;
       --seed)
         SEED="$2"
         RERUN_ARGS+=(--seed "$2")
@@ -675,10 +703,12 @@ main() {
   prompt_if_empty IPS "All node IPs (comma separated)"
   IPS="$(normalize_csv "$IPS")"
   PRIMARY_IP="${IPS%%,*}"
-  prompt_if_empty NS_IPS "Nameserver IPs (comma separated, leave blank if none)"
+  if [[ "$NS_IPS_FLAG_SET" != "1" ]]; then
+    prompt_if_empty NS_IPS "Nameserver IPs (comma separated, leave blank if none)"
+  fi
   NS_IPS="$(normalize_csv "$NS_IPS")"
   local default_edge_ips=""
-  if [[ -z "$EDGE_IPS" ]]; then
+  if [[ "$EDGE_IPS_FLAG_SET" != "1" && -z "$EDGE_IPS" ]]; then
     IFS=',' read -r -a __ips_arr <<<"$IPS"
     IFS=',' read -r -a __ns_arr <<<"$NS_IPS"
     declare -A __ns_map=()
@@ -705,7 +735,7 @@ main() {
     fi
   fi
   EDGE_IPS="$(normalize_csv "$EDGE_IPS")"
-  if [[ -z "$NODE_LABELS" ]]; then
+  if [[ "$NODE_LABELS_FLAG_SET" != "1" && -z "$NODE_LABELS" ]]; then
     read -r -p "Node labels (comma separated, optional): " NODE_LABELS
   fi
   NODE_LABELS="$(normalize_csv "$NODE_LABELS")"
