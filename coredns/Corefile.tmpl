@@ -1,7 +1,7 @@
 {{- if .NameServers -}}
 .:53 {
-{{- range .NameServers }}
-    bind {{ .IPv4 }}
+{{- range .BindIPs }}
+    bind {{ . }}
 {{- end }}
     errors
     log

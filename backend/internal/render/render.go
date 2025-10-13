@@ -235,6 +235,15 @@ func (g *CoreDNSGenerator) Render() error {
 	}
 
 	// render Corefile
+	bindIPs := make([]string, 0, len(filteredNS))
+	for _, ns := range filteredNS {
+		ip := strings.TrimSpace(ns.IPv4)
+		if ip == "" {
+			continue
+		}
+		bindIPs = append(bindIPs, ip)
+	}
+	bindIPs = uniqueStrings(bindIPs)
 	coreTemplate, err := template.ParseFiles(g.Template)
 	if err != nil {
 		return err
@@ -249,10 +258,12 @@ func (g *CoreDNSGenerator) Render() error {
 	}
 	data := struct {
 		NameServers []infra.NameServer
+		BindIPs     []string
 		Zones       []zoneMeta
 		ZonesDir    string
 	}{
 		NameServers: filteredNS,
+		BindIPs:     bindIPs,
 		Zones:       zones,
 		ZonesDir:    zonesDir,
 	}
