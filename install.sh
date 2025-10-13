@@ -375,7 +375,7 @@ create_admin_user() {
 }
 
 write_node_files() {
-python3 - "$DATA_DIR" "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" <<'PY'
+python3 - "$DATA_DIR" "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" <<'PY'
 import json
 import sys
 from pathlib import Path
