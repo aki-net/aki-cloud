@@ -6,6 +6,7 @@ CONF_DIR="$DATA_DIR/openresty"
 SITES_DIR="$CONF_DIR/sites-enabled"
 
 mkdir -p "$SITES_DIR"
+mkdir -p /var/log/nginx
 
 # Generate nginx.conf if missing
 if [ ! -f "$CONF_DIR/nginx.conf" ]; then
