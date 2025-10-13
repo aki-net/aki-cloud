@@ -375,9 +375,7 @@ create_admin_user() {
 }
 
 write_node_files() {
-  local data_dir="$DATA_DIR"
-  shift  # remove DATA_DIR from positional parameters
-python3 - "$data_dir" "$@" <<'PY'
+python3 - "$DATA_DIR" "$@" <<'PY'
 import json
 import sys
 from pathlib import Path
