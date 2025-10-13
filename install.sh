@@ -320,6 +320,7 @@ ensure_system_user() {
 
 clone_or_update_repo() {
   if [[ -d "$INSTALL_DIR/.git" ]]; then
+    git config --global --add safe.directory "$INSTALL_DIR" >/dev/null 2>&1 || true
     log "Updating repository in $INSTALL_DIR"
     git -C "$INSTALL_DIR" fetch --all --prune
     local current_branch
@@ -345,6 +346,15 @@ maybe_bootstrap() {
   fi
 
   if command -v docker >/dev/null 2>&1 && [[ "$repo_present" == "1" ]]; then
+    if [[ $EUID -eq 0 && "$(id -un)" != "$SYSTEM_USER" ]]; then
+      ensure_system_user
+      log "Re-executing installer as $SYSTEM_USER"
+      exec sudo -H -u "$SYSTEM_USER" env \
+        SKIP_BOOTSTRAP=1 \
+        INSTALL_DIR="$INSTALL_DIR" \
+        SYSTEM_USER="$SYSTEM_USER" \
+        "$INSTALL_DIR/install.sh" "${RERUN_ARGS[@]}"
+    fi
     return
   fi
 
