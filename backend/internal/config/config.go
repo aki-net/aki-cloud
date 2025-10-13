@@ -5,10 +5,17 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// Config captures runtime configuration for the backend service.
+type LoginLockoutTier struct {
+	Failures     int
+	LockDuration time.Duration
+}
 
 // Config captures runtime configuration for the backend service.
 type Config struct {
@@ -38,6 +45,16 @@ type Config struct {
 	ACMEMaxPerCycle        int
 	ACMEWindowLimit        int
 	ACMEWindow             time.Duration
+	ClusterSecret          []byte
+	APIRatePerMinute       int
+	APIRateBurst           int
+	LoginRatePerMinute     int
+	LoginRateBurst         int
+	MaxRequestBodyBytes    int64
+	MaxHeaderBytes         int
+	IdleTimeout            time.Duration
+	LoginLockTiers         []LoginLockoutTier
+	LoginFailureReset      time.Duration
 }
 
 // Load reads configuration values from environment variables with sensible defaults.
@@ -57,19 +74,19 @@ func Load() (*Config, error) {
 	if nodeName == "" {
 		return nil, fmt.Errorf("NODE_NAME must be provided")
 	}
-	
+
 	// Read cluster secret for NODE_ID generation
 	clusterSecretBytes, err := os.ReadFile(clusterSecretFile)
 	if err != nil {
 		return nil, fmt.Errorf("unable to read cluster secret file: %w", err)
 	}
 	clusterSecret := strings.TrimSpace(string(clusterSecretBytes))
-	
+
 	// Generate NODE_ID deterministically from cluster_secret + node_name
 	data := fmt.Sprintf("%s:%s", clusterSecret, strings.ToLower(nodeName))
 	hash := sha256.Sum256([]byte(data))
 	hashStr := hex.EncodeToString(hash[:])
-	
+
 	// Format as UUID-like string
 	nodeID := fmt.Sprintf("%s-%s-%s-%s-%s",
 		hashStr[0:8],
@@ -98,7 +115,7 @@ func Load() (*Config, error) {
 	// OpenResty and CoreDNS run always
 	openRestyEnabled := true
 	coreDNSEnabled := true
-	
+
 	// NS configuration
 	nsLabel := getEnvDefault("NS_LABEL", "dns")
 	nsBaseDomain := getEnvDefault("NS_BASE_DOMAIN", "aki.cloud")
@@ -154,6 +171,46 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid SSL_ACME_WINDOW_SECONDS: %w", err)
 	}
+	loginLockTierSpec := strings.TrimSpace(os.Getenv("LOGIN_LOCK_TIERS"))
+	loginLockTiers, err := parseLockoutTiers(loginLockTierSpec)
+	if err != nil {
+		return nil, fmt.Errorf("invalid LOGIN_LOCK_TIERS: %w", err)
+	}
+	if len(loginLockTiers) == 0 {
+		loginLockTiers = defaultLockoutTiers()
+	}
+	loginFailureResetSeconds, err := getEnvInt("LOGIN_FAILURE_RESET_SECONDS", 86400)
+	if err != nil {
+		return nil, fmt.Errorf("invalid LOGIN_FAILURE_RESET_SECONDS: %w", err)
+	}
+	apiRatePerMinute, err := getEnvInt("API_RATE_LIMIT_PER_MIN", 300)
+	if err != nil {
+		return nil, fmt.Errorf("invalid API_RATE_LIMIT_PER_MIN: %w", err)
+	}
+	apiRateBurst, err := getEnvInt("API_RATE_LIMIT_BURST", 450)
+	if err != nil {
+		return nil, fmt.Errorf("invalid API_RATE_LIMIT_BURST: %w", err)
+	}
+	loginRatePerMinute, err := getEnvInt("LOGIN_RATE_LIMIT_PER_MIN", 10)
+	if err != nil {
+		return nil, fmt.Errorf("invalid LOGIN_RATE_LIMIT_PER_MIN: %w", err)
+	}
+	loginRateBurst, err := getEnvInt("LOGIN_RATE_LIMIT_BURST", 20)
+	if err != nil {
+		return nil, fmt.Errorf("invalid LOGIN_RATE_LIMIT_BURST: %w", err)
+	}
+	maxRequestBodyBytes, err := getEnvInt64("API_MAX_BODY_BYTES", 1<<20)
+	if err != nil {
+		return nil, fmt.Errorf("invalid API_MAX_BODY_BYTES: %w", err)
+	}
+	maxHeaderBytes, err := getEnvInt("API_MAX_HEADER_BYTES", 16384)
+	if err != nil {
+		return nil, fmt.Errorf("invalid API_MAX_HEADER_BYTES: %w", err)
+	}
+	idleTimeoutSeconds, err := getEnvInt("API_IDLE_TIMEOUT_SECONDS", 60)
+	if err != nil {
+		return nil, fmt.Errorf("invalid API_IDLE_TIMEOUT_SECONDS: %w", err)
+	}
 
 	return &Config{
 		DataDir:                dataDir,
@@ -182,6 +239,16 @@ func Load() (*Config, error) {
 		ACMEMaxPerCycle:        acmeMaxPerCycle,
 		ACMEWindowLimit:        acmeWindowLimit,
 		ACMEWindow:             time.Duration(acmeWindowSeconds) * time.Second,
+		ClusterSecret:          bytesTrim([]byte(clusterSecret)),
+		APIRatePerMinute:       apiRatePerMinute,
+		APIRateBurst:           apiRateBurst,
+		LoginRatePerMinute:     loginRatePerMinute,
+		LoginRateBurst:         loginRateBurst,
+		MaxRequestBodyBytes:    maxRequestBodyBytes,
+		MaxHeaderBytes:         maxHeaderBytes,
+		IdleTimeout:            time.Duration(idleTimeoutSeconds) * time.Second,
+		LoginLockTiers:         loginLockTiers,
+		LoginFailureReset:      time.Duration(loginFailureResetSeconds) * time.Second,
 	}, nil
 }
 
@@ -201,6 +268,18 @@ func getEnvInt(key string, def int) (int, error) {
 	return strconv.Atoi(v)
 }
 
+func getEnvInt64(key string, def int64) (int64, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return def, nil
+	}
+	i, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return i, nil
+}
+
 func getEnvBool(key string, def bool) (bool, error) {
 	v := os.Getenv(key)
 	if v == "" {
@@ -214,6 +293,62 @@ func getEnvBool(key string, def bool) (bool, error) {
 	default:
 		return false, fmt.Errorf("invalid boolean value %q", v)
 	}
+}
+
+func defaultLockoutTiers() []LoginLockoutTier {
+	return []LoginLockoutTier{
+		{Failures: 5, LockDuration: 30 * time.Second},
+		{Failures: 10, LockDuration: 5 * time.Minute},
+		{Failures: 20, LockDuration: 30 * time.Minute},
+		{Failures: 50, LockDuration: 2 * time.Hour},
+		{Failures: 100, LockDuration: 24 * time.Hour},
+	}
+}
+
+func parseLockoutTiers(spec string) ([]LoginLockoutTier, error) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return defaultLockoutTiers(), nil
+	}
+	if strings.EqualFold(spec, "none") {
+		return []LoginLockoutTier{}, nil
+	}
+	parts := strings.Split(spec, ",")
+	tiers := make([]LoginLockoutTier, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		segments := strings.Split(part, ":")
+		if len(segments) != 2 {
+			return nil, fmt.Errorf("invalid tier definition %q", part)
+		}
+		failuresStr := strings.TrimSpace(segments[0])
+		durationStr := strings.TrimSpace(segments[1])
+		failures, err := strconv.Atoi(failuresStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid tier threshold %q: %w", failuresStr, err)
+		}
+		if failures <= 0 {
+			continue
+		}
+		duration, err := time.ParseDuration(durationStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid tier duration %q: %w", durationStr, err)
+		}
+		if duration <= 0 {
+			continue
+		}
+		tiers = append(tiers, LoginLockoutTier{
+			Failures:     failures,
+			LockDuration: duration,
+		})
+	}
+	sort.Slice(tiers, func(i, j int) bool {
+		return tiers[i].Failures < tiers[j].Failures
+	})
+	return tiers, nil
 }
 
 func bytesTrim(v []byte) []byte {

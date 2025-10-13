@@ -581,3 +581,12 @@ const (
 	// NodeRoleNameServer indicates the node answers authoritative DNS.
 	NodeRoleNameServer NodeRole = "nameserver"
 )
+
+// LoginAttempt captures brute-force mitigation metadata.
+type LoginAttempt struct {
+	Key         string    `json:"key"`
+	Scope       string    `json:"scope"`
+	Failures    int       `json:"failures"`
+	LastFailure time.Time `json:"last_failure,omitempty"`
+	LockedUntil time.Time `json:"locked_until,omitempty"`
+}

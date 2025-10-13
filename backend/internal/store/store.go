@@ -33,6 +33,10 @@ func (s *Store) usersFile() string {
 	return filepath.Join(s.dataDir, "users", "users.json")
 }
 
+func (s *Store) loginAttemptsFile() string {
+	return filepath.Join(s.dataDir, "users", "login_attempts.json")
+}
+
 func (s *Store) versionsFile() string {
 	return filepath.Join(s.dataDir, "cluster", "versions.json")
 }

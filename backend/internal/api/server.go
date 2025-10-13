@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
+	"github.com/go-chi/httprate"
 	"github.com/go-chi/jwtauth/v5"
 	"github.com/google/uuid"
 	"github.com/miekg/dns"
@@ -44,6 +46,16 @@ type Server struct {
 	Sync            *syncsvc.Service
 	Infra           *infra.Controller
 	edgeReconcileMu sync.Mutex
+}
+
+const (
+	loginScopeEmail = "email"
+	loginScopeIP    = "ip"
+)
+
+type loginAttemptDescriptor struct {
+	Scope string
+	Key   string
 }
 
 type domainOverview struct {
@@ -241,11 +253,37 @@ func (s *Server) Routes() http.Handler {
 		MaxAge:           300,
 	}))
 
+	if s.Config.MaxRequestBodyBytes > 0 {
+		r.Use(limitBodySize(s.Config.MaxRequestBodyBytes))
+	}
+
+	apiRPS, apiBurst := computeRateLimits(s.Config.APIRatePerMinute, s.Config.APIRateBurst)
+	if apiRPS > 0 && apiBurst > 0 {
+		rps := apiRPS
+		burst := apiBurst
+		r.Use(func(next http.Handler) http.Handler {
+			limitNext := httprate.LimitByIP(rps, burst)(next)
+			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if skipRateLimitedPaths(req) {
+					next.ServeHTTP(w, req)
+					return
+				}
+				limitNext.ServeHTTP(w, req)
+			})
+		})
+	}
+
 	r.Get("/healthz", s.handleHealthz)
 	r.Get("/readyz", s.handleReadyz)
 	r.Get("/.well-known/acme-challenge/{token}", s.handleACMEChallenge)
 
-	r.Post("/auth/login", s.handleLogin)
+	loginHandler := http.HandlerFunc(s.handleLogin)
+	loginRPS, loginBurst := computeRateLimits(s.Config.LoginRatePerMinute, s.Config.LoginRateBurst)
+	if loginRPS > 0 && loginBurst > 0 {
+		r.With(httprate.LimitByIP(loginRPS, loginBurst)).Post("/auth/login", loginHandler)
+	} else {
+		r.Post("/auth/login", loginHandler)
+	}
 
 	// Sync endpoints use shared secret auth instead of JWT
 	r.Route("/api/v1/sync", func(r chi.Router) {
@@ -478,15 +516,32 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid payload")
 		return
 	}
-	user, err := s.Store.FindUserByEmail(strings.ToLower(req.Email))
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	ip := strings.TrimSpace(clientIPFromRequest(r))
+	hashedIP := s.hashIP(ip)
+	attempts := buildAttemptDescriptors(email, hashedIP)
+	now := time.Now().UTC()
+	if locked, lockUntil, _ := s.loginAttemptsLocked(attempts, now); locked {
+		retryAfter := int(time.Until(lockUntil).Seconds())
+		if retryAfter < 1 {
+			retryAfter = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		writeError(w, http.StatusTooManyRequests, "login temporarily locked")
+		return
+	}
+	user, err := s.Store.FindUserByEmail(email)
 	if err != nil {
+		s.recordLoginFailure(attempts, now)
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+		s.recordLoginFailure(attempts, now)
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
+	s.resetLoginAttempts(attempts)
 	token, err := s.Auth.IssueToken(*user)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to issue token")
@@ -1867,6 +1922,243 @@ func (s *Server) handleSyncPush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "synced"})
+}
+
+func computeRateLimits(perMinute, burst int) (int, int) {
+	if perMinute <= 0 {
+		return 0, 0
+	}
+	rps := perMinute / 60
+	if rps <= 0 {
+		rps = 1
+	}
+	if burst <= 0 {
+		burst = rps * 2
+	}
+	if burst < rps {
+		burst = rps
+	}
+	return rps, burst
+}
+
+func buildAttemptDescriptors(email string, hashedIP string) []loginAttemptDescriptor {
+	descriptors := make([]loginAttemptDescriptor, 0, 2)
+	seen := make(map[string]struct{}, 2)
+	if email != "" {
+		key := loginAttemptKey(loginScopeEmail, email)
+		seen[key] = struct{}{}
+		descriptors = append(descriptors, loginAttemptDescriptor{Scope: loginScopeEmail, Key: key})
+	}
+	if hashedIP != "" {
+		key := loginAttemptKey(loginScopeIP, hashedIP)
+		if _, ok := seen[key]; !ok {
+			descriptors = append(descriptors, loginAttemptDescriptor{Scope: loginScopeIP, Key: key})
+		}
+	}
+	return descriptors
+}
+
+func loginAttemptKey(scope, value string) string {
+	return scope + ":" + value
+}
+
+func clientIPFromRequest(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		for _, part := range parts {
+			candidate := strings.TrimSpace(part)
+			if candidate != "" {
+				return candidate
+			}
+		}
+	}
+	if xr := strings.TrimSpace(r.Header.Get("X-Real-IP")); xr != "" {
+		return xr
+	}
+	remote := strings.TrimSpace(r.RemoteAddr)
+	if host, _, err := net.SplitHostPort(remote); err == nil && host != "" {
+		return host
+	}
+	return remote
+}
+
+func (s *Server) hashIP(ip string) string {
+	ip = strings.TrimSpace(ip)
+	if ip == "" || len(s.Config.ClusterSecret) == 0 {
+		return ""
+	}
+	normalized := strings.ToLower(ip)
+	seed := append(append([]byte{}, s.Config.ClusterSecret...), ':')
+	seed = append(seed, normalized...)
+	sum := sha256.Sum256(seed)
+	return hex.EncodeToString(sum[:])
+}
+
+func (s *Server) loginAttemptsLocked(attempts []loginAttemptDescriptor, now time.Time) (bool, time.Time, string) {
+	if len(attempts) == 0 {
+		return false, time.Time{}, ""
+	}
+	cutoff := time.Time{}
+	if s.Config.LoginFailureReset > 0 {
+		cutoff = now.Add(-s.Config.LoginFailureReset)
+	}
+	locked := false
+	var lockUntil time.Time
+	var scope string
+	for _, attempt := range attempts {
+		if attempt.Key == "" {
+			continue
+		}
+		record, ok, err := s.Store.GetLoginAttempt(attempt.Key)
+		if err != nil {
+			log.Printf("auth: load login attempt for %s failed: %v", attempt.Key, err)
+			continue
+		}
+		if !ok {
+			continue
+		}
+		if !cutoff.IsZero() && !record.LastFailure.IsZero() && record.LastFailure.Before(cutoff) && record.LockedUntil.Before(now) {
+			if err := s.Store.ResetLoginAttempts(attempt.Key); err != nil {
+				log.Printf("auth: cleanup login attempt for %s failed: %v", attempt.Key, err)
+			}
+			continue
+		}
+		if record.LockedUntil.After(now) {
+			locked = true
+			if record.LockedUntil.After(lockUntil) {
+				lockUntil = record.LockedUntil
+				scope = record.Scope
+			}
+		}
+	}
+	return locked, lockUntil, scope
+}
+
+func (s *Server) recordLoginFailure(attempts []loginAttemptDescriptor, now time.Time) {
+	if len(attempts) == 0 {
+		return
+	}
+	if err := s.Store.ModifyLoginAttempts(func(records map[string]models.LoginAttempt) (bool, error) {
+		changed := false
+		seen := make(map[string]struct{}, len(attempts))
+		cutoff := time.Time{}
+		if s.Config.LoginFailureReset > 0 {
+			cutoff = now.Add(-s.Config.LoginFailureReset)
+		}
+		for _, attempt := range attempts {
+			if attempt.Key == "" {
+				continue
+			}
+			if _, ok := seen[attempt.Key]; ok {
+				continue
+			}
+			seen[attempt.Key] = struct{}{}
+			record := records[attempt.Key]
+			record.Key = attempt.Key
+			if attempt.Scope != "" {
+				record.Scope = attempt.Scope
+			}
+			if !cutoff.IsZero() && !record.LastFailure.IsZero() && record.LastFailure.Before(cutoff) && record.LockedUntil.Before(now) {
+				record.Failures = 0
+				record.LockedUntil = time.Time{}
+			}
+			record.Failures++
+			record.LastFailure = now
+			lockUntil := s.lockoutUntil(record.Failures, now)
+			if lockUntil.After(record.LockedUntil) {
+				record.LockedUntil = lockUntil
+			}
+			records[attempt.Key] = record
+			changed = true
+		}
+		if !cutoff.IsZero() {
+			nowLocal := now
+			for key, record := range records {
+				if record.LockedUntil.After(nowLocal) {
+					continue
+				}
+				if record.Failures <= 0 && (record.LastFailure.IsZero() || record.LastFailure.Before(cutoff)) {
+					delete(records, key)
+					changed = true
+				}
+			}
+		}
+		return changed, nil
+	}); err != nil {
+		log.Printf("auth: update login attempts failed: %v", err)
+	}
+}
+
+func (s *Server) resetLoginAttempts(attempts []loginAttemptDescriptor) {
+	if len(attempts) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(attempts))
+	seen := make(map[string]struct{}, len(attempts))
+	for _, attempt := range attempts {
+		if attempt.Key == "" {
+			continue
+		}
+		if _, ok := seen[attempt.Key]; ok {
+			continue
+		}
+		seen[attempt.Key] = struct{}{}
+		keys = append(keys, attempt.Key)
+	}
+	if len(keys) == 0 {
+		return
+	}
+	if err := s.Store.ResetLoginAttempts(keys...); err != nil {
+		log.Printf("auth: reset login attempts failed: %v", err)
+	}
+}
+
+func (s *Server) lockoutUntil(failures int, now time.Time) time.Time {
+	if failures <= 0 {
+		return time.Time{}
+	}
+	var lockUntil time.Time
+	for _, tier := range s.Config.LoginLockTiers {
+		if tier.Failures <= 0 || tier.LockDuration <= 0 {
+			continue
+		}
+		if failures < tier.Failures {
+			break
+		}
+		candidate := now.Add(tier.LockDuration)
+		if candidate.After(lockUntil) {
+			lockUntil = candidate
+		}
+	}
+	return lockUntil
+}
+
+func limitBodySize(limit int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		if limit <= 0 {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Body != nil {
+				r.Body = http.MaxBytesReader(w, r.Body, limit)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func skipRateLimitedPaths(r *http.Request) bool {
+	path := r.URL.Path
+	switch {
+	case path == "/healthz", path == "/readyz":
+		return true
+	case strings.HasPrefix(path, "/.well-known/acme-challenge/"):
+		return true
+	case strings.HasPrefix(path, "/api/v1/sync/"):
+		return true
+	default:
+		return false
+	}
 }
 
 type userContextKey struct{}
