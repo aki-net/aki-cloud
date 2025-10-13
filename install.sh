@@ -785,7 +785,9 @@ main() {
     create_admin_user "$ADMIN_EMAIL" "$ADMIN_PASS" "$admin_id"
 
     # Generate NODE_ID deterministically from cluster_secret + node_name
-    NODE_ID="$(echo -n "${cluster_secret}:$(echo "$NODE_NAME" | tr '[:upper:]' '[:lower:]')" | openssl dgst -sha256 | awk '{print $2}' | sed 's/\(.\{8\}\)\(.\{4\}\)\(.\{4\}\)\(.\{4\}\)\(.\{12\}\)/\1-\2-\3-\4-\5/')"
+    node_hash="$(echo -n "${cluster_secret}:$(echo "$NODE_NAME" | tr '[:upper:]' '[:lower:]')" | openssl dgst -sha256 | awk '{print $2}')"
+    node_hash32="${node_hash:0:32}"
+    NODE_ID="$(printf '%s' "$node_hash32" | sed 's/\(.\{8\}\)\(.\{4\}\)\(.\{4\}\)\(.\{4\}\)\(.\{12\}\)/\1-\2-\3-\4-\5/')"
     
     write_node_files "$NODE_ID" "$NODE_NAME" "$IPS" "$NS_IPS" "$EDGE_IPS" "$NODE_LABELS" "$NS_LABEL" "$NS_BASE_DOMAIN" "$API_ENDPOINT"
 
@@ -826,7 +828,9 @@ main() {
     write_secret_files "$SECRETS_SUPPLIED" "$JWT_SECRET_INPUT"
     
     # Generate NODE_ID deterministically from cluster_secret + node_name
-    NODE_ID="$(echo -n "${SECRETS_SUPPLIED}:$(echo "$NODE_NAME" | tr '[:upper:]' '[:lower:]')" | openssl dgst -sha256 | awk '{print $2}' | sed 's/\(.\{8\}\)\(.\{4\}\)\(.\{4\}\)\(.\{4\}\)\(.\{12\}\)/\1-\2-\3-\4-\5/')"
+    node_hash="$(echo -n "${SECRETS_SUPPLIED}:$(echo "$NODE_NAME" | tr '[:upper:]' '[:lower:]')" | openssl dgst -sha256 | awk '{print $2}')"
+    node_hash32="${node_hash:0:32}"
+    NODE_ID="$(printf '%s' "$node_hash32" | sed 's/\(.\{8\}\)\(.\{4\}\)\(.\{4\}\)\(.\{4\}\)\(.\{12\}\)/\1-\2-\3-\4-\5/')"
     
     write_node_files "$NODE_ID" "$NODE_NAME" "$IPS" "$NS_IPS" "$EDGE_IPS" "$NODE_LABELS" "$NS_LABEL" "$NS_BASE_DOMAIN" "$API_ENDPOINT"
     pull_snapshot "$SEED" "$SECRETS_SUPPLIED"
