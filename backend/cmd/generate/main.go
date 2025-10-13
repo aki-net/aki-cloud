@@ -18,6 +18,16 @@ func main() {
 	var nginxTemplate string
 	var sitesTemplate string
 	var openrestyOut string
+	
+	// Read NS configuration from environment
+	nsLabel := os.Getenv("NS_LABEL")
+	if nsLabel == "" {
+		nsLabel = "dns" // default
+	}
+	nsBaseDomain := os.Getenv("NS_BASE_DOMAIN")
+	if nsBaseDomain == "" {
+		nsBaseDomain = "aki.cloud" // default
+	}
 
 	flag.StringVar(&dataDir, "data-dir", "./data", "Path to data directory")
 	flag.StringVar(&corednsTemplate, "coredns-template", "./coredns/Corefile.tmpl", "CoreDNS template path")
@@ -41,21 +51,21 @@ func main() {
 
 	switch component {
 	case "coredns":
-		gen := render.CoreDNSGenerator{Store: store, Infra: infraCtl, DataDir: dataDir, Template: corednsTemplate}
+		gen := render.CoreDNSGenerator{Store: store, Infra: infraCtl, DataDir: dataDir, Template: corednsTemplate, NSLabel: nsLabel, NSBaseDomain: nsBaseDomain}
 		if err := gen.Render(); err != nil {
 			log.Fatalf("render coredns: %v", err)
 		}
 	case "openresty":
-		gen := render.OpenRestyGenerator{Store: store, Infra: infraCtl, DataDir: dataDir, NginxTmpl: nginxTemplate, SitesTmpl: sitesTemplate, OutputDir: openrestyOut}
+		gen := render.OpenRestyGenerator{Store: store, Infra: infraCtl, DataDir: dataDir, NginxTmpl: nginxTemplate, SitesTmpl: sitesTemplate, OutputDir: openrestyOut, NSLabel: nsLabel, NSBaseDomain: nsBaseDomain}
 		if err := gen.Render(); err != nil {
 			log.Fatalf("render openresty: %v", err)
 		}
 	case "all":
-		corednsGen := render.CoreDNSGenerator{Store: store, Infra: infraCtl, DataDir: dataDir, Template: corednsTemplate}
+		corednsGen := render.CoreDNSGenerator{Store: store, Infra: infraCtl, DataDir: dataDir, Template: corednsTemplate, NSLabel: nsLabel, NSBaseDomain: nsBaseDomain}
 		if err := corednsGen.Render(); err != nil {
 			log.Fatalf("render coredns: %v", err)
 		}
-		openrestyGen := render.OpenRestyGenerator{Store: store, Infra: infraCtl, DataDir: dataDir, NginxTmpl: nginxTemplate, SitesTmpl: sitesTemplate, OutputDir: openrestyOut}
+		openrestyGen := render.OpenRestyGenerator{Store: store, Infra: infraCtl, DataDir: dataDir, NginxTmpl: nginxTemplate, SitesTmpl: sitesTemplate, OutputDir: openrestyOut, NSLabel: nsLabel, NSBaseDomain: nsBaseDomain}
 		if err := openrestyGen.Render(); err != nil {
 			log.Fatalf("render openresty: %v", err)
 		}

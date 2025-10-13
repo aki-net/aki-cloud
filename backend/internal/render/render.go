@@ -24,20 +24,24 @@ import (
 
 // CoreDNSGenerator renders CoreDNS configuration using templates.
 type CoreDNSGenerator struct {
-	Store    *store.Store
-	Infra    *infra.Controller
-	DataDir  string
-	Template string
+	Store        *store.Store
+	Infra        *infra.Controller
+	DataDir      string
+	Template     string
+	NSLabel      string
+	NSBaseDomain string
 }
 
 // OpenRestyGenerator renders OpenResty configs.
 type OpenRestyGenerator struct {
-	Store     *store.Store
-	Infra     *infra.Controller
-	DataDir   string
-	NginxTmpl string
-	SitesTmpl string
-	OutputDir string
+	Store        *store.Store
+	Infra        *infra.Controller
+	DataDir      string
+	NginxTmpl    string
+	SitesTmpl    string
+	OutputDir    string
+	NSLabel      string
+	NSBaseDomain string
 }
 
 // ZoneFile represents a DNS zone rendering payload.
@@ -107,9 +111,18 @@ func (g *CoreDNSGenerator) Render() error {
 				continue
 			}
 			// Create a minimal NS entry for local IP binding
+			// Use NS configuration from environment variables
+			nsLabel := g.NSLabel
+			if nsLabel == "" {
+				nsLabel = "dns" // fallback default
+			}
+			nsBaseDomain := g.NSBaseDomain
+			if nsBaseDomain == "" {
+				nsBaseDomain = "aki.cloud" // fallback default
+			}
 			filteredNS = append(filteredNS, infra.NameServer{
 				IPv4: ip,
-				FQDN: fmt.Sprintf("%s.%s.%s", local.Name, local.NSLabel, local.NSBaseDomain),
+				FQDN: fmt.Sprintf("%s.%s.%s", local.Name, nsLabel, nsBaseDomain),
 			})
 		}
 	}
