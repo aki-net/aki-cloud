@@ -530,6 +530,13 @@ for existing in nodes:
         existing["ns_base_domain"] = ns_base
         existing["api_endpoint"] = api_endpoint
         existing["labels"] = node["labels"]
+        existing.pop("deleted_at", None)
+        existing["updated_at"] = now_iso()
+        version = existing.get("version") or {}
+        version["counter"] = 0
+        version["node_id"] = ""
+        version["updated_unix"] = now_unix()
+        existing["version"] = version
         updated = True
         break
 
@@ -549,7 +556,7 @@ if not updated:
         "updated_at": timestamp,
         "version": {
             "counter": 0,
-            "node_id": node_id,
+            "node_id": "",
             "updated_unix": now_unix(),
         },
     })

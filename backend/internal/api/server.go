@@ -1788,7 +1788,7 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 	desired := cloneNode(*local)
 	changed := false
 
-	if desired.Version.NodeID != s.Config.NodeID {
+	if desired.Version.NodeID != s.Config.NodeID || desired.Version.Counter <= 0 {
 		changed = true
 	}
 
