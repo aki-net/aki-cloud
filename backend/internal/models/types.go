@@ -329,13 +329,10 @@ type Node struct {
 	Name         string       `json:"name"`
 	IPs          []string     `json:"ips"`
 	NSIPs        []string     `json:"ns_ips"`
-	NSManual     bool         `json:"ns_manual"`
 	EdgeIPs      []string     `json:"edge_ips,omitempty"`
-	EdgeManual   bool         `json:"edge_manual"`
 	NSLabel      string       `json:"ns_label,omitempty"`
 	NSBase       string       `json:"ns_base_domain,omitempty"`
 	APIEndpoint  string       `json:"api_endpoint,omitempty"`
-	Roles        []NodeRole   `json:"roles,omitempty"`
 	Labels       []string     `json:"labels,omitempty"`
 	CreatedAt    time.Time    `json:"created_at"`
 	UpdatedAt    time.Time    `json:"updated_at"`
@@ -348,6 +345,9 @@ type Node struct {
 	HealthyEdges int          `json:"healthy_edges,omitempty"`
 	TotalEdges   int          `json:"total_edges,omitempty"`
 	LastHealthAt time.Time    `json:"last_health_at,omitempty"`
+	
+	// Computed field for JSON serialization
+	Roles []NodeRole `json:"roles,omitempty"`
 }
 
 // ComputeEdgeIPs normalises node metadata and ensures edge IPs are populated.
@@ -359,59 +359,14 @@ func (n *Node) ComputeEdgeIPs() {
 
 	n.IPs = normalizeIPs(n.IPs)
 	n.NSIPs = normalizeIPs(n.NSIPs)
-	originalEdges := normalizeIPs(n.EdgeIPs)
-	n.EdgeIPs = originalEdges
+	n.EdgeIPs = normalizeIPs(n.EdgeIPs)
 	n.Labels = normalizeLabels(n.Labels)
-
-	if len(n.NSIPs) == 0 && strings.TrimSpace(n.NSLabel) != "" && !n.NSManual {
-		defaultNS := make([]string, 0, len(n.IPs))
-		defaultNS = append(defaultNS, n.IPs...)
-		if len(defaultNS) == 0 {
-			defaultNS = append(defaultNS, originalEdges...)
-		}
-		n.NSIPs = normalizeIPs(defaultNS)
-	}
 
 	if n.IsDeleted() {
 		n.EdgeIPs = nil
 		n.NSIPs = nil
-		n.NSManual = false
 		n.Roles = nil
 		return
-	}
-
-	n.Roles = nil
-	manual := n.EdgeManual
-	if manual {
-		n.EdgeIPs = originalEdges
-	} else {
-		nsSet := make(map[string]struct{}, len(n.NSIPs))
-		for _, ip := range n.NSIPs {
-			if ip == "" {
-				continue
-			}
-			nsSet[ip] = struct{}{}
-		}
-		candidates := make([]string, 0, len(n.IPs))
-		for _, ip := range n.IPs {
-			if ip == "" {
-				continue
-			}
-			if _, isNS := nsSet[ip]; isNS {
-				continue
-			}
-			candidates = append(candidates, ip)
-		}
-		if len(candidates) == 0 && len(originalEdges) > 0 {
-			candidates = append(candidates, originalEdges...)
-		}
-		if len(candidates) == 0 {
-			candidates = append(candidates, n.NSIPs...)
-		}
-		n.EdgeIPs = normalizeIPs(candidates)
-		if len(n.EdgeIPs) == 0 {
-			n.EdgeIPs = []string{}
-		}
 	}
 
 	// Ensure NS and Edge IPs are part of the general IP list.
@@ -424,9 +379,17 @@ func (n *Node) ComputeEdgeIPs() {
 		}
 	}
 	n.IPs = normalizeIPs(n.IPs)
+	
+	// Compute roles based on IP configuration
+	n.Roles = n.GetRoles()
+}
 
-	n.EdgeManual = manual
-
+// GetRoles returns computed roles based on IP configuration
+func (n Node) GetRoles() []NodeRole {
+	if n.IsDeleted() {
+		return nil
+	}
+	
 	roles := make([]NodeRole, 0, 2)
 	if len(n.EdgeIPs) > 0 {
 		roles = append(roles, NodeRoleEdge)
@@ -434,7 +397,7 @@ func (n *Node) ComputeEdgeIPs() {
 	if len(n.NSIPs) > 0 {
 		roles = append(roles, NodeRoleNameServer)
 	}
-	n.Roles = roles
+	return roles
 }
 
 // HasRole reports whether the node is configured for the given role.
@@ -442,12 +405,15 @@ func (n Node) HasRole(role NodeRole) bool {
 	if n.IsDeleted() {
 		return false
 	}
-	for _, r := range n.Roles {
-		if r == role {
-			return true
-		}
+	
+	switch role {
+	case NodeRoleEdge:
+		return len(n.EdgeIPs) > 0
+	case NodeRoleNameServer:
+		return len(n.NSIPs) > 0
+	default:
+		return false
 	}
-	return false
 }
 
 // NodeStatus represents the current health gate for a node's edge capacity.

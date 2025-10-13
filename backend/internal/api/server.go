@@ -1478,9 +1478,7 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 		Name        *string   `json:"name"`
 		IPs         *[]string `json:"ips"`
 		NSIPs       *[]string `json:"ns_ips"`
-		NSManual    *bool     `json:"ns_manual"`
 		EdgeIPs     *[]string `json:"edge_ips"`
-		EdgeManual  *bool     `json:"edge_manual"`
 		NSLabel     *string   `json:"ns_label"`
 		NSBase      *string   `json:"ns_base_domain"`
 		APIEndpoint *string   `json:"api_endpoint"`
@@ -1528,21 +1526,9 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	}
 	if payload.NSIPs != nil {
 		existing.NSIPs = filterEmpty(*payload.NSIPs)
-		existing.NSManual = true
 	}
 	if payload.EdgeIPs != nil {
 		existing.EdgeIPs = filterEmpty(*payload.EdgeIPs)
-		existing.EdgeManual = true
-	}
-	if payload.NSManual != nil {
-		existing.NSManual = *payload.NSManual
-		if !existing.NSManual && len(existing.NSIPs) == 0 {
-			// allow automatic discovery on next compute
-			existing.NSIPs = nil
-		}
-	}
-	if payload.EdgeManual != nil {
-		existing.EdgeManual = *payload.EdgeManual
 	}
 	if payload.NSLabel != nil {
 		existing.NSLabel = strings.TrimSpace(*payload.NSLabel)
@@ -1556,7 +1542,6 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	if payload.Labels != nil {
 		existing.Labels = filterEmpty(*payload.Labels)
 	}
-	existing.Roles = nil
 	existing.ComputeEdgeIPs()
 	now := time.Now().UTC()
 	existing.Version.Counter++
