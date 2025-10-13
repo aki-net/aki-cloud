@@ -1313,6 +1313,10 @@ func (s *Server) handleReassignAllDomainEdges(w http.ResponseWriter, r *http.Req
 		prevIP := rec.Edge.AssignedIP
 		prevNode := rec.Edge.AssignedNodeID
 
+		baseSalt := computeDomainSalt(rec.Domain)
+		if rec.Edge.AssignmentSalt != baseSalt {
+			rec.Edge.AssignmentSalt = baseSalt
+		}
 		rec.Edge.AssignedIP = ""
 		rec.Edge.AssignedNodeID = ""
 		rec.Edge.AssignedAt = time.Time{}
