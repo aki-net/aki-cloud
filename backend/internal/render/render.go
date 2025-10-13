@@ -623,10 +623,13 @@ func (g *OpenRestyGenerator) Render() error {
 }
 
 type localEdgeNode struct {
-	NodeID  string   `json:"node_id"`
-	IPs     []string `json:"ips"`
-	NSIPs   []string `json:"ns_ips"`
-	EdgeIPs []string `json:"edge_ips"`
+	NodeID       string   `json:"node_id"`
+	Name         string   `json:"name"`
+	IPs          []string `json:"ips"`
+	NSIPs        []string `json:"ns_ips"`
+	EdgeIPs      []string `json:"edge_ips"`
+	NSLabel      string   `json:"ns_label"`
+	NSBaseDomain string   `json:"ns_base_domain"`
 }
 
 func (g *OpenRestyGenerator) localNodeInfo() localEdgeNode {
