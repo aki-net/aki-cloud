@@ -482,7 +482,6 @@ func (s *Store) SaveNodes(nodes []models.Node) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	nodes = dedupeNodes(nodes)
-	overrides := make(map[string]nodeOverride)
 	for i := range nodes {
 		nodes[i].ComputeEdgeIPs()
 		nodes[i].Status = ""
@@ -490,23 +489,8 @@ func (s *Store) SaveNodes(nodes []models.Node) error {
 		nodes[i].HealthyEdges = 0
 		nodes[i].TotalEdges = 0
 		nodes[i].LastHealthAt = time.Time{}
-		override := nodeOverride{}
-		if nodes[i].EdgeManual {
-			override.EdgeManual = true
-			override.EdgeIPs = append([]string{}, nodes[i].EdgeIPs...)
-		}
-		if nodes[i].NSManual {
-			override.NSManual = true
-			override.NSIPs = append([]string{}, nodes[i].NSIPs...)
-		}
-		if override.EdgeManual || override.NSManual {
-			overrides[nodes[i].ID] = override
-		}
 	}
-	if err := writeJSONAtomic(s.nodesFile(), nodes); err != nil {
-		return err
-	}
-	return s.saveNodeOverrides(overrides)
+	return writeJSONAtomic(s.nodesFile(), nodes)
 }
 
 type nodeOverride struct {
@@ -547,27 +531,8 @@ func (s *Store) saveNodeOverrides(overrides map[string]nodeOverride) error {
 }
 
 func (s *Store) applyNodeOverrides(nodes []models.Node) []models.Node {
-	overrides, err := s.loadNodeOverrides()
-	if err != nil {
-		log.Printf("store: load node overrides failed: %v", err)
-		return nodes
-	}
-	if len(overrides) == 0 {
-		return nodes
-	}
+	// No longer using manual overrides, just compute edge IPs
 	for i := range nodes {
-		override, ok := overrides[nodes[i].ID]
-		if !ok {
-			continue
-		}
-		if override.NSManual {
-			nodes[i].NSManual = true
-			nodes[i].NSIPs = append([]string{}, override.NSIPs...)
-		}
-		if override.EdgeManual {
-			nodes[i].EdgeManual = true
-			nodes[i].EdgeIPs = append([]string{}, override.EdgeIPs...)
-		}
 		nodes[i].ComputeEdgeIPs()
 	}
 	return nodes
@@ -586,7 +551,6 @@ func (s *Store) SaveLocalNodeSnapshot(node models.Node) error {
 		"ns_label":       node.NSLabel,
 		"ns_base_domain": node.NSBase,
 		"api_endpoint":   node.APIEndpoint,
-		"edge_manual":    node.EdgeManual,
 	}
 	path := filepath.Join(s.dataDir, "cluster", "node.json")
 	return writeJSONAtomic(path, snapshot)

@@ -1417,20 +1417,13 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		node.ID = uuid.NewString()
 	}
 	node.Name = strings.TrimSpace(node.Name)
-	node.NSLabel = strings.TrimSpace(node.NSLabel)
-	node.NSBase = strings.TrimSpace(node.NSBase)
+	node.NSLabel = s.Config.NSLabel // Always use config value
+	node.NSBase = s.Config.NSBaseDomain // Always use config value
 	node.APIEndpoint = strings.TrimSpace(node.APIEndpoint)
 	node.IPs = filterEmpty(node.IPs)
 	node.NSIPs = filterEmpty(node.NSIPs)
 	node.EdgeIPs = filterEmpty(node.EdgeIPs)
 	node.Labels = filterEmpty(node.Labels)
-	if len(node.NSIPs) > 0 {
-		node.NSManual = true
-	}
-	if len(node.EdgeIPs) > 0 {
-		node.EdgeManual = true
-	}
-	node.Roles = nil
 	node.ComputeEdgeIPs()
 	now := time.Now().UTC()
 	node.Version.Counter++
@@ -1479,8 +1472,6 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 		IPs         *[]string `json:"ips"`
 		NSIPs       *[]string `json:"ns_ips"`
 		EdgeIPs     *[]string `json:"edge_ips"`
-		NSLabel     *string   `json:"ns_label"`
-		NSBase      *string   `json:"ns_base_domain"`
 		APIEndpoint *string   `json:"api_endpoint"`
 		Labels      *[]string `json:"labels"`
 	}
@@ -1510,8 +1501,9 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 					hashStr[20:32],
 				)
 				
-				// Delete old node record
-				if err := s.Store.DeleteNode(existing.ID); err != nil {
+				// Mark old node as deleted
+				now := time.Now().UTC()
+				if err := s.Store.MarkNodeDeleted(existing.ID, s.Config.NodeID, now); err != nil {
 					writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to remove old node: %v", err))
 					return
 				}
@@ -1530,12 +1522,9 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	if payload.EdgeIPs != nil {
 		existing.EdgeIPs = filterEmpty(*payload.EdgeIPs)
 	}
-	if payload.NSLabel != nil {
-		existing.NSLabel = strings.TrimSpace(*payload.NSLabel)
-	}
-	if payload.NSBase != nil {
-		existing.NSBase = strings.TrimSpace(*payload.NSBase)
-	}
+	// NS configuration always comes from config
+	existing.NSLabel = s.Config.NSLabel
+	existing.NSBase = s.Config.NSBaseDomain
 	if payload.APIEndpoint != nil {
 		existing.APIEndpoint = strings.TrimSpace(*payload.APIEndpoint)
 	}
@@ -1798,28 +1787,21 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 	original := cloneNode(*local)
 	desired := cloneNode(*local)
 	changed := false
-	if desired.EdgeManual || desired.NSManual {
-		// Admin override in place; avoid mutating automatically discovered settings.
-		s.pruneUnusedEdgeHealth()
-		s.TriggerDomainReconcile(fmt.Sprintf("node-manual:%s", desired.ID))
-		return true
-	}
 
-	// Edge role is now determined by admin configuration, not environment variables
-	// If EdgeIPs are empty and not manually set, auto-discover from node IPs
-	if len(desired.EdgeIPs) == 0 && !desired.EdgeManual && len(desired.IPs) > 0 {
+	// Auto-discover Edge IPs if not configured
+	if len(desired.EdgeIPs) == 0 && len(desired.IPs) > 0 {
 		desired.EdgeIPs = append([]string{}, desired.IPs...)
 		changed = true
 	}
 
+	// Auto-discover NS IPs if CoreDNS is enabled and not configured
 	shouldHaveNS := s.Config.EnableCoreDNS
 	if !shouldHaveNS {
 		if len(desired.NSIPs) > 0 {
 			desired.NSIPs = nil
-			desired.NSManual = false
 			changed = true
 		}
-	} else if len(desired.NSIPs) == 0 && len(desired.IPs) > 0 && strings.TrimSpace(desired.NSLabel) != "" && !desired.NSManual {
+	} else if len(desired.NSIPs) == 0 && len(desired.IPs) > 0 && strings.TrimSpace(desired.NSLabel) != "" {
 		desired.NSIPs = append([]string{}, desired.IPs...)
 		changed = true
 	}
@@ -1858,7 +1840,7 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 	}
 
 	if len(removed) > 0 {
-		s.cleanupEdgeHealth(models.Node{EdgeIPs: removed, EdgeManual: true})
+		s.cleanupEdgeHealth(models.Node{EdgeIPs: removed})
 	}
 	if len(desired.EdgeIPs) > 0 {
 		s.bootstrapEdgeHealth(desired)

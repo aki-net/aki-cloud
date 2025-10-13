@@ -569,7 +569,6 @@ func (n *Node) MarkDeleted(ts time.Time) {
 	n.EdgeIPs = nil
 	n.NSIPs = nil
 	n.Roles = nil
-	n.EdgeManual = true
 	n.Labels = nil
 }
 

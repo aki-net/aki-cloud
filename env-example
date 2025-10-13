@@ -8,6 +8,10 @@ FRONTEND_API_BASE=http://YOUR_IP:8080
 # No need to specify it in .env
 NODE_NAME=node-1
 
+# DNS configuration (set during installation, not editable from UI)
+NS_LABEL=dns
+NS_BASE_DOMAIN=aki.cloud
+
 # Secrets (must be consistent across cluster)
 JWT_SECRET=your-jwt-secret-here
 CLUSTER_SECRET_FILE=/data/cluster/secret

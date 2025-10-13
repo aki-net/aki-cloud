@@ -20,6 +20,8 @@ type Config struct {
 	EnableOpenResty        bool
 	EnableCoreDNS          bool
 	JWTSecret              []byte
+	NSLabel                string
+	NSBaseDomain           string
 	SyncInterval           time.Duration
 	ReloadDebounce         time.Duration
 	HealthInterval         time.Duration
@@ -93,12 +95,13 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("invalid RELOAD_DEBOUNCE_MS: %w", err)
 	}
 
-	// OpenResty is now dynamically controlled based on node roles, not environment variables
-	openRestyEnabled := true  // Keep for backward compatibility, but not used for role determination
-	coreDNSEnabled, err := getEnvBool("ENABLE_COREDNS", true)
-	if err != nil {
-		return nil, fmt.Errorf("invalid ENABLE_COREDNS: %w", err)
-	}
+	// OpenResty and CoreDNS run always
+	openRestyEnabled := true
+	coreDNSEnabled := true
+	
+	// NS configuration
+	nsLabel := getEnvDefault("NS_LABEL", "dns")
+	nsBaseDomain := getEnvDefault("NS_BASE_DOMAIN", "aki.cloud")
 
 	healthIntervalSeconds, err := getEnvInt("HEALTH_CHECK_INTERVAL_SECONDS", 30)
 	if err != nil {
@@ -161,6 +164,8 @@ func Load() (*Config, error) {
 		EnableOpenResty:        openRestyEnabled,
 		EnableCoreDNS:          coreDNSEnabled,
 		JWTSecret:              bytesTrim(jwtSecret),
+		NSLabel:                nsLabel,
+		NSBaseDomain:           nsBaseDomain,
 		SyncInterval:           time.Duration(syncIntervalSeconds) * time.Second,
 		ReloadDebounce:         time.Duration(reloadDebounceMillis) * time.Millisecond,
 		HealthInterval:         time.Duration(healthIntervalSeconds) * time.Second,

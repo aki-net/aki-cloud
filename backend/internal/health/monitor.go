@@ -387,9 +387,6 @@ func (m *Monitor) pruneDormantNodes(health map[string]models.EdgeHealthStatus) b
 		if len(node.EdgeIPs) == 0 {
 			continue
 		}
-		if node.EdgeManual {
-			continue
-		}
 		allStale := true
 		tracked := 0
 		for _, ip := range node.EdgeIPs {
@@ -416,7 +413,6 @@ func (m *Monitor) pruneDormantNodes(health map[string]models.EdgeHealthStatus) b
 			continue
 		}
 		originalIPs := append([]string{}, node.EdgeIPs...)
-		node.EdgeManual = true
 		node.EdgeIPs = nil
 		node.ComputeEdgeIPs()
 		node.UpdatedAt = now
