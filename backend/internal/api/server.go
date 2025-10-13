@@ -1205,23 +1205,72 @@ func (s *Server) handleReassignDomainEdge(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Force a new assignment by clearing salt so it will be regenerated deterministically.
-	existing.Edge.AssignmentSalt = ""
-	existing.Edge.AssignedIP = ""
-	existing.Edge.AssignedNodeID = ""
-	existing.Edge.AssignedAt = time.Time{}
-	existing.Edge.Normalize()
-
-	// Ensure edge assignment with fresh data
-	if _, err := s.ensureDomainEdgeAssignment(existing); err != nil {
-		if ve, ok := err.(models.ErrValidation); ok {
-			writeError(w, http.StatusBadRequest, ve.Error())
-			return
-		}
+	endpoints, err := s.Infra.EdgeEndpoints()
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	health, err := s.Store.GetEdgeHealthMap()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	eligible := infra.FilterEdgeEndpointsByLabels(endpoints, existing.Edge.Labels)
+	if len(eligible) == 0 {
+		writeError(w, http.StatusBadRequest, "no edge nodes match the requested labels")
+		return
+	}
+	candidates := infra.PreferHealthyEndpoints(eligible, health)
+	if len(candidates) == 0 {
+		candidates = eligible
+	}
+	if len(candidates) < 2 {
+		writeError(w, http.StatusBadRequest, "no alternate edge available")
+		return
+	}
+
+	baseSalt := computeDomainSalt(existing.Domain)
+	key := fmt.Sprintf("%s|%s", existing.Domain, baseSalt)
+	ordered := infra.RendezvousOrder(key, candidates)
+	currentIP := existing.Edge.AssignedIP
+	currentIndex := -1
+	for i, ep := range ordered {
+		if ep.IP == currentIP {
+			currentIndex = i
+			break
+		}
+	}
+
+	selectNext := func(start int) (infra.EdgeEndpoint, bool) {
+		for i := 0; i < len(ordered); i++ {
+			candidate := ordered[(start+i)%len(ordered)]
+			if candidate.IP != currentIP {
+				return candidate, true
+			}
+		}
+		return infra.EdgeEndpoint{}, false
+	}
+
+	var target infra.EdgeEndpoint
+	var ok bool
+	if currentIndex == -1 {
+		target, ok = selectNext(0)
+	} else {
+		target, ok = selectNext(currentIndex + 1)
+	}
+	if !ok {
+		writeError(w, http.StatusBadRequest, "no alternate edge available")
+		return
+	}
+
 	now := time.Now().UTC()
+	existing.Edge.AssignmentSalt = fmt.Sprintf("pin:%s:%s", baseSalt, target.IP)
+	existing.Edge.AssignedIP = target.IP
+	existing.Edge.AssignedNodeID = target.NodeID
+	existing.Edge.AssignedAt = now
+	existing.Edge.Normalize()
+
 	existing.UpdatedAt = now
 	existing.Version.Counter++
 	existing.Version.NodeID = s.Config.NodeID
@@ -1301,6 +1350,12 @@ func (s *Server) handleReassignAllDomainEdges(w http.ResponseWriter, r *http.Req
 	}
 
 	writeJSON(w, http.StatusOK, result)
+}
+
+func computeDomainSalt(domain string) string {
+	domainKey := strings.ToLower(strings.TrimSpace(domain))
+	hasher := sha256.Sum256([]byte(domainKey))
+	return hex.EncodeToString(hasher[:8])
 }
 
 func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {

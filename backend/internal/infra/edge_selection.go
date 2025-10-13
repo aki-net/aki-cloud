@@ -2,6 +2,7 @@ package infra
 
 import (
 	"hash/fnv"
+	"sort"
 	"strings"
 
 	"aki-cloud/backend/internal/models"
@@ -36,6 +37,33 @@ func RendezvousSelect(key string, endpoints []EdgeEndpoint) EdgeEndpoint {
 		}
 	}
 	return selected
+}
+
+// RendezvousOrder returns endpoints sorted by rendezvous priority (highest score first).
+func RendezvousOrder(key string, endpoints []EdgeEndpoint) []EdgeEndpoint {
+	key = strings.TrimSpace(strings.ToLower(key))
+	type candidate struct {
+		endpoint EdgeEndpoint
+		score    uint64
+	}
+	order := make([]candidate, 0, len(endpoints))
+	for _, ep := range endpoints {
+		order = append(order, candidate{
+			endpoint: ep,
+			score:    rendezvousScore(key, ep),
+		})
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		if order[i].score == order[j].score {
+			return endpointLess(order[i].endpoint, order[j].endpoint)
+		}
+		return order[i].score > order[j].score
+	})
+	result := make([]EdgeEndpoint, 0, len(order))
+	for _, cand := range order {
+		result = append(result, cand.endpoint)
+	}
+	return result
 }
 
 func rendezvousScore(key string, endpoint EdgeEndpoint) uint64 {

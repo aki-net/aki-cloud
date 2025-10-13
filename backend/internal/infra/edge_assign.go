@@ -56,6 +56,21 @@ func EnsureDomainEdgeAssignment(record *models.DomainRecord, endpoints []EdgeEnd
 		}
 	}
 
+	defaultSalt := computeDefaultSalt(record.Domain)
+	if base, pinnedIP, ok := parsePinnedSalt(record.Edge.AssignmentSalt); ok {
+		if base != defaultSalt {
+			record.Edge.AssignmentSalt = fmt.Sprintf("pin:%s:%s", defaultSalt, pinnedIP)
+			mutated = true
+		}
+		if ep, ok := endpointByIP[pinnedIP]; ok {
+			assign(ep)
+			record.Edge.Normalize()
+			return mutated, nil
+		}
+		record.Edge.AssignmentSalt = defaultSalt
+		mutated = true
+	}
+
 	current, ok := endpointByIP[record.Edge.AssignedIP]
 	needsAssignment := !ok || record.Edge.AssignedIP == ""
 
@@ -131,17 +146,49 @@ func EnsureDomainEdgeAssignment(record *models.DomainRecord, endpoints []EdgeEnd
 }
 
 func ensureAssignmentSalt(edge *models.DomainEdge, domain string) bool {
-	domainKey := strings.ToLower(strings.TrimSpace(domain))
-	current := strings.ToLower(strings.TrimSpace(edge.AssignmentSalt))
-	updated := false
-	if current == "" || current == domainKey || strings.HasPrefix(current, domainKey+":") {
-		hasher := sha256.Sum256([]byte(domainKey))
-		current = hex.EncodeToString(hasher[:8])
-		updated = true
+	defaultSalt := computeDefaultSalt(domain)
+	current := strings.TrimSpace(edge.AssignmentSalt)
+	if _, pinnedIP, ok := parsePinnedSalt(current); ok {
+		normalized := fmt.Sprintf("pin:%s:%s", defaultSalt, pinnedIP)
+		if current != normalized {
+			edge.AssignmentSalt = normalized
+			return true
+		}
+		return false
 	}
-	if current != edge.AssignmentSalt {
-		edge.AssignmentSalt = current
+	domainKey := strings.ToLower(strings.TrimSpace(domain))
+	lower := strings.ToLower(current)
+	if lower == "" || lower == domainKey || strings.HasPrefix(lower, domainKey+":") {
+		if edge.AssignmentSalt != defaultSalt {
+			edge.AssignmentSalt = defaultSalt
+			return true
+		}
+		return false
+	}
+	if lower != defaultSalt {
+		edge.AssignmentSalt = defaultSalt
 		return true
 	}
-	return updated
+	if current != defaultSalt {
+		edge.AssignmentSalt = defaultSalt
+		return true
+	}
+	return false
+}
+
+func computeDefaultSalt(domain string) string {
+	domainKey := strings.ToLower(strings.TrimSpace(domain))
+	hasher := sha256.Sum256([]byte(domainKey))
+	return hex.EncodeToString(hasher[:8])
+}
+
+func parsePinnedSalt(s string) (base string, ip string, ok bool) {
+	if !strings.HasPrefix(s, "pin:") {
+		return "", "", false
+	}
+	parts := strings.SplitN(s, ":", 3)
+	if len(parts) != 3 || parts[2] == "" {
+		return "", "", false
+	}
+	return parts[1], parts[2], true
 }
