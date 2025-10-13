@@ -45,6 +45,7 @@ Run the installer from the project root. It supports fully-interactive and flag-
   --node-name node-1 \
   --ips 203.0.113.10,203.0.113.11 \
   --ns-ips 203.0.113.10 \
+  --edge-ips 203.0.113.10,203.0.113.11 \
   --api-endpoint http://203.0.113.10:8080 \
   --ns-label dns \
   --ns-base-domain aki.cloud \
@@ -67,6 +68,7 @@ Key outputs/live artefacts:
   --node-name node-2 \
   --ips 198.51.100.20,198.51.100.21 \
   --ns-ips 198.51.100.20 \
+  --edge-ips 198.51.100.20,198.51.100.21 \
   --api-endpoint http://198.51.100.20:8080 \
   --ns-label dns \
   --ns-base-domain aki.cloud \
@@ -80,11 +82,10 @@ The installer pulls a snapshot over the `/api/v1/sync/pull` endpoint, writes loc
 ### Flags (non-interactive)
 
 - `--mode fresh|join`
-- `--node-name`, `--ips`, `--ns-ips`, `--ns-label`, `--ns-base-domain`, `--api-endpoint`
+- `--node-name`, `--ips`, `--ns-ips`, `--edge-ips`, `--ns-label`, `--ns-base-domain`, `--api-endpoint`
 - `--admin-email`, `--admin-pass`, `--admin-pass-file`
 - `--seed`, `--cluster-secret`, `--jwt-secret`
 - `--backend-port`, `--frontend-port`
-- `--enable-coredns true|false`, `--enable-openresty true|false`
 
 Install script behaviour is idempotent; re-running it safely reuses existing secrets and configuration unless you supply overrides.
 
