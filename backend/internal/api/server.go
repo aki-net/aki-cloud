@@ -1205,9 +1205,8 @@ func (s *Server) handleReassignDomainEdge(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Force a new assignment by changing the salt
-	newSalt := fmt.Sprintf("%s:%s", strings.ToLower(existing.Domain), uuid.NewString())
-	existing.Edge.AssignmentSalt = newSalt
+	// Force a new assignment by clearing salt so it will be regenerated deterministically.
+	existing.Edge.AssignmentSalt = ""
 	existing.Edge.AssignedIP = ""
 	existing.Edge.AssignedNodeID = ""
 	existing.Edge.AssignedAt = time.Time{}
@@ -1270,14 +1269,15 @@ func (s *Server) handleReassignAllDomainEdges(w http.ResponseWriter, r *http.Req
 		rec.Edge.AssignedAt = time.Time{}
 		rec.Edge.Normalize()
 
-		if _, err := s.ensureDomainEdgeAssignment(&rec); err != nil {
+		mutated, err := s.ensureDomainEdgeAssignment(&rec)
+		if err != nil {
 			result.Failed++
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", rec.Domain, err))
 			continue
 		}
 
 		changed := rec.Edge.AssignedIP != prevIP || rec.Edge.AssignedNodeID != prevNode
-		if !changed {
+		if !changed && !mutated {
 			result.Unchanged++
 			continue
 		}
