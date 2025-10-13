@@ -30,13 +30,35 @@ Only `README.md` files serve as documentation as required.
 
 ## Prerequisites
 
-- Linux host (WSL/Debian tested) with Docker Engine + Compose plugin.
-- `openssl`, `python3`, `uuidgen` (or Python fallback), and `curl` available on the host.
+- Linux host (Debian/Ubuntu tested). The installer will automatically install Docker Engine + Compose plugin if not present.
+- `curl` or `wget` to download the installer.
+- `python3` for configuration generation (installed automatically if not present).
 - Ports 53/UDP+TCP, 80/TCP, and 443/TCP free on the IPs you configure for CoreDNS/OpenResty.
 
 ## Installation
 
-Run the installer from the project root. It supports fully-interactive and flag-driven modes.
+### Download and prepare the installer
+
+First, download the installation script and make it executable:
+
+```bash
+# Download the installer
+curl -s https://raw.githubusercontent.com/aki-net/aki-cloud/main/install.sh -o install.sh
+# OR
+wget https://raw.githubusercontent.com/aki-net/aki-cloud/main/install.sh
+
+# Make it executable
+chmod +x install.sh
+
+# Run the installer (interactive mode, requires root)
+sudo ./install.sh
+# OR as root
+./install.sh
+
+# Or use with flags (see below)
+```
+
+The installer supports both fully-interactive and flag-driven modes.
 
 ### Fresh install
 
