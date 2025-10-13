@@ -134,7 +134,7 @@ func ensureAssignmentSalt(edge *models.DomainEdge, domain string) bool {
 	domainKey := strings.ToLower(strings.TrimSpace(domain))
 	current := strings.ToLower(strings.TrimSpace(edge.AssignmentSalt))
 	updated := false
-	if current == "" || strings.HasPrefix(current, domainKey+":") {
+	if current == "" || current == domainKey || strings.HasPrefix(current, domainKey+":") {
 		hasher := sha256.Sum256([]byte(domainKey))
 		current = hex.EncodeToString(hasher[:8])
 		updated = true
