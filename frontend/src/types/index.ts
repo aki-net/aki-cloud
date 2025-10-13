@@ -185,6 +185,7 @@ export interface DomainOverview {
   owner_exists: boolean;
   origin_ip: string;
   proxied: boolean;
+  ttl: number;
   updated_at: string;
   tls_mode?: EncryptionMode;
   tls_status?: CertificateStatus;

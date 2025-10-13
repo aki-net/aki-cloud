@@ -53,6 +53,7 @@ type domainOverview struct {
 	OwnerExists bool                     `json:"owner_exists"`
 	OriginIP    string                   `json:"origin_ip"`
 	Proxied     bool                     `json:"proxied"`
+	TTL         int                      `json:"ttl"`
 	UpdatedAt   time.Time                `json:"updated_at"`
 	TLSMode     models.EncryptionMode    `json:"tls_mode,omitempty"`
 	TLSStatus   models.CertificateStatus `json:"tls_status,omitempty"`
@@ -1758,6 +1759,7 @@ func (s *Server) handleDomainsOverview(w http.ResponseWriter, r *http.Request) {
 			OwnerExists: false,
 			OriginIP:    domain.OriginIP,
 			Proxied:     domain.Proxied,
+			TTL:         domain.TTL,
 			UpdatedAt:   domain.UpdatedAt,
 			TLSMode:     domain.TLS.Mode,
 			TLSStatus:   domain.TLS.Status,

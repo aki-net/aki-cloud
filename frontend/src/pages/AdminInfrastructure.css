@@ -153,12 +153,23 @@
   gap: 16px;
 }
 
-.node-details h3 {
+.node-details-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.node-details-header h3 {
   font-size: 18px;
   font-weight: 600;
   margin: 0;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--color-border);
+}
+
+.node-details-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .detail-row {
@@ -207,11 +218,26 @@
 
 .empty-state {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   min-height: 200px;
   color: var(--color-text-tertiary);
   font-style: italic;
+}
+
+.node-edit-form,
+.node-create-form {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--color-border);
+}
+
+.node-create-form h4 {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary);
 }
 
 .node-management-card {

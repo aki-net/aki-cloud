@@ -534,6 +534,55 @@
   color: var(--color-text-tertiary);
 }
 
+.edge-labels-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.edge-label-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  user-select: none;
+}
+
+.edge-label-checkbox:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--color-accent);
+}
+
+.edge-label-checkbox input[type="checkbox"] {
+  cursor: pointer;
+}
+
+.edge-label-checkbox .label-text {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.edge-label-checkbox:has(input:checked) {
+  background: var(--color-accent-bg);
+  border-color: var(--color-accent);
+}
+
+.edge-label-checkbox:has(input:checked) .label-text {
+  color: var(--color-accent);
+}
+
 /* Animations */
 @keyframes fadeIn {
   from {

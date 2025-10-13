@@ -244,10 +244,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     const originIp =
       override?.origin_ip ?? source?.origin_ip ?? record.origin_ip;
     const proxied = override?.proxied ?? source?.proxied ?? record.proxied;
-    const ttl =
-      override?.ttl ??
-      source?.ttl ??
-      ("ttl" in record ? ((record as any).ttl ?? 60) : 60);
+    const ttl = override?.ttl ?? source?.ttl ?? record.ttl;
     const nodeName = nodeId
       ? edgeEndpoints.find((edge) => edge.node_id === nodeId)?.node_name
       : assignedIp
@@ -337,7 +334,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       const updated = await domainsApi.update(domainName, {
         origin_ip: domain.origin_ip,
         proxied: newProxied,
-        ttl: "ttl" in domain ? domain.ttl : 60,
+        ttl: domain.ttl,
         tls: tlsPayload,
       });
 
@@ -378,7 +375,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       const updated = await domainsApi.update(domainName, {
         origin_ip: domain.origin_ip,
         proxied: domain.proxied,
-        ttl: "ttl" in domain ? domain.ttl : 60,
+        ttl: domain.ttl,
         tls: {
           mode: newMode,
           use_recommended: useRecommended,
@@ -416,7 +413,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       const updated = await domainsApi.update(domainName, {
         origin_ip: editingIP,
         proxied: domain.proxied,
-        ttl: "ttl" in domain ? domain.ttl : 60,
+        ttl: domain.ttl,
       });
 
       if (viewMode === "my") {
@@ -879,7 +876,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   columns.push({
     key: "ttl",
     header: "TTL",
-    accessor: (d: any) => <span className="mono">{d.ttl || 300}s</span>,
+    accessor: (d: any) => <span className="mono">{d.ttl}s</span>,
     width: "80px",
     align: "right" as const,
   });
@@ -1112,6 +1109,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
           onClose={() => setShowAddDomain(false)}
           onAdd={loadData}
           isAdmin={isAdmin}
+          availableEdgeLabels={availableLabels}
         />
       )}
       {isAdmin && edgeModalData && (
@@ -1130,10 +1128,12 @@ function AddDomainModal({
   onClose,
   onAdd,
   isAdmin,
+  availableEdgeLabels,
 }: {
   onClose: () => void;
   onAdd: (showLoader?: boolean) => void;
   isAdmin: boolean;
+  availableEdgeLabels: string[];
 }) {
   const [formData, setFormData] = useState<CreateDomainPayload>({
     domain: "",
@@ -1147,7 +1147,7 @@ function AddDomainModal({
   });
   const [bulkMode, setBulkMode] = useState(false);
   const [bulkDomains, setBulkDomains] = useState("");
-  const [edgeLabels, setEdgeLabels] = useState("");
+  const [selectedEdgeLabels, setSelectedEdgeLabels] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
   const [isMouseDown, setIsMouseDown] = useState(false);
@@ -1170,15 +1170,9 @@ function AddDomainModal({
     setLoading(true);
 
     try {
-      const parsedLabels = isAdmin
-        ? edgeLabels
-            .split(/[\n,]/)
-            .map((label) => label.trim())
-            .filter(Boolean)
-        : [];
       const edgePayload =
-        isAdmin && parsedLabels.length > 0
-          ? { labels: parsedLabels }
+        isAdmin && selectedEdgeLabels.length > 0
+          ? { labels: selectedEdgeLabels }
           : undefined;
       if (bulkMode) {
         const domainList = bulkDomains
@@ -1313,17 +1307,32 @@ function AddDomainModal({
             </div>
           </div>
 
-          {isAdmin && (
+          {isAdmin && availableEdgeLabels.length > 0 && (
             <div className="form-group">
-              <label>Edge Labels</label>
-              <Input
-                placeholder="Comma separated (e.g. edge-eu, premium)"
-                value={edgeLabels}
-                onChange={(e) => setEdgeLabels(e.target.value)}
-                fullWidth
-              />
+              <label>Edge Node Labels</label>
+              <div className="edge-labels-selector">
+                {availableEdgeLabels.map((label) => (
+                  <label key={label} className="edge-label-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={selectedEdgeLabels.includes(label)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedEdgeLabels([...selectedEdgeLabels, label]);
+                        } else {
+                          setSelectedEdgeLabels(
+                            selectedEdgeLabels.filter((l) => l !== label)
+                          );
+                        }
+                      }}
+                    />
+                    <span className="label-text">{label}</span>
+                  </label>
+                ))}
+              </div>
               <p className="form-hint">
-                Optional. Labels control which edge nodes serve this domain.
+                Select labels to control which edge nodes serve this domain.
+                If no labels selected, any edge node can serve it.
               </p>
             </div>
           )}

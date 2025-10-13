@@ -108,12 +108,39 @@ interface NodeFormState {
 
   const handleCopyJoinCommand = async () => {
     if (!joinCommand) return;
+    setCopyingJoin(true);
+    
     try {
-      setCopyingJoin(true);
-      await navigator.clipboard.writeText(joinCommand);
-      toast.success("Join command copied to clipboard");
+      // Try modern clipboard API first
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(joinCommand);
+        toast.success("Join command copied to clipboard");
+      } else {
+        // Fallback for non-secure contexts or older browsers
+        const textArea = document.createElement("textarea");
+        textArea.value = joinCommand;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-999999px";
+        textArea.style.top = "-999999px";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        
+        try {
+          const successful = document.execCommand('copy');
+          if (successful) {
+            toast.success("Join command copied to clipboard");
+          } else {
+            toast.error("Failed to copy join command. Please select and copy manually.");
+          }
+        } catch (err) {
+          toast.error("Failed to copy join command. Please select and copy manually.");
+        } finally {
+          document.body.removeChild(textArea);
+        }
+      }
     } catch (error) {
-      toast.error("Failed to copy join command");
+      toast.error("Failed to copy join command. Please select and copy manually.");
     } finally {
       setCopyingJoin(false);
     }
@@ -374,8 +401,27 @@ interface NodeFormState {
 
         <Card title="Node Details" className="node-details-card">
           {selectedNode ? (
-            <div className="node-details">
-              <h3>{selectedNode.name}</h3>
+            <>
+              <div className="node-details">
+                <div className="node-details-header">
+                  <h3>{selectedNode.name}</h3>
+                <div className="node-details-actions">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => openEditNode(selectedNode)}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() => handleDeleteNode(selectedNode.id)}
+                  >
+                    Delete
+                  </Button>
+                </div>
+              </div>
               <div className="detail-row">
                 <span className="detail-label">Node ID:</span>
                 <span className="detail-value mono">{selectedNode.id}</span>
@@ -506,220 +552,218 @@ interface NodeFormState {
                 </div>
               )}
             </div>
+            {nodeFormMode === "edit" && selectedNode && editingNodeId === selectedNode.id && (
+              <form className="node-edit-form" onSubmit={handleSaveNode}>
+                <div className="node-form-grid">
+                  <Input
+                    label="Node Name"
+                    value={nodeForm.name}
+                    onChange={(e) => handleNodeFormChange("name", e.target.value)}
+                    required
+                    fullWidth
+                  />
+                  <div className="node-textarea-field">
+                    <label>IPs (comma or newline separated)</label>
+                    <textarea
+                      value={nodeForm.ips}
+                      onChange={(e) => handleNodeFormChange("ips", e.target.value)}
+                      required
+                      className="node-textarea"
+                      rows={2}
+                    />
+                  </div>
+                  <div className="node-textarea-field">
+                    <label>NS IPs</label>
+                    <textarea
+                      value={nodeForm.nsIps}
+                      onChange={(e) =>
+                        handleNodeFormChange("nsIps", e.target.value)
+                      }
+                      className="node-textarea"
+                      rows={2}
+                      placeholder="Optional — blank disables nameserver role"
+                    />
+                  </div>
+                  <div className="node-textarea-field">
+                    <label>Edge IPs</label>
+                    <textarea
+                      value={nodeForm.edgeIps}
+                      onChange={(e) =>
+                        handleNodeFormChange("edgeIps", e.target.value)
+                      }
+                      className="node-textarea"
+                      rows={2}
+                      placeholder="Optional — blank disables edge role"
+                    />
+                    <span className="field-hint">
+                      Provide explicit IPs for this role; leave blank to omit it.
+                    </span>
+                  </div>
+                  <Input
+                    label="NS Label"
+                    value={nodeForm.nsLabel}
+                    onChange={(e) =>
+                      handleNodeFormChange("nsLabel", e.target.value)
+                    }
+                    placeholder="e.g. ns"
+                    fullWidth
+                  />
+                  <Input
+                    label="NS Base Domain"
+                    value={nodeForm.nsBaseDomain}
+                    onChange={(e) =>
+                      handleNodeFormChange("nsBaseDomain", e.target.value)
+                    }
+                    placeholder="e.g. example.net"
+                    fullWidth
+                  />
+                  <Input
+                    label="Labels"
+                    value={nodeForm.labels}
+                    onChange={(e) => handleNodeFormChange("labels", e.target.value)}
+                    placeholder="Comma separated (e.g. edge-eu, paid)"
+                    fullWidth
+                  />
+                  <Input
+                    label="API Endpoint"
+                    value={nodeForm.apiEndpoint}
+                    onChange={(e) =>
+                      handleNodeFormChange("apiEndpoint", e.target.value)
+                    }
+                    placeholder="https://node-api.example.com"
+                    fullWidth
+                  />
+                </div>
+                <div className="node-form-actions">
+                  <Button variant="primary" type="submit" loading={savingNode}>
+                    Save Changes
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    type="button"
+                    onClick={resetNodeForm}
+                    disabled={savingNode}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </form>
+            )}
+            </>
           ) : (
             <div className="empty-state">
               <p>Select a node to view details</p>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={openCreateNode}
+                style={{ marginTop: '1rem' }}
+              >
+                Add New Node
+              </Button>
             </div>
+          )}
+          {nodeFormMode === "create" && (
+            <form className="node-create-form" onSubmit={handleSaveNode}>
+              <h4>Add New Node</h4>
+              <div className="node-form-grid">
+                <Input
+                  label="Node Name"
+                  value={nodeForm.name}
+                  onChange={(e) => handleNodeFormChange("name", e.target.value)}
+                  required
+                  fullWidth
+                />
+                <div className="node-textarea-field">
+                  <label>IPs (comma or newline separated)</label>
+                  <textarea
+                    value={nodeForm.ips}
+                    onChange={(e) => handleNodeFormChange("ips", e.target.value)}
+                    required
+                    className="node-textarea"
+                    rows={2}
+                  />
+                </div>
+                <div className="node-textarea-field">
+                  <label>NS IPs</label>
+                  <textarea
+                    value={nodeForm.nsIps}
+                    onChange={(e) =>
+                      handleNodeFormChange("nsIps", e.target.value)
+                    }
+                    className="node-textarea"
+                    rows={2}
+                    placeholder="Optional — blank disables nameserver role"
+                  />
+                </div>
+                <div className="node-textarea-field">
+                  <label>Edge IPs</label>
+                  <textarea
+                    value={nodeForm.edgeIps}
+                    onChange={(e) =>
+                      handleNodeFormChange("edgeIps", e.target.value)
+                    }
+                    className="node-textarea"
+                    rows={2}
+                    placeholder="Optional — blank disables edge role"
+                  />
+                  <span className="field-hint">
+                    Provide explicit IPs for this role; leave blank to omit it.
+                  </span>
+                </div>
+                <Input
+                  label="NS Label"
+                  value={nodeForm.nsLabel}
+                  onChange={(e) =>
+                    handleNodeFormChange("nsLabel", e.target.value)
+                  }
+                  placeholder="e.g. ns"
+                  fullWidth
+                />
+                <Input
+                  label="NS Base Domain"
+                  value={nodeForm.nsBaseDomain}
+                  onChange={(e) =>
+                    handleNodeFormChange("nsBaseDomain", e.target.value)
+                  }
+                  placeholder="e.g. example.net"
+                  fullWidth
+                />
+                <Input
+                  label="Labels"
+                  value={nodeForm.labels}
+                  onChange={(e) => handleNodeFormChange("labels", e.target.value)}
+                  placeholder="Comma separated (e.g. edge-eu, paid)"
+                  fullWidth
+                />
+                <Input
+                  label="API Endpoint"
+                  value={nodeForm.apiEndpoint}
+                  onChange={(e) =>
+                    handleNodeFormChange("apiEndpoint", e.target.value)
+                  }
+                  placeholder="https://node-api.example.com"
+                  fullWidth
+                />
+              </div>
+              <div className="node-form-actions">
+                <Button variant="primary" type="submit" loading={savingNode}>
+                  Create Node
+                </Button>
+                <Button
+                  variant="ghost"
+                  type="button"
+                  onClick={resetNodeForm}
+                  disabled={savingNode}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </form>
           )}
         </Card>
       </div>
 
-      <Card title="Node Management" className="node-management-card">
-        <div className="node-management-header">
-          <Button variant="primary" size="sm" onClick={openCreateNode}>
-            Add Node
-          </Button>
-        </div>
-        <div className="node-management-table">
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Status</th>
-                <th>IPs</th>
-                <th>NS IPs</th>
-                <th>Edge IPs</th>
-                <th>Roles</th>
-                <th>Labels</th>
-                <th>API Endpoint</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {nodes.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="node-empty">
-                    No nodes configured
-                  </td>
-                </tr>
-              ) : (
-                nodes.map((node) => (
-                  <tr
-                    key={node.id}
-                    className={
-                      editingNodeId === node.id && nodeFormMode === "edit"
-                        ? "node-row-editing"
-                        : ""
-                    }
-                  >
-                    <td>{node.name}</td>
-                    <td>
-                      <Badge
-                        variant={getStatusVariant(getNodeStatus(node))}
-                        size="sm"
-                        dot
-                      >
-                        {getNodeStatus(node)}
-                      </Badge>
-                    </td>
-                    <td className="mono">{node.ips.join(", ")}</td>
-                    <td className="mono">
-                      {formatIPDisplay(node.ns_ips)}
-                    </td>
-                    <td className="mono">
-                      {formatIPDisplay(node.edge_ips)}
-                    </td>
-                    <td>
-                      <div className="node-role-badges">
-                        {node.roles && node.roles.length > 0
-                          ? node.roles.map((role) => (
-                              <Badge
-                                key={`${node.id}-${role}`}
-                                variant={role === "edge" ? "primary" : "info"}
-                                size="sm"
-                              >
-                                {role === "edge" ? "Edge" : "Nameserver"}
-                              </Badge>
-                            ))
-                          : "—"}
-                      </div>
-                    </td>
-                    <td>
-                      <div className="node-label-badges">
-                        {node.labels && node.labels.length > 0
-                          ? node.labels.map((label) => (
-                              <Badge
-                                key={`${node.id}-label-${label}`}
-                                variant="secondary"
-                                size="sm"
-                              >
-                                {label}
-                              </Badge>
-                            ))
-                          : "—"}
-                      </div>
-                    </td>
-                    <td className="mono">{node.api_endpoint || "—"}</td>
-                    <td className="node-actions">
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => openEditNode(node)}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDeleteNode(node.id)}
-                      >
-                        Delete
-                      </Button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-        {nodeFormMode !== "idle" && (
-          <form className="node-form" onSubmit={handleSaveNode}>
-            <div className="node-form-grid">
-              <Input
-                label="Node Name"
-                value={nodeForm.name}
-                onChange={(e) => handleNodeFormChange("name", e.target.value)}
-                required
-                fullWidth
-              />
-              <div className="node-textarea-field">
-                <label>IPs (comma or newline separated)</label>
-                <textarea
-                  value={nodeForm.ips}
-                  onChange={(e) => handleNodeFormChange("ips", e.target.value)}
-                  required
-                  className="node-textarea"
-                  rows={2}
-                />
-              </div>
-              <div className="node-textarea-field">
-                <label>NS IPs</label>
-                <textarea
-                  value={nodeForm.nsIps}
-                  onChange={(e) =>
-                    handleNodeFormChange("nsIps", e.target.value)
-                  }
-                  className="node-textarea"
-                  rows={2}
-                  placeholder="Optional — blank disables nameserver role"
-                />
-              </div>
-              <div className="node-textarea-field">
-                <label>Edge IPs</label>
-                <textarea
-                  value={nodeForm.edgeIps}
-                  onChange={(e) =>
-                    handleNodeFormChange("edgeIps", e.target.value)
-                  }
-                  className="node-textarea"
-                  rows={2}
-                  placeholder="Optional — blank disables edge role"
-                />
-                <span className="field-hint">
-                  Provide explicit IPs for this role; leave blank to omit it.
-                </span>
-              </div>
-              <Input
-                label="NS Label"
-                value={nodeForm.nsLabel}
-                onChange={(e) =>
-                  handleNodeFormChange("nsLabel", e.target.value)
-                }
-                placeholder="e.g. ns"
-                fullWidth
-              />
-              <Input
-                label="NS Base Domain"
-                value={nodeForm.nsBaseDomain}
-                onChange={(e) =>
-                  handleNodeFormChange("nsBaseDomain", e.target.value)
-                }
-                placeholder="e.g. example.net"
-                fullWidth
-              />
-              <Input
-                label="Labels"
-                value={nodeForm.labels}
-                onChange={(e) => handleNodeFormChange("labels", e.target.value)}
-                placeholder="Comma separated (e.g. edge-eu, paid)"
-                fullWidth
-              />
-              <Input
-                label="API Endpoint"
-                value={nodeForm.apiEndpoint}
-                onChange={(e) =>
-                  handleNodeFormChange("apiEndpoint", e.target.value)
-                }
-                placeholder="https://node-api.example.com"
-                fullWidth
-              />
-            </div>
-            <div className="node-form-actions">
-              <Button variant="primary" type="submit" loading={savingNode}>
-                Save Node
-              </Button>
-              <Button
-                variant="ghost"
-                type="button"
-                onClick={resetNodeForm}
-                disabled={savingNode}
-              >
-                Cancel
-              </Button>
-            </div>
-          </form>
-        )}
-      </Card>
 
       <Card title="Join Helper" className="join-card">
         <p className="join-description">
@@ -729,8 +773,10 @@ interface NodeFormState {
         <textarea
           className="join-command"
           rows={3}
-          value={joinCommand || "Command unavailable"}
+          value={joinCommand || "Loading command..."}
           readOnly
+          onClick={(e) => e.currentTarget.select()}
+          style={{ cursor: joinCommand ? 'text' : 'not-allowed' }}
         />
         <div className="join-actions">
           <Button
