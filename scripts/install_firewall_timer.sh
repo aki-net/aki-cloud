@@ -26,6 +26,10 @@ require_root_tools() {
     echo "sudo not available; skipping firewall timer install" >&2
     exit 0
   fi
+  if ! sudo -n true >/dev/null 2>&1; then
+    echo "passwordless sudo not configured; skipping firewall timer install" >&2
+    exit 0
+  fi
 }
 
 write_unit_file() {
@@ -39,7 +43,7 @@ write_unit_file() {
       exit 1
     fi
   else
-    if ! sudo mv "$tmp" "$path"; then
+    if ! sudo -n mv "$tmp" "$path"; then
       rm -f "$tmp"
       exit 1
     fi
@@ -54,7 +58,7 @@ run_systemctl() {
   if [[ $EUID -eq 0 ]]; then
     systemctl "$@"
   else
-    sudo systemctl "$@"
+    sudo -n systemctl "$@"
   fi
 }
 
