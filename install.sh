@@ -838,29 +838,10 @@ main() {
   NS_IPS="$(normalize_csv "$NS_IPS")"
   local default_edge_ips=""
   if [[ "$EDGE_IPS_FLAG_SET" != "1" && -z "$EDGE_IPS" ]]; then
-    IFS=',' read -r -a __ips_arr <<<"$IPS"
-    IFS=',' read -r -a __ns_arr <<<"$NS_IPS"
-    declare -A __ns_map=()
-    for ip in "${__ns_arr[@]}"; do
-      [[ -z "$ip" ]] && continue
-      __ns_map["$ip"]=1
-    done
-    __derived=()
-    for ip in "${__ips_arr[@]}"; do
-      [[ -z "$ip" ]] && continue
-      if [[ ! -v "__ns_map[$ip]" ]] || [[ -z "${__ns_map[$ip]}" ]]; then
-        __derived+=("$ip")
-      fi
-    done
-    if [[ ${#__derived[@]} -eq 0 ]]; then
-      __derived=("${__ips_arr[@]}")
-    fi
-    default_edge_ips="$(IFS=','; echo "${__derived[*]}")"
-    if [[ -n "$default_edge_ips" ]]; then
-      read -r -p "Edge IPs (comma separated, default: $default_edge_ips): " EDGE_IPS
-      EDGE_IPS="${EDGE_IPS:-$default_edge_ips}"
-    else
-      read -r -p "Edge IPs (comma separated, optional): " EDGE_IPS
+    read -r -p "Edge IPs (comma separated, optional; enter '-' to skip): " EDGE_IPS
+    trimmed_edge_input="$(echo "$EDGE_IPS" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+    if [[ "$trimmed_edge_input" == "-" || "$trimmed_edge_input" == "none" ]]; then
+      EDGE_IPS=""
     fi
   fi
   EDGE_IPS="$(normalize_csv "$EDGE_IPS")"
