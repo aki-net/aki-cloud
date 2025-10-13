@@ -939,6 +939,8 @@ main() {
 
     write_env_file "$enable_dns" "$enable_proxy" "$API_ENDPOINT"
     configure_firewall "$enable_dns" "$enable_proxy"
+    PROJECT_DIR="$PROJECT_DIR" SYSTEM_USER="$SYSTEM_USER" \
+      bash "$PROJECT_DIR/scripts/apply_sysctl.sh"
     PROJECT_DIR="$PROJECT_DIR" DATA_DIR="$PROJECT_DIR/data" AUTO_FIREWALL="$AUTO_FIREWALL" ENABLE_DNS="$enable_dns" ENABLE_PROXY="$enable_proxy" \
       bash "$PROJECT_DIR/scripts/install_firewall_timer.sh"
   else
@@ -980,6 +982,8 @@ main() {
     fi
     write_env_file "$enable_dns" "$enable_proxy" "$API_ENDPOINT"
     configure_firewall "$enable_dns" "$enable_proxy"
+    PROJECT_DIR="$PROJECT_DIR" SYSTEM_USER="$SYSTEM_USER" \
+      bash "$PROJECT_DIR/scripts/apply_sysctl.sh"
     PROJECT_DIR="$PROJECT_DIR" DATA_DIR="$PROJECT_DIR/data" AUTO_FIREWALL="$AUTO_FIREWALL" ENABLE_DNS="$enable_dns" ENABLE_PROXY="$enable_proxy" \
       bash "$PROJECT_DIR/scripts/install_firewall_timer.sh"
   fi

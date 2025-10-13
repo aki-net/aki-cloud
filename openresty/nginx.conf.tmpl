@@ -1,13 +1,18 @@
 worker_processes auto;
+worker_rlimit_nofile 524288;
 error_log /var/log/nginx/error.log warn;
 
 events {
-    worker_connections 2048;
+    use epoll;
+    multi_accept on;
+    worker_connections 8192;
 }
 
 http {
     include       /usr/local/openresty/nginx/conf/mime.types;
     default_type  application/octet-stream;
+    server_tokens off;
+    real_ip_recursive on;
 
     map $http_x_forwarded_for $client_real_ip {
         ""                         $remote_addr;
@@ -19,14 +24,37 @@ http {
         default $http_x_forwarded_for;
     }
 
+    limit_req_status 429;
+    limit_conn_status 429;
+    limit_req_log_level warn;
+    limit_conn_log_level warn;
+    limit_req_zone $client_real_ip zone=edge_req_per_ip:32m rate={{ .LimitReqPerIP }}r/s;
+    limit_req_zone $server_name zone=edge_req_per_host:32m rate={{ .LimitReqPerHost }}r/s;
+    limit_conn_zone $client_real_ip zone=edge_conn_per_ip:16m;
+
     sendfile        on;
     tcp_nopush      on;
     tcp_nodelay     on;
 
-    keepalive_timeout 65;
+    reset_timedout_connection on;
+    client_header_timeout 10s;
+    client_body_timeout 10s;
+    send_timeout 30s;
+    keepalive_timeout 30s;
+    keepalive_requests 1000;
+    lingering_timeout 15s;
+    client_body_buffer_size 16k;
+    client_max_body_size {{ .ClientMaxBodySize }};
+    large_client_header_buffers 4 16k;
+
     proxy_buffering on;
     proxy_buffers 16 16k;
     proxy_buffer_size 32k;
+    proxy_busy_buffers_size 64k;
+    proxy_temp_file_write_size 64k;
+    proxy_max_temp_file_size 0;
+    proxy_headers_hash_max_size 512;
+    proxy_headers_hash_bucket_size 128;
 
     map $http_upgrade $connection_upgrade {
         default upgrade;

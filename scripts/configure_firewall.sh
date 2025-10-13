@@ -75,6 +75,14 @@ DNS_FLAG="${CONFIG[2]:-false}"
 PROXY_FLAG="${CONFIG[3]:-false}"
 export DATA_DIR PROJECT_DIR ENV_FILE DNS_FLAG PROXY_FLAG
 
+EDGE_CONN_LIMIT="${EDGE_CONN_LIMIT:-${EDGE_LIMIT_CONN_PER_IP:-200}}"
+EDGE_CONN_RATE="${EDGE_CONN_RATE:-${EDGE_LIMIT_REQ_PER_IP:-200}}"
+EDGE_CONN_BURST="${EDGE_CONN_BURST:-${EDGE_LIMIT_REQ_BURST:-400}}"
+DNS_RATE_LIMIT="${DNS_RATE_LIMIT:-800}"
+DNS_RATE_BURST="${DNS_RATE_BURST:-1600}"
+DNS_TCP_RATE_LIMIT="${DNS_TCP_RATE_LIMIT:-120}"
+DNS_TCP_BURST="${DNS_TCP_BURST:-240}"
+
 ensure_iptables_rule() {
   local proto="$1"
   local port="$2"
@@ -128,6 +136,142 @@ open_port() {
 
 open_port tcp "$TCP_PORTS"
 open_port udp "$UDP_PORTS"
+
+iptables_available() {
+  command -v iptables >/dev/null 2>&1
+}
+
+setup_edge_guard_chain() {
+  iptables_available || return
+  (
+    set +e
+    iptables -N AKI_EDGE_GUARD >/dev/null 2>&1
+    iptables -F AKI_EDGE_GUARD >/dev/null 2>&1
+    iptables -A AKI_EDGE_GUARD -m conntrack --ctstate INVALID -j DROP >/dev/null 2>&1
+    iptables -A AKI_EDGE_GUARD -p tcp -m conntrack --ctstate NEW \
+      -m hashlimit --hashlimit-name aki-edge-new --hashlimit-mode srcip \
+      --hashlimit-above "${EDGE_CONN_RATE}/second" \
+      --hashlimit-burst "${EDGE_CONN_BURST}" \
+      --hashlimit-htable-size 32768 \
+      --hashlimit-htable-expire 10000 -j DROP >/dev/null 2>&1 || true
+    iptables -A AKI_EDGE_GUARD -p tcp -m connlimit \
+      --connlimit-mask 32 \
+      --connlimit-above "$EDGE_CONN_LIMIT" -j DROP >/dev/null 2>&1 || true
+    iptables -A AKI_EDGE_GUARD -j RETURN >/dev/null 2>&1
+  )
+}
+
+setup_dns_guard_chain() {
+  iptables_available || return
+  (
+    set +e
+    iptables -N AKI_DNS_GUARD >/dev/null 2>&1
+    iptables -F AKI_DNS_GUARD >/dev/null 2>&1
+    iptables -A AKI_DNS_GUARD -m conntrack --ctstate INVALID -j DROP >/dev/null 2>&1
+    iptables -A AKI_DNS_GUARD -p udp -m hashlimit \
+      --hashlimit-name aki-dns-pps --hashlimit-mode srcip \
+      --hashlimit-above "${DNS_RATE_LIMIT}/second" \
+      --hashlimit-burst "${DNS_RATE_BURST}" \
+      --hashlimit-htable-size 32768 \
+      --hashlimit-htable-expire 10000 -j DROP >/dev/null 2>&1 || true
+    iptables -A AKI_DNS_GUARD -p tcp -m conntrack --ctstate NEW \
+      -m hashlimit --hashlimit-name aki-dns-tcp --hashlimit-mode srcip \
+      --hashlimit-above "${DNS_TCP_RATE_LIMIT}/second" \
+      --hashlimit-burst "${DNS_TCP_BURST}" \
+      --hashlimit-htable-size 32768 \
+      --hashlimit-htable-expire 10000 -j DROP >/dev/null 2>&1 || true
+    iptables -A AKI_DNS_GUARD -p tcp -m connlimit \
+      --connlimit-mask 32 \
+      --connlimit-above "$((DNS_TCP_BURST / 2))" -j DROP >/dev/null 2>&1 || true
+    iptables -A AKI_DNS_GUARD -j RETURN >/dev/null 2>&1
+  )
+}
+
+attach_guard_rule() {
+  local port="$1"
+  local proto="$2"
+  local chain="$3"
+  iptables_available || return
+  [[ -z "$port" ]] && return
+  (
+    set +e
+    if ! iptables -C INPUT -p "$proto" --dport "$port" -m conntrack --ctstate NEW -j "$chain" >/dev/null 2>&1; then
+      iptables -I INPUT -p "$proto" --dport "$port" -m conntrack --ctstate NEW -j "$chain" >/dev/null 2>&1
+    fi
+  )
+}
+
+configure_iptables_guards() {
+  iptables_available || return
+
+  local -a tcp_ports=()
+  local -a udp_ports=()
+  if [[ -n "$TCP_PORTS" ]]; then
+    IFS=',' read -ra tcp_ports <<<"$TCP_PORTS"
+  fi
+  if [[ -n "$UDP_PORTS" ]]; then
+    IFS=',' read -ra udp_ports <<<"$UDP_PORTS"
+  fi
+
+  local need_edge_guard=0
+  for port in "${tcp_ports[@]}"; do
+    port="${port//[[:space:]]/}"
+    [[ -z "$port" ]] && continue
+    if [[ "$port" != "53" ]]; then
+      need_edge_guard=1
+      break
+    fi
+  done
+  if (( need_edge_guard )); then
+    setup_edge_guard_chain
+    for port in "${tcp_ports[@]}"; do
+      port="${port//[[:space:]]/}"
+      [[ -z "$port" ]] && continue
+      if [[ "$port" == "53" ]]; then
+        continue
+      fi
+      attach_guard_rule "$port" "tcp" "AKI_EDGE_GUARD"
+    done
+  fi
+
+  local need_dns_guard=0
+  if [[ "${DNS_FLAG,,}" == "true" ]]; then
+    need_dns_guard=1
+  else
+    for port in "${udp_ports[@]}"; do
+      port="${port//[[:space:]]/}"
+      if [[ -n "$port" ]]; then
+        need_dns_guard=1
+        break
+      fi
+    done
+    if (( ! need_dns_guard )); then
+      for port in "${tcp_ports[@]}"; do
+        port="${port//[[:space:]]/}"
+        if [[ "$port" == "53" ]]; then
+          need_dns_guard=1
+          break
+        fi
+      done
+    fi
+  fi
+
+  if (( need_dns_guard )); then
+    setup_dns_guard_chain
+    for port in "${udp_ports[@]}"; do
+      port="${port//[[:space:]]/}"
+      [[ -z "$port" ]] && continue
+      attach_guard_rule "$port" "udp" "AKI_DNS_GUARD"
+    done
+    for port in "${tcp_ports[@]}"; do
+      port="${port//[[:space:]]/}"
+      [[ "$port" == "53" ]] || continue
+      attach_guard_rule "$port" "tcp" "AKI_DNS_GUARD"
+    done
+  fi
+}
+
+configure_iptables_guards
 
 if [[ -f "$ENV_FILE" ]]; then
   "$PYTHON_BIN" - <<'PY'

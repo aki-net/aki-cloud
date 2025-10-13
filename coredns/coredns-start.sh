@@ -13,8 +13,15 @@ mkdir -p "$(dirname "$SENTINEL")"
 if [ ! -f "$CORE_CONF" ]; then
   cat <<'EOF' > "$CORE_CONF"
 .:53 {
-    log
     errors
+    bufsize 1232
+    minimal
+    loadbalance
+    cache {
+        success 900
+        denial 60
+    }
+    any
 }
 EOF
 fi

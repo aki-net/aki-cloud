@@ -76,6 +76,8 @@ func main() {
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       cfg.IdleTimeout,
+		MaxHeaderBytes:    cfg.MaxHeaderBytes,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

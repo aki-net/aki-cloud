@@ -6,6 +6,7 @@ Authoritative-only CoreDNS instance templated by the backend.
 - Config path: `/data/dns/Corefile` with zone files in `/data/dns/zones/*.zone`.
 - Host network mode ensures binding to chosen NS IPs (configured via `.env`).
 - Reload behaviour: Corefile is touched by `scripts/reload_coredns.sh`; zone files are watched via the CoreDNS `reload` directive in the rendered template.
+- Hardened defaults: reduced EDNS buffer (`bufsize`), `minimal` answers, in-process caching with success/denial TTLs, and optional query logging (`COREDNS_QUERY_LOG=true`).
 
 ## Manual run
 

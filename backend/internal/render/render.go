@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -139,6 +140,7 @@ func (g *CoreDNSGenerator) Render() error {
 	if len(healthyEdges) == 0 {
 		healthyEdges = edges
 	}
+
 	fmt.Printf("CoreDNS generator: data dir %s, %d domain(s), %d nameserver(s), %d edge IP(s)\n", g.DataDir, len(domains), len(activeNS), len(edges))
 	zonesDir := filepath.Join(g.DataDir, "dns", "zones")
 	if err := os.MkdirAll(zonesDir, 0o755); err != nil {
@@ -256,16 +258,31 @@ func (g *CoreDNSGenerator) Render() error {
 	for _, z := range zoneFiles {
 		zones = append(zones, zoneMeta{Domain: ensureDot(z.Domain), FileName: fmt.Sprintf("%s.zone", z.Domain)})
 	}
+	cacheSuccessTTL := envIntPositive("COREDNS_CACHE_SUCCESS_TTL", 900)
+	cacheDenialTTL := envIntPositive("COREDNS_CACHE_DENIAL_TTL", 60)
+	bufSize := envIntPositive("COREDNS_EDNS_BUFFER", 1232)
+	queryLog := envBool("COREDNS_QUERY_LOG", false)
+	queryLogClass := envStringOrDefault("COREDNS_QUERY_LOG_CLASS", "denial")
 	data := struct {
-		NameServers []infra.NameServer
-		BindIPs     []string
-		Zones       []zoneMeta
-		ZonesDir    string
+		NameServers     []infra.NameServer
+		BindIPs         []string
+		Zones           []zoneMeta
+		ZonesDir        string
+		CacheSuccessTTL int
+		CacheDenialTTL  int
+		BufSize         int
+		QueryLog        bool
+		QueryLogClass   string
 	}{
-		NameServers: filteredNS,
-		BindIPs:     bindIPs,
-		Zones:       zones,
-		ZonesDir:    zonesDir,
+		NameServers:     filteredNS,
+		BindIPs:         bindIPs,
+		Zones:           zones,
+		ZonesDir:        zonesDir,
+		CacheSuccessTTL: cacheSuccessTTL,
+		CacheDenialTTL:  cacheDenialTTL,
+		BufSize:         bufSize,
+		QueryLog:        queryLog,
+		QueryLogClass:   queryLogClass,
 	}
 	buf := bytes.Buffer{}
 	if err := coreTemplate.Execute(&buf, data); err != nil {
@@ -499,6 +516,14 @@ func (g *OpenRestyGenerator) Render() error {
 		return err
 	}
 
+	limitReqPerIP := envIntPositive("EDGE_LIMIT_REQ_PER_IP", 120)
+	limitReqPerIPBurst := envIntPositive("EDGE_LIMIT_REQ_BURST", limitReqPerIP*2)
+	limitReqPerHost := envIntPositive("EDGE_LIMIT_REQ_PER_HOST", 8000)
+	limitReqPerHostBurst := envIntPositive("EDGE_LIMIT_REQ_HOST_BURST", limitReqPerHost*2)
+	limitConnPerIP := envIntPositive("EDGE_LIMIT_CONN_PER_IP", 200)
+	clientMaxBody := envStringOrDefault("EDGE_CLIENT_MAX_BODY", "64m")
+	limitReqNoDelay := envBool("EDGE_LIMIT_REQ_NODELAY", false)
+
 	edgeUsage := make(map[string]bool)
 	for _, domain := range domains {
 		if !domain.Proxied {
@@ -591,27 +616,33 @@ func (g *OpenRestyGenerator) Render() error {
 			}
 		}
 		data := map[string]interface{}{
-			"Domain":           domain.Domain,
-			"EdgeIP":           assignedIP,
-			"OriginIP":         domain.OriginIP,
-			"ProxyPass":        proxyPass,
-			"Mode":             mode,
-			"HasCertificate":   serveTLS,
-			"CertPath":         certPath,
-			"KeyPath":          keyPath,
-			"ChallengeDir":     challengeDir,
-			"RedirectHTTP":     redirectHTTP,
-			"PendingTLS":       pendingTLS,
-			"FallbackLabel":    baseName,
-			"OriginIsHTTPS":    originScheme == "https",
-			"VerifyOrigin":     verifyOrigin,
-			"OriginServerName": domain.Domain,
-			"StrictOriginPull": strictOrigin,
-			"OriginPullCert":   originPullCert,
-			"OriginPullKey":    originPullKey,
-			"ChallengeProxy":   challengeUpstream,
-			"PlaceholderCert":  placeholderCert,
-			"PlaceholderKey":   placeholderKey,
+			"Domain":            domain.Domain,
+			"EdgeIP":            assignedIP,
+			"OriginIP":          domain.OriginIP,
+			"ProxyPass":         proxyPass,
+			"Mode":              mode,
+			"HasCertificate":    serveTLS,
+			"CertPath":          certPath,
+			"KeyPath":           keyPath,
+			"ChallengeDir":      challengeDir,
+			"RedirectHTTP":      redirectHTTP,
+			"PendingTLS":        pendingTLS,
+			"FallbackLabel":     baseName,
+			"OriginIsHTTPS":     originScheme == "https",
+			"VerifyOrigin":      verifyOrigin,
+			"OriginServerName":  domain.Domain,
+			"StrictOriginPull":  strictOrigin,
+			"OriginPullCert":    originPullCert,
+			"OriginPullKey":     originPullKey,
+			"ChallengeProxy":    challengeUpstream,
+			"PlaceholderCert":   placeholderCert,
+			"PlaceholderKey":    placeholderKey,
+			"LimitConnPerIP":    limitConnPerIP,
+			"LimitReqPerIP":     limitReqPerIP,
+			"LimitReqBurstIP":   limitReqPerIPBurst,
+			"LimitReqPerHost":   limitReqPerHost,
+			"LimitReqBurstHost": limitReqPerHostBurst,
+			"LimitReqNoDelay":   limitReqNoDelay,
 		}
 		buf := bytes.Buffer{}
 		if err := tmpl.Execute(&buf, data); err != nil {
@@ -637,7 +668,12 @@ func (g *OpenRestyGenerator) Render() error {
 		return err
 	}
 	nginxData := map[string]interface{}{
-		"SitesDir": sitesDir,
+		"SitesDir":          sitesDir,
+		"LimitReqPerIP":     limitReqPerIP,
+		"LimitReqPerHost":   limitReqPerHost,
+		"LimitConnPerIP":    limitConnPerIP,
+		"ClientMaxBodySize": clientMaxBody,
+		"LimitReqNoDelay":   limitReqNoDelay,
 	}
 	buf := bytes.Buffer{}
 	if err := nginxTemplate.Execute(&buf, nginxData); err != nil {
@@ -662,6 +698,41 @@ func (g *OpenRestyGenerator) localNodeInfo() localEdgeNode {
 
 func (g *CoreDNSGenerator) localNodeInfo() localEdgeNode {
 	return loadLocalNodeInfo(g.DataDir)
+}
+
+func envIntPositive(key string, def int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return def
+	}
+	num, err := strconv.Atoi(value)
+	if err != nil || num <= 0 {
+		return def
+	}
+	return num
+}
+
+func envStringOrDefault(key string, def string) string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return def
+	}
+	return value
+}
+
+func envBool(key string, def bool) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return def
+	}
+	switch strings.ToLower(value) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return def
+	}
 }
 
 func writeEdgeStub(dir string, ip string) error {

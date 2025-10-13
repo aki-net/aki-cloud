@@ -4,7 +4,19 @@
     bind {{ . }}
 {{- end }}
     errors
-    log
+    bufsize {{ .BufSize }}
+    minimal
+    loadbalance
+    cache {
+        success {{ .CacheSuccessTTL }}
+        denial {{ .CacheDenialTTL }}
+    }
+    any
+{{- if .QueryLog }}
+    log . {
+        class {{ .QueryLogClass }}
+    }
+{{- end }}
 {{- range .Zones }}
     file {{ $.ZonesDir }}/{{ .FileName }} {{ .Domain }} {
         reload 5s
@@ -14,6 +26,18 @@
 {{- else -}}
 .:53 {
     errors
-    log
+    bufsize {{ .BufSize }}
+    minimal
+    loadbalance
+    cache {
+        success {{ .CacheSuccessTTL }}
+        denial {{ .CacheDenialTTL }}
+    }
+    any
+{{- if .QueryLog }}
+    log . {
+        class {{ .QueryLogClass }}
+    }
+{{- end }}
 }
 {{- end -}}

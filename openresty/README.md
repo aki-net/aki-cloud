@@ -7,6 +7,7 @@ OpenResty container providing HTTP and HTTPS edge services for proxied domains.
 - TLS certificates and keys are rendered into `/data/openresty/certs`. Client origin-pull material lives under `/data/openresty/origin-pull`.
 - ACME HTTP-01 challenge responses are published via `/data/openresty/challenges/<domain>/<token>` and served directly by OpenResty.
 - Upstream origin connections honour the configured encryption mode (`flexible`, `full`, `full_strict`, `strict_origin_pull`) with appropriate `proxy_ssl_*` directives.
+- Baseline DDoS protection is baked into the generated config: per-IP/per-host request limiting, concurrent connection caps, stricter timeout defaults, and buffered proxying safeguards. Adjust limits through the optional `EDGE_LIMIT_*` variables (see `env-example`).
 
 ## Config layout
 
