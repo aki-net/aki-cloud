@@ -44,6 +44,7 @@ type DomainRecord struct {
 	Proxied      bool         `json:"proxied"`
 	TTL          int          `json:"ttl"`
 	CacheVersion int64        `json:"cache_version,omitempty"`
+	VanityNS     []string     `json:"vanity_ns,omitempty"`
 	UpdatedAt    time.Time    `json:"updated_at"`
 	DeletedAt    time.Time    `json:"deleted_at,omitempty"`
 	TLS          DomainTLS    `json:"tls,omitempty"`
@@ -105,6 +106,7 @@ func (d *DomainRecord) EnsureCacheVersion() {
 	if d.CacheVersion <= 0 {
 		d.CacheVersion = 1
 	}
+	sort.Strings(d.VanityNS)
 }
 
 // MatchesOwner reports whether the record belongs to the provided owner id or email.

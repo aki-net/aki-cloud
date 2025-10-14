@@ -3,10 +3,14 @@ package extensions
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"sort"
 	"strings"
 	"time"
 
+	"aki-cloud/backend/internal/infra"
 	"aki-cloud/backend/internal/models"
 	"aki-cloud/backend/internal/store"
 )
@@ -35,6 +39,27 @@ type Action struct {
 type Extension struct {
 	Definition Definition
 	State      models.ExtensionState
+}
+
+// VanityNSRuntimeConfig captures runtime settings for vanity nameserver generation.
+type VanityNSRuntimeConfig struct {
+	Enabled    bool
+	Label      string
+	BaseDomain string
+	Count      int
+	HashLength int
+}
+
+// VanityNameServer represents a synthesized NS hostname with its glue IP.
+type VanityNameServer struct {
+	Name string
+	IPv4 string
+}
+
+// VanityNameServerSet groups synthetic names by category.
+type VanityNameServerSet struct {
+	Anycast []VanityNameServer
+	Domain  []VanityNameServer
 }
 
 // ErrNotFound indicates the requested extension is not defined.
@@ -222,6 +247,20 @@ func New(st *store.Store, nodeID string) *Service {
 				},
 			},
 		},
+		models.ExtensionVanityNameServers: {
+			Key:            models.ExtensionVanityNameServers,
+			Name:           "Vanity Name Servers",
+			Description:    "Assigns per-domain vanity NS names within the platform domain to reduce fingerprinting.",
+			Category:       "DNS",
+			Scope:          models.ExtensionScopeGlobal,
+			DefaultEnabled: false,
+			DefaultConfig: map[string]interface{}{
+				"label":       "dns",
+				"base_domain": "aki.cloud",
+				"count":       2,
+				"hash_length": 8,
+			},
+		},
 		models.ExtensionPlaceholderPages: {
 			Key:            models.ExtensionPlaceholderPages,
 			Name:           "Aki Placeholder Pages",
@@ -361,6 +400,87 @@ func (s *Service) PlaceholderConfig() (PlaceholderRuntimeConfig, error) {
 		SupportText: stringValue(cfg, "support_text", "Learn how to point traffic"),
 		Footer:      stringValue(cfg, "footer", "aki.cloud edge platform"),
 	}, nil
+}
+
+// VanityNSConfig returns runtime settings for vanity nameserver generation.
+func (s *Service) VanityNSConfig() (VanityNSRuntimeConfig, error) {
+	cfg := VanityNSRuntimeConfig{}
+	ext, err := s.GetGlobal(models.ExtensionVanityNameServers)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return cfg, nil
+		}
+		return cfg, err
+	}
+	raw := ext.State.Config
+	if raw == nil {
+		raw = make(map[string]interface{})
+	}
+	label := sanitizeDNSLabel(stringValue(raw, "label", "dns"))
+	if label == "" {
+		label = "dns"
+	}
+	baseDomain := sanitizeDomain(stringValue(raw, "base_domain", "aki.cloud"))
+	if baseDomain == "" {
+		baseDomain = "aki.cloud"
+	}
+	count := intValue(raw, "count", 2)
+	if count <= 0 {
+		count = 2
+	}
+	if count > 8 {
+		count = 8
+	}
+	hashLength := intValue(raw, "hash_length", 8)
+	if hashLength < 4 {
+		hashLength = 4
+	}
+	if hashLength > 32 {
+		hashLength = 32
+	}
+	cfg = VanityNSRuntimeConfig{
+		Enabled:    ext.State.Enabled,
+		Label:      label,
+		BaseDomain: baseDomain,
+		Count:      count,
+		HashLength: hashLength,
+	}
+	return cfg, nil
+}
+
+// VanityNameServersForDomain returns synthetic vanity NS names for the provided domain.
+func (s *Service) VanityNameServersForDomain(domain string, nsList []infra.NameServer) (VanityNameServerSet, error) {
+	out := VanityNameServerSet{}
+	cfg, err := s.VanityNSConfig()
+	if err != nil {
+		return out, err
+	}
+	if !cfg.Enabled {
+		return out, nil
+	}
+	domainKey := strings.TrimSpace(strings.ToLower(domain))
+	domainKey = strings.TrimSuffix(domainKey, ".")
+	if domainKey == "" {
+		return out, errors.New("domain required for vanity nameserver generation")
+	}
+	available := selectNameServersForDomain(domainKey, nsList, cfg.Count)
+	if len(available) == 0 {
+		return out, nil
+	}
+	for idx, ns := range available {
+		label := hashedVanityLabel(domainKey, ns.FQDN, idx, cfg.HashLength)
+		fqdn := joinLabels(label, cfg.Label, cfg.BaseDomain)
+		out.Anycast = append(out.Anycast, VanityNameServer{
+			Name: fqdn,
+			IPv4: strings.TrimSpace(ns.IPv4),
+		})
+		domainLabel := fmt.Sprintf("ns%d", idx+1)
+		out.Domain = append(out.Domain, VanityNameServer{
+			Name: joinLabels(domainLabel, domainKey),
+			IPv4: strings.TrimSpace(ns.IPv4),
+		})
+	}
+	return out, nil
 }
 
 // ServerHeaderForDomain returns the synthetic Server header for the domain if the extension is enabled.
@@ -521,6 +641,113 @@ func stringSlice(cfg map[string]interface{}, key string, fallback []string) []st
 		}
 	}
 	return fallback
+}
+
+func (cfg VanityNSRuntimeConfig) ZoneFQDN() string {
+	return joinLabels(cfg.Label, cfg.BaseDomain)
+}
+
+func sanitizeDNSLabel(label string) string {
+	label = strings.ToLower(strings.TrimSpace(label))
+	if label == "" {
+		return ""
+	}
+	builder := strings.Builder{}
+	builder.Grow(len(label))
+	for _, r := range label {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			builder.WriteRune(r)
+		}
+	}
+	sanitized := strings.Trim(builder.String(), "-")
+	if len(sanitized) > 63 {
+		sanitized = sanitized[:63]
+	}
+	return sanitized
+}
+
+func sanitizeDomain(input string) string {
+	input = strings.ToLower(strings.TrimSpace(input))
+	input = strings.Trim(input, ".")
+	if input == "" {
+		return ""
+	}
+	parts := strings.Split(input, ".")
+	clean := make([]string, 0, len(parts))
+	for _, part := range parts {
+		label := sanitizeDNSLabel(part)
+		if label == "" {
+			continue
+		}
+		clean = append(clean, label)
+	}
+	return strings.Join(clean, ".")
+}
+
+func joinLabels(parts ...string) string {
+	clean := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.Trim(strings.ToLower(part), ".")
+		if part == "" {
+			continue
+		}
+		clean = append(clean, part)
+	}
+	if len(clean) == 0 {
+		return ""
+	}
+	return strings.Join(clean, ".")
+}
+
+func selectNameServersForDomain(domain string, nsList []infra.NameServer, count int) []infra.NameServer {
+	if count <= 0 {
+		return nil
+	}
+	type candidate struct {
+		ns    infra.NameServer
+		score uint64
+	}
+	candidates := make([]candidate, 0, len(nsList))
+	for _, ns := range nsList {
+		ip := strings.TrimSpace(ns.IPv4)
+		if ip == "" {
+			continue
+		}
+		key := fmt.Sprintf("%s|%s", domain, strings.ToLower(strings.TrimSpace(ns.FQDN)))
+		sum := sha256.Sum256([]byte(key))
+		score := binary.BigEndian.Uint64(sum[:8])
+		candidates = append(candidates, candidate{ns: ns, score: score})
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].score == candidates[j].score {
+			return strings.Compare(strings.ToLower(candidates[i].ns.FQDN), strings.ToLower(candidates[j].ns.FQDN)) < 0
+		}
+		return candidates[i].score < candidates[j].score
+	})
+	if count > len(candidates) {
+		count = len(candidates)
+	}
+	selected := make([]infra.NameServer, 0, count)
+	for i := 0; i < count; i++ {
+		selected = append(selected, candidates[i].ns)
+	}
+	return selected
+}
+
+func hashedVanityLabel(domain string, nsFQDN string, idx int, length int) string {
+	if length <= 0 {
+		length = 8
+	}
+	payload := fmt.Sprintf("%s|%s|%d|vanity", domain, strings.ToLower(strings.TrimSpace(nsFQDN)), idx)
+	sum := sha256.Sum256([]byte(payload))
+	hexed := hex.EncodeToString(sum[:])
+	if length > len(hexed) {
+		length = len(hexed)
+	}
+	return fmt.Sprintf("ns-%s", hexed[:length])
 }
 
 func defaultServerHeaderPool() []string {

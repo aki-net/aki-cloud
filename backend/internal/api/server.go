@@ -81,6 +81,7 @@ type domainOverview struct {
 	EdgeNodeID   string                   `json:"edge_node_id,omitempty"`
 	EdgeLabels   []string                 `json:"edge_labels,omitempty"`
 	EdgeUpdated  *time.Time               `json:"edge_assigned_at,omitempty"`
+	Nameservers  *domainNameServerSet     `json:"nameservers,omitempty"`
 }
 
 type nsCheckRequest struct {
@@ -135,6 +136,88 @@ type bulkDomainPayload struct {
 	TTL      *int               `json:"ttl,omitempty"`
 	TLS      *domainTLSPayload  `json:"tls,omitempty"`
 	Edge     *domainEdgePayload `json:"edge,omitempty"`
+}
+
+type nameServerEntryDTO struct {
+	Name string `json:"name"`
+	IPv4 string `json:"ipv4,omitempty"`
+}
+
+type domainNameServerSet struct {
+	Default []nameServerEntryDTO `json:"default,omitempty"`
+	Anycast []nameServerEntryDTO `json:"anycast,omitempty"`
+	Vanity  []nameServerEntryDTO `json:"vanity,omitempty"`
+}
+
+type domainResponse struct {
+	models.DomainRecord
+	Nameservers *domainNameServerSet `json:"nameservers,omitempty"`
+}
+
+func prepareDefaultNameServers(nsList []infra.NameServer) []nameServerEntryDTO {
+	if len(nsList) == 0 {
+		return nil
+	}
+	entries := make([]nameServerEntryDTO, 0, len(nsList))
+	for _, ns := range nsList {
+		name := strings.TrimSpace(ns.FQDN)
+		if name == "" {
+			continue
+		}
+		entries = append(entries, nameServerEntryDTO{
+			Name: name,
+			IPv4: strings.TrimSpace(ns.IPv4),
+		})
+	}
+	return entries
+}
+
+func (s *Server) composeNameserverSet(domain string, nsList []infra.NameServer, defaults []nameServerEntryDTO) (domainNameServerSet, []string) {
+	nsSet := domainNameServerSet{}
+	if len(defaults) > 0 {
+		nsSet.Default = append(nsSet.Default, defaults...)
+	}
+	var anycastNames []string
+	if s.Extensions == nil {
+		return nsSet, anycastNames
+	}
+	set, err := s.Extensions.VanityNameServersForDomain(domain, nsList)
+	if err != nil {
+		log.Printf("domains: vanity names for %s failed: %v", domain, err)
+		return nsSet, anycastNames
+	}
+	if len(set.Anycast) > 0 {
+		entries := make([]nameServerEntryDTO, 0, len(set.Anycast))
+		names := make([]string, 0, len(set.Anycast))
+		for _, ns := range set.Anycast {
+			name := strings.TrimSpace(ns.Name)
+			ip := strings.TrimSpace(ns.IPv4)
+			if name == "" {
+				continue
+			}
+			entries = append(entries, nameServerEntryDTO{Name: name, IPv4: ip})
+			names = append(names, name)
+		}
+		if len(entries) > 0 {
+			nsSet.Anycast = entries
+			anycastNames = names
+		}
+	}
+	if len(set.Domain) > 0 {
+		entries := make([]nameServerEntryDTO, 0, len(set.Domain))
+		for _, ns := range set.Domain {
+			name := strings.TrimSpace(ns.Name)
+			ip := strings.TrimSpace(ns.IPv4)
+			if name == "" {
+				continue
+			}
+			entries = append(entries, nameServerEntryDTO{Name: name, IPv4: ip})
+		}
+		if len(entries) > 0 {
+			nsSet.Vanity = entries
+		}
+	}
+	return nsSet, anycastNames
 }
 
 type bulkUpdateDomainPayload struct {
@@ -660,12 +743,29 @@ func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.populateDomainOwners(&records)
+	nsList, nsErr := s.Infra.ActiveNameServers()
+	if nsErr != nil {
+		log.Printf("domains: load active nameservers failed: %v", nsErr)
+		nsList = nil
+	}
+	defaultEntries := prepareDefaultNameServers(nsList)
+	response := make([]domainResponse, 0, len(records))
 	for i := range records {
 		edge := records[i].Edge
-		records[i] = records[i].Sanitize()
-		records[i].Edge = edge
+		sanitized := records[i].Sanitize()
+		sanitized.Edge = edge
+		nsSet, anycastNames := s.composeNameserverSet(records[i].Domain, nsList, defaultEntries)
+		sanitized.VanityNS = anycastNames
+		var nsPtr *domainNameServerSet
+		if len(nsSet.Default) > 0 || len(nsSet.Anycast) > 0 || len(nsSet.Vanity) > 0 {
+			nsPtr = &nsSet
+		}
+		response = append(response, domainResponse{
+			DomainRecord: sanitized,
+			Nameservers:  nsPtr,
+		})
 	}
-	writeJSON(w, http.StatusOK, records)
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) populateDomainOwners(records *[]models.DomainRecord) {
@@ -2017,6 +2117,12 @@ func (s *Server) handleDomainsOverview(w http.ResponseWriter, r *http.Request) {
 	for _, user := range users {
 		userMap[user.ID] = user
 	}
+	nsList, nsErr := s.Infra.ActiveNameServers()
+	if nsErr != nil {
+		log.Printf("domains overview: load nameservers failed: %v", nsErr)
+		nsList = nil
+	}
+	defaultEntries := prepareDefaultNameServers(nsList)
 	overview := make([]domainOverview, 0, len(domains))
 	for _, domain := range domains {
 		entry := domainOverview{
@@ -2070,6 +2176,10 @@ func (s *Server) handleDomainsOverview(w http.ResponseWriter, r *http.Request) {
 					break
 				}
 			}
+		}
+		if nsSet, _ := s.composeNameserverSet(domain.Domain, nsList, defaultEntries); len(nsSet.Default) > 0 || len(nsSet.Anycast) > 0 || len(nsSet.Vanity) > 0 {
+			nsCopy := nsSet
+			entry.Nameservers = &nsCopy
 		}
 		overview = append(overview, entry)
 	}

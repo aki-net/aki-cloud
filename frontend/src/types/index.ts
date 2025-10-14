@@ -52,6 +52,17 @@ export interface DomainEdge {
   assigned_at?: string;
 }
 
+export interface DomainNameserverEntry {
+  name: string;
+  ipv4?: string;
+}
+
+export interface DomainNameserverSet {
+  default?: DomainNameserverEntry[];
+  anycast?: DomainNameserverEntry[];
+  vanity?: DomainNameserverEntry[];
+}
+
 export interface ReassignAllEdgesResponse {
   reassigned: number;
   unchanged: number;
@@ -75,6 +86,8 @@ export interface Domain {
   updated_at: string;
   tls: DomainTLS;
   edge?: DomainEdge;
+  vanity_ns?: string[];
+  nameservers?: DomainNameserverSet;
 }
 
 export interface DomainTLSPayload {
@@ -219,6 +232,7 @@ export interface DomainOverview {
   edge_node_id?: string;
   edge_labels?: string[];
   edge_assigned_at?: string;
+  nameservers?: DomainNameserverSet;
 }
 
 export interface NameServerStatus {

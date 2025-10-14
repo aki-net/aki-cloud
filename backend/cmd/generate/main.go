@@ -53,7 +53,7 @@ func main() {
 
 	switch component {
 	case "coredns":
-		gen := render.CoreDNSGenerator{Store: store, Infra: infraCtl, DataDir: dataDir, Template: corednsTemplate, NSLabel: nsLabel, NSBaseDomain: nsBaseDomain}
+		gen := render.CoreDNSGenerator{Store: store, Infra: infraCtl, Extensions: extSvc, DataDir: dataDir, Template: corednsTemplate, NSLabel: nsLabel, NSBaseDomain: nsBaseDomain}
 		if err := gen.Render(); err != nil {
 			log.Fatalf("render coredns: %v", err)
 		}
@@ -63,7 +63,7 @@ func main() {
 			log.Fatalf("render openresty: %v", err)
 		}
 	case "all":
-		corednsGen := render.CoreDNSGenerator{Store: store, Infra: infraCtl, DataDir: dataDir, Template: corednsTemplate, NSLabel: nsLabel, NSBaseDomain: nsBaseDomain}
+		corednsGen := render.CoreDNSGenerator{Store: store, Infra: infraCtl, Extensions: extSvc, DataDir: dataDir, Template: corednsTemplate, NSLabel: nsLabel, NSBaseDomain: nsBaseDomain}
 		if err := corednsGen.Render(); err != nil {
 			log.Fatalf("render coredns: %v", err)
 		}

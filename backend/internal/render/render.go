@@ -30,6 +30,7 @@ import (
 type CoreDNSGenerator struct {
 	Store        *store.Store
 	Infra        *infra.Controller
+	Extensions   *extensions.Service
 	DataDir      string
 	Template     string
 	NSLabel      string
@@ -90,6 +91,48 @@ func (g *CoreDNSGenerator) Render() error {
 	nsList, err := g.Infra.ActiveNameServers()
 	if err != nil {
 		return err
+	}
+	var (
+		vanitySets       map[string]extensions.VanityNameServerSet
+		vanityZoneExtras map[string][]ZoneRecord
+	)
+	if g.Extensions != nil {
+		cfg, err := g.Extensions.VanityNSConfig()
+		if err != nil {
+			return err
+		}
+		if cfg.Enabled {
+			vanitySets = make(map[string]extensions.VanityNameServerSet, len(domains))
+			vanityZoneExtras = make(map[string][]ZoneRecord)
+			zoneName := cfg.ZoneFQDN()
+			for _, domain := range domains {
+				set, err := g.Extensions.VanityNameServersForDomain(domain.Domain, nsList)
+				if err != nil {
+					return err
+				}
+				if len(set.Anycast) == 0 && len(set.Domain) == 0 {
+					continue
+				}
+				domainKey := strings.ToLower(strings.TrimSuffix(domain.Domain, "."))
+				vanitySets[domainKey] = set
+				if zoneName == "" {
+					continue
+				}
+				for _, ns := range set.Anycast {
+					name := strings.TrimSpace(ns.Name)
+					ip := strings.TrimSpace(ns.IPv4)
+					if name == "" || ip == "" {
+						continue
+					}
+					label := relativeLabel(name, zoneName)
+					vanityZoneExtras[zoneName] = append(vanityZoneExtras[zoneName], ZoneRecord{
+						Name:  label,
+						Type:  "A",
+						Value: ip,
+					})
+				}
+			}
+		}
 	}
 	local := g.localNodeInfo()
 	if stored, ok := nodeMap[local.NodeID]; ok {
@@ -197,6 +240,7 @@ func (g *CoreDNSGenerator) Render() error {
 				Value: fmt.Sprintf(`"%s"`, ch.DNSValue),
 			})
 		}
+		extraRecords := append([]ZoneRecord{}, challengeExtras...)
 		arecords := make([]string, 0, 2)
 		if domain.Proxied {
 			// Only use the assigned IP, never all edge IPs
@@ -218,6 +262,30 @@ func (g *CoreDNSGenerator) Render() error {
 		for _, ns := range activeNS {
 			nsRecords = append(nsRecords, ensureDot(ns.FQDN))
 		}
+		domainKey := strings.ToLower(strings.TrimSuffix(domain.Domain, "."))
+		if vanity, ok := vanitySets[domainKey]; ok {
+			for _, ns := range vanity.Anycast {
+				name := strings.TrimSpace(ns.Name)
+				if name == "" {
+					continue
+				}
+				nsRecords = append(nsRecords, ensureDot(name))
+			}
+			for _, ns := range vanity.Domain {
+				name := strings.TrimSpace(ns.Name)
+				ip := strings.TrimSpace(ns.IPv4)
+				if name != "" {
+					nsRecords = append(nsRecords, ensureDot(name))
+				}
+				if name != "" && ip != "" {
+					extraRecords = append(extraRecords, ZoneRecord{
+						Name:  relativeLabel(name, domain.Domain),
+						Type:  "A",
+						Value: ip,
+					})
+				}
+			}
+		}
 		if len(nsRecords) == 0 {
 			nsRecords = append(nsRecords, primaryNS)
 		}
@@ -227,14 +295,14 @@ func (g *CoreDNSGenerator) Render() error {
 			PrimaryNS:  primaryNS,
 			AdminEmail: fmt.Sprintf("admin.%s.", strings.TrimSuffix(domain.Domain, ".")),
 			Serial:     serial,
-			NSRecords:  nsRecords,
+			NSRecords:  uniqueStrings(nsRecords),
 			ARecords:   uniqueStrings(arecords),
-			Extra:      dedupeRecords(challengeExtras),
+			Extra:      dedupeRecords(extraRecords),
 		}
 		zoneFiles = append(zoneFiles, zone)
 	}
 
-	infraZones := g.buildInfrastructureZones(activeNS, serial)
+	infraZones := g.buildInfrastructureZones(activeNS, serial, vanityZoneExtras)
 	zoneFiles = append(zoneFiles, infraZones...)
 
 	for _, zone := range zoneFiles {
@@ -329,7 +397,7 @@ $TTL {{.TTL}}
 	return os.WriteFile(file, buf.Bytes(), 0o644)
 }
 
-func (g *CoreDNSGenerator) buildInfrastructureZones(nsList []infra.NameServer, serial string) []ZoneFile {
+func (g *CoreDNSGenerator) buildInfrastructureZones(nsList []infra.NameServer, serial string, vanityExtras map[string][]ZoneRecord) []ZoneFile {
 	if len(nsList) == 0 {
 		return nil
 	}
@@ -364,6 +432,11 @@ func (g *CoreDNSGenerator) buildInfrastructureZones(nsList []infra.NameServer, s
 				label = "dns"
 			}
 			labelMap[label] = append(labelMap[label], ns)
+		}
+		if len(vanityExtras) > 0 {
+			if records, ok := vanityExtras[strings.TrimSuffix(base, ".")]; ok {
+				extra = append(extra, records...)
+			}
 		}
 		for label, nsByLabel := range labelMap {
 			for _, ns := range nsByLabel {
@@ -408,7 +481,7 @@ func (g *CoreDNSGenerator) buildInfrastructureZones(nsList []infra.NameServer, s
 				AdminEmail: fmt.Sprintf("admin.%s.", strings.TrimSuffix(labelDomain, ".")),
 				Serial:     serial,
 				NSRecords:  uniqueStrings(labelNSRecords),
-				Extra:      dedupeRecords(labelExtras),
+				Extra:      dedupeRecords(append(labelExtras, vanityExtras[labelDomain]...)),
 			}
 			zones = append(zones, labelZone)
 		}

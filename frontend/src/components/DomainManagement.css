@@ -142,6 +142,114 @@
   justify-content: flex-start;
 }
 
+.nameserver-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+}
+
+.ns-primary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 100%;
+  max-height: 48px;
+  overflow: hidden;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background-color 0.15s ease;
+}
+
+.ns-primary:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(88, 101, 242, 0.2);
+}
+
+.ns-primary:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(88, 101, 242, 0.4);
+}
+
+.ns-primary:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.ns-chip {
+  background: var(--color-bg-tertiary);
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ns-more {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  align-self: center;
+}
+
+.ns-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  padding: 12px;
+  min-width: 260px;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+.ns-category {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ns-category-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  letter-spacing: 0.08em;
+}
+
+.ns-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 13px;
+  align-items: center;
+}
+
+.ns-host {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.ns-ip {
+  font-family: var(--font-mono);
+  color: var(--color-text-tertiary);
+}
+
+.ns-row.ns-empty {
+  font-style: italic;
+  color: var(--color-text-tertiary);
+}
+
 /* TLS Display */
 .tls-display {
   display: flex;

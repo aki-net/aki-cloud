@@ -19,6 +19,7 @@ const (
 	ExtensionEdgeCache         = "edge_cache"
 	ExtensionRandomServerNames = "random_server_headers"
 	ExtensionPlaceholderPages  = "placeholder_pages"
+	ExtensionVanityNameServers = "vanity_nameservers"
 )
 
 // ExtensionState persists runtime configuration for an extension.

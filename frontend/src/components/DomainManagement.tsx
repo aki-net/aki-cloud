@@ -6,6 +6,8 @@ import {
   NameServerEntry,
   DomainOverview,
   EdgeEndpoint,
+  DomainNameserverEntry,
+  DomainNameserverSet,
 } from "../types";
 import Table from "./ui/Table";
 import Button from "./ui/Button";
@@ -47,6 +49,9 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   );
   const [rebalancingEdges, setRebalancingEdges] = useState(false);
   const [purgingDomain, setPurgingDomain] = useState<string | null>(null);
+  const [expandedNameservers, setExpandedNameservers] = useState<string | null>(
+    null,
+  );
 
   interface EdgeModalData {
     domain: string;
@@ -80,6 +85,10 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   useEffect(() => {
     loadDataRef.current = loadData;
   }, []);
+
+  useEffect(() => {
+    setExpandedNameservers(null);
+  }, [viewMode, searchQuery, isAdmin]);
 
   const loadData = async (showLoader = false) => {
     if (showLoader) setLoading(true);
@@ -171,6 +180,115 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       return "Retrying now";
     }
     return `Retry ${formatDistanceToNow(retry, { addSuffix: true })}`;
+  };
+
+  const renderNameserverCategory = (
+    label: string,
+    entries?: DomainNameserverEntry[],
+    options?: { showIPs?: boolean; header?: string },
+  ): React.ReactNode => {
+    if (!entries || entries.length === 0) {
+      return null;
+    }
+    const showIPs = options?.showIPs ?? true;
+    const header = options?.header ?? label;
+    return (
+      <div className="ns-category" key={header}>
+        <div className="ns-category-header">{header}</div>
+        {entries.map((entry) => (
+          <div className="ns-row" key={`${header}-${entry.name}`}>
+            <span className="ns-host">{entry.name}</span>
+            {showIPs && entry.ipv4 && <span className="ns-ip">{entry.ipv4}</span>}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const renderNameserverCell = (record: Domain | DomainOverview) => {
+    const nsSet = (record as { nameservers?: DomainNameserverSet }).nameservers;
+    const domainName = (record as { domain: string }).domain;
+    if (
+      !nsSet ||
+      (!nsSet.default?.length &&
+        !nsSet.anycast?.length &&
+        !nsSet.vanity?.length)
+    ) {
+      return <span className="text-secondary">—</span>;
+    }
+    const hasAnycast = Array.isArray(nsSet.anycast) && nsSet.anycast.length > 0;
+    const primary =
+      hasAnycast && nsSet.anycast
+        ? nsSet.anycast
+        : nsSet.vanity && nsSet.vanity.length > 0
+          ? nsSet.vanity
+          : [];
+    if (!primary.length) {
+      return <span className="text-secondary">—</span>;
+    }
+    const visible = primary.slice(0, 4);
+    const remaining = Math.max(primary.length - visible.length, 0);
+    const anycastSection = renderNameserverCategory(
+      "Anycast",
+      nsSet.anycast,
+      {
+        showIPs: false,
+      },
+    );
+    const vanitySection = renderNameserverCategory(
+      "Domain-specific (NameServers + Glue)",
+      nsSet.vanity,
+      { showIPs: true, header: "Domain-specific (NameServers + Glue)" },
+    );
+    const sections = [anycastSection, vanitySection].filter(
+      (section): section is React.ReactNode => Boolean(section),
+    );
+    const hasDetails = sections.length > 0;
+    const isOpen = expandedNameservers === domainName;
+    const toggle = () => {
+      if (!hasDetails) {
+        return;
+      }
+      setExpandedNameservers((prev) =>
+        prev === domainName ? null : domainName,
+      );
+    };
+    return (
+      <div className="nameserver-cell">
+        <div
+          className="ns-primary"
+          role={hasDetails ? "button" : undefined}
+          tabIndex={hasDetails ? 0 : -1}
+          aria-expanded={hasDetails ? isOpen : undefined}
+          onClick={toggle}
+          onKeyDown={(event) => {
+            if (!hasDetails) {
+              return;
+            }
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              toggle();
+            }
+          }}
+        >
+          {visible.map((entry) => (
+            <span
+              key={`${domainName}-${entry.name}`}
+              className="ns-chip mono"
+              title={entry.name}
+            >
+              {entry.name}
+            </span>
+          ))}
+          {remaining > 0 && (
+            <span className="ns-more" title={`+${remaining} more`}>+{remaining} more</span>
+          )}
+        </div>
+        {isOpen && hasDetails && (
+          <div className="ns-popover">{sections}</div>
+        )}
+      </div>
+    );
   };
 
   const tlsStatusMeta: Record<
@@ -825,6 +943,13 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         )}
       </div>
     ),
+  });
+
+  columns.push({
+    key: "nameservers",
+    header: "Nameservers",
+    accessor: (d: any) => renderNameserverCell(d),
+    width: "260px",
   });
 
   // Owner column - only for admin in all/orphaned mode
