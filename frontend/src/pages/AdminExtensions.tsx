@@ -1,11 +1,31 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
+import { toast } from 'react-hot-toast';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import Switch from '../components/ui/Switch';
 import PageHeader from '../components/PageHeader';
+import { Extension } from '../types';
+import { extensionsApi } from '../api/client';
 import './AdminExtensions.css';
+
+const EXTENSION_ICONS: Record<string, string> = {
+  edge_cache: '🗄️',
+  random_server_headers: '🎲',
+  placeholder_pages: '🪧',
+};
+
+const getExtensionIcon = (key: string) => EXTENSION_ICONS[key] ?? '🧩';
+
+const formatUpdated = (value?: string) => {
+  if (!value) return 'never';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString();
+};
 
 function ExtensionsHub() {
   const [extensions] = useState([
@@ -67,9 +87,11 @@ function ExtensionsHub() {
             <span className="extension-icon">{ext.icon}</span>
             <Badge
               variant={
-                ext.status === 'active' ? 'success' :
-                ext.status === 'beta' ? 'warning' :
-                'default'
+                ext.status === 'active'
+                  ? 'success'
+                  : ext.status === 'beta'
+                  ? 'warning'
+                  : 'default'
               }
               size="sm"
             >
@@ -86,6 +108,233 @@ function ExtensionsHub() {
           </div>
         </Card>
       ))}
+    </div>
+  );
+}
+
+function renderExtensionMeta(ext: Extension) {
+  const config = ext.config || {};
+  switch (ext.key) {
+    case 'edge_cache': {
+      const path = typeof config.path === 'string' ? config.path : '—';
+      const zone = typeof config.zone_name === 'string' ? config.zone_name : '—';
+      const maxSize = typeof config.max_size === 'string' ? config.max_size : '—';
+      const inactive = typeof config.inactive === 'string' ? config.inactive : '—';
+      return (
+        <ul className="extension-meta">
+          <li>
+            <strong>Cache directory:</strong> {path}
+          </li>
+          <li>
+            <strong>Zone:</strong> {zone}
+          </li>
+          <li>
+            <strong>Max size:</strong> {maxSize}
+          </li>
+          <li>
+            <strong>Inactive TTL:</strong> {inactive}
+          </li>
+        </ul>
+      );
+    }
+    case 'random_server_headers': {
+      const pool = Array.isArray(config.pool) ? config.pool : [];
+      return (
+        <ul className="extension-meta">
+          <li>
+            <strong>Header variants:</strong> {pool.length || 'unknown'}
+          </li>
+          <li>
+            <strong>Sample:</strong> {pool.slice(0, 3).join(', ') || '—'}
+          </li>
+        </ul>
+      );
+    }
+    case 'placeholder_pages': {
+      const title =
+        typeof config.title === 'string'
+          ? config.title
+          : 'Domain delegated to aki.cloud';
+      const message =
+        typeof config.message === 'string'
+          ? config.message
+          : 'Traffic reaches aki.cloud edge, origin not configured yet.';
+      return (
+        <ul className="extension-meta">
+          <li>
+            <strong>Headline:</strong> {title}
+          </li>
+          <li>
+            <strong>Message:</strong> {message}
+          </li>
+        </ul>
+      );
+    }
+    default:
+      return null;
+  }
+}
+
+function SystemExtensions() {
+  const [extensions, setExtensions] = useState<Extension[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [updatingKey, setUpdatingKey] = useState<string | null>(null);
+  const [actionKey, setActionKey] = useState<string | null>(null);
+
+  const loadExtensions = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await extensionsApi.list();
+      setExtensions(data);
+    } catch (err: any) {
+      console.error('Failed to load extensions', err);
+      setError(err?.response?.data?.error || 'Failed to load extensions');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadExtensions();
+  }, [loadExtensions]);
+
+  const handleToggle = useCallback(
+    async (key: string, enabled: boolean) => {
+      setUpdatingKey(key);
+      try {
+        const updated = await extensionsApi.update(key, { enabled });
+        setExtensions((prev) =>
+          prev.map((ext) => (ext.key === updated.key ? updated : ext)),
+        );
+        toast.success(`${updated.name} ${enabled ? 'enabled' : 'disabled'}`);
+      } catch (err: any) {
+        console.error('Failed to update extension', err);
+        toast.error(err?.response?.data?.error || 'Failed to update extension');
+      } finally {
+        setUpdatingKey(null);
+      }
+    },
+    [],
+  );
+
+  const handleAction = useCallback(
+    async (key: string, action: string) => {
+      const actionIdentifier = `${key}:${action}`;
+      setActionKey(actionIdentifier);
+      try {
+        const response = await extensionsApi.action(key, action);
+        toast.success(response.status || 'Action completed');
+      } catch (err: any) {
+        console.error('Extension action failed', err);
+        toast.error(err?.response?.data?.error || 'Action failed');
+      } finally {
+        setActionKey(null);
+      }
+    },
+    [],
+  );
+
+  return (
+    <div className="extensions-hub">
+      {error && (
+        <Card className="extension-alert">
+          <div className="extension-alert-content">
+            <span>{error}</span>
+            <Button variant="primary" size="sm" onClick={loadExtensions}>
+              Retry
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {loading && extensions.length === 0 && (
+        <Card className="extension-card">
+          <div className="extension-loading">Loading extensions…</div>
+        </Card>
+      )}
+
+      <div className="extensions-grid">
+        {extensions.map((ext) => {
+          const meta = renderExtensionMeta(ext);
+          const icon = getExtensionIcon(ext.key);
+          const actions = ext.actions ?? [];
+          const statusVariant = ext.enabled ? 'success' : 'default';
+          const scopeLabel =
+            ext.scope === 'domain'
+              ? 'Per-domain'
+              : ext.scope === 'node'
+              ? 'Per-node'
+              : 'Global';
+          const updating = updatingKey === ext.key;
+          return (
+            <Card key={ext.key} className="extension-card">
+              <div className="extension-header">
+                <div className="extension-header-left">
+                  <span className="extension-icon" role="img" aria-label={ext.name}>
+                    {icon}
+                  </span>
+                  <div className="extension-header-text">
+                    <h3 className="extension-name">{ext.name}</h3>
+                    <div className="extension-tags">
+                      <Badge variant="secondary" size="sm">
+                        {ext.category}
+                      </Badge>
+                      <Badge variant="secondary" size="sm">
+                        {scopeLabel}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+                <div className="extension-status">
+                  <Badge variant={statusVariant} size="sm">
+                    {ext.enabled ? 'enabled' : 'disabled'}
+                  </Badge>
+                  <Switch
+                    checked={ext.enabled}
+                    disabled={updating}
+                    onChange={(checked) => handleToggle(ext.key, checked)}
+                  />
+                </div>
+              </div>
+
+              <p className="extension-description">{ext.description}</p>
+
+              {meta}
+
+              <div className="extension-footer">
+                <div className="extension-updated">
+                  <span>Updated: {formatUpdated(ext.updated_at)}</span>
+                  {ext.updated_by && <span> · by {ext.updated_by}</span>}
+                </div>
+                <div className="extension-actions">
+                  {actions.map((action) => (
+                    <Button
+                      key={`${ext.key}-${action.key}`}
+                      variant="ghost"
+                      size="sm"
+                      disabled={!ext.enabled}
+                      loading={actionKey === `${ext.key}:${action.key}`}
+                      onClick={() => handleAction(ext.key, action.key)}
+                    >
+                      {action.label || action.key}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            </Card>
+          );
+        })}
+
+        {!loading && !error && extensions.length === 0 && (
+          <Card className="extension-card">
+            <div className="extension-empty">
+              <p>No extensions available yet.</p>
+            </div>
+          </Card>
+        )}
+      </div>
     </div>
   );
 }
@@ -110,7 +359,9 @@ function SecurityCenter() {
             </div>
             <Switch
               checked={settings.ddosProtection}
-              onChange={(checked) => setSettings({ ...settings, ddosProtection: checked })}
+              onChange={(checked) =>
+                setSettings({ ...settings, ddosProtection: checked })
+              }
             />
           </div>
           <div className="setting-item">
@@ -120,7 +371,9 @@ function SecurityCenter() {
             </div>
             <Switch
               checked={settings.botFighting}
-              onChange={(checked) => setSettings({ ...settings, botFighting: checked })}
+              onChange={(checked) =>
+                setSettings({ ...settings, botFighting: checked })
+              }
             />
           </div>
           <div className="setting-item">
@@ -130,7 +383,9 @@ function SecurityCenter() {
             </div>
             <Switch
               checked={settings.sslEnforcement}
-              onChange={(checked) => setSettings({ ...settings, sslEnforcement: checked })}
+              onChange={(checked) =>
+                setSettings({ ...settings, sslEnforcement: checked })
+              }
             />
           </div>
           <div className="setting-item">
@@ -140,7 +395,9 @@ function SecurityCenter() {
             </div>
             <Switch
               checked={settings.http3Support}
-              onChange={(checked) => setSettings({ ...settings, http3Support: checked })}
+              onChange={(checked) =>
+                setSettings({ ...settings, http3Support: checked })
+              }
             />
           </div>
           <div className="setting-item">
@@ -150,7 +407,9 @@ function SecurityCenter() {
             </div>
             <Switch
               checked={settings.zeroTrust}
-              onChange={(checked) => setSettings({ ...settings, zeroTrust: checked })}
+              onChange={(checked) =>
+                setSettings({ ...settings, zeroTrust: checked })
+              }
             />
           </div>
         </div>
@@ -200,14 +459,6 @@ function Automation() {
       trigger: 'Traffic threshold',
       status: 'paused',
       lastRun: '1 week ago',
-      nextRun: '—',
-    },
-    {
-      id: 4,
-      name: 'Purge cache on deploy',
-      trigger: 'Webhook',
-      status: 'active',
-      lastRun: 'Yesterday',
       nextRun: 'On trigger',
     },
   ]);
@@ -220,18 +471,26 @@ function Automation() {
             <div key={workflow.id} className="workflow-item">
               <div className="workflow-info">
                 <h4>{workflow.name}</h4>
-                <div className="workflow-meta">
-                  <Badge variant="info" size="sm">{workflow.trigger}</Badge>
-                  <span className="meta-text">Last run: {workflow.lastRun}</span>
-                  <span className="meta-text">Next: {workflow.nextRun}</span>
-                </div>
+                <p>Trigger: {workflow.trigger}</p>
+              </div>
+              <div className="workflow-meta">
+                <Badge
+                  variant={workflow.status === 'active' ? 'success' : 'default'}
+                  size="sm"
+                >
+                  {workflow.status}
+                </Badge>
+                <span className="workflow-run">Last run: {workflow.lastRun}</span>
+                <span className="workflow-run">Next run: {workflow.nextRun}</span>
               </div>
               <div className="workflow-actions">
                 <Switch
                   checked={workflow.status === 'active'}
                   size="sm"
                 />
-                <Button variant="ghost" size="sm">Edit</Button>
+                <Button variant="ghost" size="sm">
+                  Edit
+                </Button>
               </div>
             </div>
           ))}
@@ -286,14 +545,20 @@ function APIKeys() {
                   <span>Last used: {key.lastUsed}</span>
                   <div className="key-permissions">
                     {key.permissions.map((perm) => (
-                      <Badge key={perm} variant="default" size="sm">{perm}</Badge>
+                      <Badge key={perm} variant="default" size="sm">
+                        {perm}
+                      </Badge>
                     ))}
                   </div>
                 </div>
               </div>
               <div className="key-actions">
-                <Button variant="ghost" size="sm">Regenerate</Button>
-                <Button variant="danger" size="sm">Revoke</Button>
+                <Button variant="ghost" size="sm">
+                  Regenerate
+                </Button>
+                <Button variant="danger" size="sm">
+                  Revoke
+                </Button>
               </div>
             </div>
           ))}
@@ -308,12 +573,13 @@ function APIKeys() {
 
 export default function AdminExtensions() {
   const location = useLocation();
-  
+
   const tabs = [
     { path: '/extensions', label: 'Extensions', icon: '🧩' },
     { path: '/extensions/security', label: 'Security', icon: '🔒' },
     { path: '/extensions/automation', label: 'Automation', icon: '⚡' },
     { path: '/extensions/api-keys', label: 'API Keys', icon: '🔑' },
+    { path: '/extensions/system', label: 'System', icon: '🛠️' },
   ];
 
   return (
@@ -328,11 +594,14 @@ export default function AdminExtensions() {
           <NavLink
             key={tab.path}
             to={tab.path}
-            className={({ isActive }) => `extension-tab ${
-              (isActive && location.pathname === tab.path) || 
-              (tab.path === '/extensions' && location.pathname === '/extensions')
-                ? 'active' : ''
-            }`}
+            className={({ isActive }) =>
+              `extension-tab ${
+                (isActive && location.pathname === tab.path) ||
+                (tab.path === '/extensions' && location.pathname === '/extensions')
+                  ? 'active'
+                  : ''
+              }`
+            }
             end
           >
             <span className="tab-icon">{tab.icon}</span>
@@ -347,6 +616,7 @@ export default function AdminExtensions() {
           <Route path="security" element={<SecurityCenter />} />
           <Route path="automation" element={<Automation />} />
           <Route path="api-keys" element={<APIKeys />} />
+          <Route path="system" element={<SystemExtensions />} />
         </Routes>
       </div>
     </div>

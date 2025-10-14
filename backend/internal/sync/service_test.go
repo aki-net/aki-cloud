@@ -30,11 +30,13 @@ func TestMergeDomainPrefersNewest(t *testing.T) {
 	local := models.DomainRecord{
 		Domain:   "example.test",
 		OriginIP: "203.0.113.10",
+		Owner:    "owner-a",
 		Version:  models.ClockVersion{Counter: 1, NodeID: "node-a", Updated: now.Add(-time.Minute).Unix()},
 	}
 	remote := models.DomainRecord{
 		Domain:   "example.test",
 		OriginIP: "198.51.100.4",
+		Owner:    "owner-b",
 		Version:  models.ClockVersion{Counter: 2, NodeID: "node-b", Updated: now.Unix()},
 	}
 
@@ -56,6 +58,7 @@ func TestServiceApplySnapshot(t *testing.T) {
 				OriginIP: "203.0.113.5",
 				Proxied:  false,
 				TTL:      60,
+				Owner:    "owner-1",
 				Version: models.ClockVersion{
 					Counter: 1,
 					NodeID:  "seed",
@@ -75,6 +78,16 @@ func TestServiceApplySnapshot(t *testing.T) {
 				Updated: now.Unix(),
 			},
 		}},
+		Extensions: models.ExtensionsState{
+			Config: models.ExtensionsConfig{
+				Global: map[string]models.ExtensionState{
+					models.ExtensionEdgeCache: {
+						Enabled: true,
+					},
+				},
+			},
+			Version: models.ClockVersion{Counter: 1, NodeID: "seed", Updated: now.Unix()},
+		},
 	}
 
 	if err := svc.ApplySnapshot(snapshot); err != nil {
@@ -101,6 +114,14 @@ func TestServiceApplySnapshot(t *testing.T) {
 	if len(peers) != 1 || peers[0] != "http://10.0.0.1:8080" {
 		t.Fatalf("unexpected peers: %#v", peers)
 	}
+	extState, err := st.GetExtensionsState()
+	if err != nil {
+		t.Fatalf("get extensions state: %v", err)
+	}
+	edgeCache, ok := extState.Config.Global[models.ExtensionEdgeCache]
+	if !ok || !edgeCache.Enabled {
+		t.Fatalf("expected edge cache extension to be enabled via snapshot")
+	}
 }
 
 func TestApplySnapshotTombstone(t *testing.T) {
@@ -111,6 +132,7 @@ func TestApplySnapshotTombstone(t *testing.T) {
 		OriginIP: "203.0.113.10",
 		TTL:      60,
 		Proxied:  true,
+		Owner:    "owner-1",
 		Version: models.ClockVersion{
 			Counter: 1,
 			NodeID:  "node-a",

@@ -21,6 +21,7 @@ import (
 
 	"aki-cloud/backend/internal/auth"
 	"aki-cloud/backend/internal/config"
+	"aki-cloud/backend/internal/extensions"
 	"aki-cloud/backend/internal/infra"
 	"aki-cloud/backend/internal/models"
 	"aki-cloud/backend/internal/orchestrator"
@@ -45,6 +46,7 @@ type Server struct {
 	Orchestrator    *orchestrator.Service
 	Sync            *syncsvc.Service
 	Infra           *infra.Controller
+	Extensions      *extensions.Service
 	edgeReconcileMu sync.Mutex
 }
 
@@ -107,7 +109,7 @@ type domainEdgePayload struct {
 type createDomainPayload struct {
 	Domain   string             `json:"domain"`
 	Owner    string             `json:"owner,omitempty"`
-	OriginIP string             `json:"origin_ip"`
+	OriginIP *string            `json:"origin_ip"`
 	Proxied  *bool              `json:"proxied,omitempty"`
 	TTL      *int               `json:"ttl,omitempty"`
 	TLS      *domainTLSPayload  `json:"tls,omitempty"`
@@ -127,7 +129,7 @@ var (
 type bulkDomainPayload struct {
 	Domains  []string           `json:"domains"`
 	Owner    string             `json:"owner,omitempty"`
-	OriginIP string             `json:"origin_ip"`
+	OriginIP *string            `json:"origin_ip"`
 	Proxied  *bool              `json:"proxied,omitempty"`
 	TTL      *int               `json:"ttl,omitempty"`
 	TLS      *domainTLSPayload  `json:"tls,omitempty"`
@@ -156,6 +158,30 @@ type bulkDomainResponse struct {
 	Success int                `json:"success"`
 	Failed  int                `json:"failed"`
 	Skipped int                `json:"skipped"`
+}
+
+type extensionActionDTO struct {
+	Key         string `json:"key"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+}
+
+type extensionDTO struct {
+	Key         string                 `json:"key"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Category    string                 `json:"category"`
+	Scope       models.ExtensionScope  `json:"scope"`
+	Enabled     bool                   `json:"enabled"`
+	Config      map[string]interface{} `json:"config,omitempty"`
+	Actions     []extensionActionDTO   `json:"actions,omitempty"`
+	UpdatedAt   string                 `json:"updated_at,omitempty"`
+	UpdatedBy   string                 `json:"updated_by,omitempty"`
+}
+
+type updateExtensionPayload struct {
+	Enabled *bool                  `json:"enabled,omitempty"`
+	Config  map[string]interface{} `json:"config,omitempty"`
 }
 
 func disableTLSForDNS(rec *models.DomainRecord) {
@@ -232,7 +258,7 @@ func ensureTLSProxyCompatibility(rec *models.DomainRecord) error {
 }
 
 type updateDomainPayload struct {
-	OriginIP string             `json:"origin_ip,omitempty"`
+	OriginIP *string            `json:"origin_ip"`
 	Proxied  *bool              `json:"proxied,omitempty"`
 	TTL      *int               `json:"ttl,omitempty"`
 	TLS      *domainTLSPayload  `json:"tls,omitempty"`
@@ -334,6 +360,9 @@ func (s *Server) Routes() http.Handler {
 				r.Get("/domains/overview", s.handleDomainsOverview)
 				r.Post("/infra/nameservers/check", s.handleNameServerCheck)
 				r.Get("/infra/nameservers/status", s.handleNameServerStatus)
+				r.Get("/extensions", s.handleListExtensions)
+				r.Put("/extensions/{key}", s.handleUpdateExtension)
+				r.Post("/extensions/{key}/actions/{action}", s.handleExtensionAction)
 
 				r.Post("/ops/rebuild", s.handleRebuild)
 			})
@@ -716,9 +745,6 @@ func (s *Server) prepareDomainRecord(user userContext, domain string, owner stri
 	if record.Domain == "" {
 		return models.DomainRecord{}, models.ErrValidation("domain must be provided")
 	}
-	if record.OriginIP == "" {
-		return models.DomainRecord{}, models.ErrValidation("origin_ip must be provided")
-	}
 	if record.Owner == "" {
 		record.Owner = user.ID
 	} else {
@@ -801,11 +827,15 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "edge configuration requires admin")
 		return
 	}
-	if payload.Domain == "" || payload.OriginIP == "" {
-		writeError(w, http.StatusBadRequest, "domain and origin_ip required")
+	origin := ""
+	if payload.OriginIP != nil {
+		origin = *payload.OriginIP
+	}
+	if payload.Domain == "" {
+		writeError(w, http.StatusBadRequest, "domain required")
 		return
 	}
-	record, err := s.prepareDomainRecord(user, payload.Domain, payload.Owner, payload.OriginIP, payload.Proxied, payload.TTL, payload.TLS, payload.Edge)
+	record, err := s.prepareDomainRecord(user, payload.Domain, payload.Owner, origin, payload.Proxied, payload.TTL, payload.TLS, payload.Edge)
 	if err != nil {
 		if errors.Is(err, errForbiddenDomainOwner) {
 			writeError(w, http.StatusForbidden, err.Error())
@@ -848,13 +878,13 @@ func (s *Server) handleBulkCreateDomains(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusForbidden, "edge configuration requires admin")
 		return
 	}
-	if payload.OriginIP == "" {
-		writeError(w, http.StatusBadRequest, "origin_ip required")
-		return
-	}
 	if len(payload.Domains) == 0 {
 		writeError(w, http.StatusBadRequest, "domains required")
 		return
+	}
+	origin := ""
+	if payload.OriginIP != nil {
+		origin = *payload.OriginIP
 	}
 	results := make([]bulkDomainResult, 0, len(payload.Domains))
 	seen := make(map[string]struct{})
@@ -882,7 +912,7 @@ func (s *Server) handleBulkCreateDomains(w http.ResponseWriter, r *http.Request)
 	}
 	success := 0
 	for _, domain := range normalized {
-		record, err := s.prepareDomainRecord(user, domain, payload.Owner, payload.OriginIP, payload.Proxied, payload.TTL, payload.TLS, payload.Edge)
+		record, err := s.prepareDomainRecord(user, domain, payload.Owner, origin, payload.Proxied, payload.TTL, payload.TLS, payload.Edge)
 		if err != nil {
 			failed++
 			errMsg := err.Error()
@@ -994,8 +1024,9 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: "forbidden"})
 			continue
 		}
-		if payload.OriginIP != nil && *payload.OriginIP != "" {
-			existing.OriginIP = *payload.OriginIP
+		if payload.OriginIP != nil {
+			origin := strings.TrimSpace(*payload.OriginIP)
+			existing.OriginIP = origin
 		}
 		if payload.Proxied != nil {
 			prevProxy := existing.Proxied
@@ -1127,22 +1158,24 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid payload")
 		return
 	}
-	if payload.OriginIP != "" {
-		existing.OriginIP = payload.OriginIP
+	updated := *existing
+	if payload.OriginIP != nil {
+		origin := strings.TrimSpace(*payload.OriginIP)
+		updated.OriginIP = origin
 	}
 	if payload.Proxied != nil {
-		prevProxy := existing.Proxied
-		existing.Proxied = *payload.Proxied
-		if !existing.Proxied {
-			disableTLSForDNS(existing)
+		prevProxy := updated.Proxied
+		updated.Proxied = *payload.Proxied
+		if !updated.Proxied {
+			disableTLSForDNS(&updated)
 		} else if !prevProxy && payload.TLS == nil {
-			existing.TLS.UseRecommended = true
-			existing.TLS.Mode = models.EncryptionFlexible
-			queueTLSAutomation(existing, time.Now().UTC())
+			updated.TLS.UseRecommended = true
+			updated.TLS.Mode = models.EncryptionFlexible
+			queueTLSAutomation(&updated, time.Now().UTC())
 		}
 	}
 	if payload.TTL != nil && *payload.TTL > 0 {
-		existing.TTL = *payload.TTL
+		updated.TTL = *payload.TTL
 	}
 	if payload.Owner != nil {
 		if user.Role != models.RoleAdmin {
@@ -1162,87 +1195,214 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		existing.Owner = resolvedOwner.ID
-		existing.OwnerEmail = strings.ToLower(strings.TrimSpace(resolvedOwner.Email))
+		updated.Owner = resolvedOwner.ID
+		updated.OwnerEmail = strings.ToLower(strings.TrimSpace(resolvedOwner.Email))
 	}
 	if payload.TLS != nil {
 		if payload.TLS.Mode != "" {
-			existing.TLS.Mode = models.EncryptionMode(strings.ToLower(payload.TLS.Mode))
+			updated.TLS.Mode = models.EncryptionMode(strings.ToLower(payload.TLS.Mode))
 		}
 		if payload.TLS.UseRecommended != nil {
-			prevAuto := existing.TLS.UseRecommended
-			existing.TLS.UseRecommended = *payload.TLS.UseRecommended
-			existing.TLS.Challenges = nil
-			existing.TLS.LockID = ""
-			existing.TLS.LockNodeID = ""
-			existing.TLS.LockExpiresAt = time.Time{}
-			existing.TLS.RecommendedMode = ""
-			existing.TLS.RecommendedAt = time.Time{}
-			if existing.TLS.UseRecommended {
-				if !prevAuto || existing.TLS.Certificate == nil || existing.TLS.Certificate.CertChainPEM == "" {
-					queueTLSAutomation(existing, time.Now().UTC())
+			prevAuto := updated.TLS.UseRecommended
+			updated.TLS.UseRecommended = *payload.TLS.UseRecommended
+			updated.TLS.Challenges = nil
+			updated.TLS.LockID = ""
+			updated.TLS.LockNodeID = ""
+			updated.TLS.LockExpiresAt = time.Time{}
+			updated.TLS.RecommendedMode = ""
+			updated.TLS.RecommendedAt = time.Time{}
+			if updated.TLS.UseRecommended {
+				if !prevAuto || updated.TLS.Certificate == nil || updated.TLS.Certificate.CertChainPEM == "" {
+					queueTLSAutomation(&updated, time.Now().UTC())
 				}
 			} else {
-				if existing.TLS.Certificate != nil && existing.TLS.Certificate.CertChainPEM != "" {
-					existing.TLS.Status = models.CertificateStatusActive
+				if updated.TLS.Certificate != nil && updated.TLS.Certificate.CertChainPEM != "" {
+					updated.TLS.Status = models.CertificateStatusActive
 				} else {
-					existing.TLS.Status = models.CertificateStatusNone
-					existing.TLS.LastError = ""
+					updated.TLS.Status = models.CertificateStatusNone
+					updated.TLS.LastError = ""
 				}
 			}
 		}
-		existing.TLS.UpdatedAt = time.Now().UTC()
+		updated.TLS.UpdatedAt = time.Now().UTC()
 	}
 	if payload.Edge != nil {
 		if user.Role != models.RoleAdmin {
 			writeError(w, http.StatusForbidden, "edge updates require admin")
 			return
 		}
-		existing.Edge.Labels = append([]string{}, payload.Edge.Labels...)
-		existing.Edge.Normalize()
+		updated.Edge.Labels = append([]string{}, payload.Edge.Labels...)
+		updated.Edge.Normalize()
 	}
-	if existing.Proxied {
-		// Use mutex to prevent concurrent edge assignments
+	if updated.Proxied {
 		s.edgeReconcileMu.Lock()
-		_, edgeErr := s.ensureDomainEdgeAssignment(existing)
+		_, edgeErr := s.ensureDomainEdgeAssignment(&updated)
 		s.edgeReconcileMu.Unlock()
-
 		if edgeErr != nil {
 			if ve, ok := edgeErr.(models.ErrValidation); ok {
 				writeError(w, http.StatusBadRequest, ve.Error())
-				return
+			} else {
+				writeError(w, http.StatusInternalServerError, edgeErr.Error())
 			}
-			writeError(w, http.StatusInternalServerError, edgeErr.Error())
 			return
 		}
 	} else {
-		existing.Edge.AssignedIP = ""
-		existing.Edge.AssignedNodeID = ""
-		existing.Edge.AssignedAt = time.Time{}
-		existing.Edge.Normalize()
+		updated.Edge.AssignedIP = ""
+		updated.Edge.AssignedNodeID = ""
+		updated.Edge.AssignedAt = time.Time{}
+		updated.Edge.Normalize()
 	}
-	if err := ensureTLSProxyCompatibility(existing); err != nil {
+	if err := ensureTLSProxyCompatibility(&updated); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !existing.Proxied {
-		disableTLSForDNS(existing)
+	if !updated.Proxied {
+		disableTLSForDNS(&updated)
 	}
-	if err := existing.Validate(); err != nil {
+	if err := updated.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	existing.UpdatedAt = time.Now().UTC()
-	existing.Version.Counter++
-	existing.Version.NodeID = s.Config.NodeID
-	existing.Version.Updated = existing.UpdatedAt.Unix()
-	if err := s.Store.UpsertDomain(*existing); err != nil {
+	now := time.Now().UTC()
+	updated.UpdatedAt = now
+	updated.Version.Counter++
+	updated.Version.NodeID = s.Config.NodeID
+	updated.Version.Updated = now.Unix()
+	if err := s.Store.UpsertDomain(updated); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	s.triggerSyncBroadcast()
 	go s.Orchestrator.Trigger(r.Context())
-	writeJSON(w, http.StatusOK, existing.Sanitize())
+	writeJSON(w, http.StatusOK, updated.Sanitize())
+}
+
+func (s *Server) handleListExtensions(w http.ResponseWriter, r *http.Request) {
+	if s.Extensions == nil {
+		writeError(w, http.StatusNotImplemented, "extensions service unavailable")
+		return
+	}
+	exts, err := s.Extensions.ListGlobal()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	response := make([]extensionDTO, 0, len(exts))
+	for _, ext := range exts {
+		response = append(response, extensionToDTO(ext))
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleUpdateExtension(w http.ResponseWriter, r *http.Request) {
+	if s.Extensions == nil {
+		writeError(w, http.StatusNotImplemented, "extensions service unavailable")
+		return
+	}
+	key := strings.ToLower(chi.URLParam(r, "key"))
+	var payload updateExtensionPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	if payload.Enabled == nil && payload.Config == nil {
+		writeError(w, http.StatusBadRequest, "nothing to update")
+		return
+	}
+	user := userFromContext(r.Context())
+	ext, err := s.Extensions.UpdateGlobal(key, payload.Enabled, payload.Config, user.ID)
+	if err != nil {
+		if errors.Is(err, extensions.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "extension not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.triggerSyncBroadcast()
+	go s.Orchestrator.Trigger(r.Context())
+	writeJSON(w, http.StatusOK, extensionToDTO(ext))
+}
+
+func (s *Server) handleExtensionAction(w http.ResponseWriter, r *http.Request) {
+	if s.Extensions == nil {
+		writeError(w, http.StatusNotImplemented, "extensions service unavailable")
+		return
+	}
+	key := strings.ToLower(chi.URLParam(r, "key"))
+	action := strings.ToLower(chi.URLParam(r, "action"))
+	ext, err := s.Extensions.GetGlobal(key)
+	if err != nil {
+		if errors.Is(err, extensions.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "extension not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	found := false
+	for _, act := range ext.Definition.Actions {
+		if strings.EqualFold(act.Key, action) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "action not supported")
+		return
+	}
+	switch key {
+	case models.ExtensionEdgeCache:
+		if action == "purge" {
+			if err := s.Orchestrator.PurgeEdgeCache(r.Context()); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]string{"status": "purge_queued"})
+			return
+		}
+	}
+	writeError(w, http.StatusNotImplemented, "action handler not implemented")
+}
+
+func extensionToDTO(ext extensions.Extension) extensionDTO {
+	clone := cloneConfig(ext.State.Config)
+	dto := extensionDTO{
+		Key:         ext.Definition.Key,
+		Name:        ext.Definition.Name,
+		Description: ext.Definition.Description,
+		Category:    ext.Definition.Category,
+		Scope:       ext.Definition.Scope,
+		Enabled:     ext.State.Enabled,
+		Config:      clone,
+		UpdatedBy:   ext.State.UpdatedBy,
+	}
+	if !ext.State.UpdatedAt.IsZero() {
+		dto.UpdatedAt = ext.State.UpdatedAt.UTC().Format(time.RFC3339)
+	}
+	actions := make([]extensionActionDTO, 0, len(ext.Definition.Actions))
+	for _, act := range ext.Definition.Actions {
+		actions = append(actions, extensionActionDTO{
+			Key:         act.Key,
+			Label:       act.Label,
+			Description: act.Description,
+		})
+	}
+	if len(actions) > 0 {
+		dto.Actions = actions
+	}
+	return dto
+}
+
+func cloneConfig(src map[string]interface{}) map[string]interface{} {
+	if len(src) == 0 {
+		return nil
+	}
+	dup := make(map[string]interface{}, len(src))
+	for k, v := range src {
+		dup[k] = v
+	}
+	return dup
 }
 
 func (s *Server) handleReassignDomainEdge(w http.ResponseWriter, r *http.Request) {

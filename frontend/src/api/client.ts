@@ -15,6 +15,7 @@ import {
   DomainOverview,
   NameServerStatus,
   ReassignAllEdgesResponse,
+  Extension,
 } from "../types";
 
 const resolveApiBase = (): string => {
@@ -191,6 +192,32 @@ export const nodes = {
 
   delete: async (id: string): Promise<void> => {
     await client.delete(`/admin/nodes/${id}`);
+  },
+};
+
+export const extensionsApi = {
+  list: async (): Promise<Extension[]> => {
+    const res = await client.get<Extension[]>("/admin/extensions");
+    return res.data;
+  },
+
+  update: async (
+    key: string,
+    payload: { enabled?: boolean; config?: Record<string, unknown> },
+  ): Promise<Extension> => {
+    const res = await client.put<Extension>(`/admin/extensions/${key}`, payload);
+    return res.data;
+  },
+
+  action: async (
+    key: string,
+    action: string,
+  ): Promise<{ status: string }> => {
+    const res = await client.post<{ status: string }>(
+      `/admin/extensions/${key}/actions/${action}`,
+      {},
+    );
+    return res.data;
   },
 };
 

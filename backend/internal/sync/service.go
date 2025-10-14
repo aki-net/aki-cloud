@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ type Digest struct {
 	Users      models.ClockVersion            `json:"users"`
 	Nodes      models.ClockVersion            `json:"nodes"`
 	EdgeHealth map[string]models.ClockVersion `json:"edge_health"`
+	Extensions models.ClockVersion            `json:"extensions"`
 }
 
 // Snapshot bundles the full dataset for synchronization.
@@ -33,6 +35,7 @@ type Snapshot struct {
 	Users      []models.User             `json:"users"`
 	Nodes      []models.Node             `json:"nodes"`
 	EdgeHealth []models.EdgeHealthStatus `json:"edge_health"`
+	Extensions models.ExtensionsState    `json:"extensions"`
 }
 
 // Service coordinates data synchronization.
@@ -108,11 +111,16 @@ func (s *Service) ComputeDigest() (Digest, error) {
 	for _, status := range healthStatuses {
 		healthClock[status.IP] = status.Version
 	}
+	extState, err := s.store.GetExtensionsState()
+	if err != nil {
+		return Digest{}, err
+	}
 	return Digest{
 		Domains:    domainVersions,
 		Users:      userClock,
 		Nodes:      nodeClock,
 		EdgeHealth: healthClock,
+		Extensions: extState.Version,
 	}, nil
 }
 
@@ -145,16 +153,44 @@ func (s *Service) BuildSnapshot() (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
+	extState, err := s.store.GetExtensionsState()
+	if err != nil {
+		return Snapshot{}, err
+	}
 	return Snapshot{
 		Domains:    domains,
 		Users:      users,
 		Nodes:      nodes,
 		EdgeHealth: healthStatuses,
+		Extensions: extState,
 	}, nil
 }
 
 // ApplySnapshot merges remote data using last-write-wins semantics.
 func (s *Service) ApplySnapshot(snapshot Snapshot) error {
+	localExt, err := s.store.GetExtensionsState()
+	if err != nil {
+		return err
+	}
+	changed := false
+	if snapshot.Extensions.Config.Global != nil || snapshot.Extensions.Version.Counter != 0 || snapshot.Extensions.Version.NodeID != "" {
+		remoteState := snapshot.Extensions
+		remoteState.Config = normalizeExtensionsConfig(remoteState.Config)
+		winner := models.MergeClock(localExt.Version, remoteState.Version)
+		useRemote := winner == remoteState.Version
+		if !useRemote && remoteState.Version.Counter == 0 && localExt.Version.Counter == 0 {
+			if !extensionsConfigEqual(localExt.Config, remoteState.Config) {
+				useRemote = true
+			}
+		}
+		if useRemote {
+			if err := s.store.SaveExtensionsState(remoteState); err != nil {
+				return err
+			}
+			localExt = remoteState
+			changed = true
+		}
+	}
 	// merge domains
 	localDomains, err := s.store.GetDomainsIncludingDeleted()
 	if err != nil {
@@ -164,7 +200,6 @@ func (s *Service) ApplySnapshot(snapshot Snapshot) error {
 	for _, d := range localDomains {
 		domainMap[d.Domain] = d
 	}
-	changed := false
 	for _, remote := range snapshot.Domains {
 		local := domainMap[remote.Domain]
 		merged := mergeDomain(local, remote)
@@ -238,6 +273,25 @@ func (s *Service) ApplySnapshot(snapshot Snapshot) error {
 		s.notifyChange()
 	}
 	return nil
+}
+
+func normalizeExtensionsConfig(cfg models.ExtensionsConfig) models.ExtensionsConfig {
+	if cfg.Global == nil {
+		cfg.Global = make(map[string]models.ExtensionState)
+	}
+	if cfg.Domain == nil {
+		cfg.Domain = make(map[string]map[string]models.ExtensionState)
+	}
+	if cfg.Node == nil {
+		cfg.Node = make(map[string]map[string]models.ExtensionState)
+	}
+	return cfg
+}
+
+func extensionsConfigEqual(a, b models.ExtensionsConfig) bool {
+	normalizedA := normalizeExtensionsConfig(a)
+	normalizedB := normalizeExtensionsConfig(b)
+	return reflect.DeepEqual(normalizedA, normalizedB)
 }
 
 // Broadcast pushes the current snapshot to all known peers.
@@ -336,7 +390,7 @@ func mergeDomain(local models.DomainRecord, remote models.DomainRecord) models.D
 	if remote.Domain == "" {
 		return local
 	}
-	if remote.Owner == "" && remote.OriginIP == "" && remote.DeletedAt.IsZero() {
+	if remote.Owner == "" && remote.DeletedAt.IsZero() {
 		return local
 	}
 	localDeleted := local.IsDeleted()

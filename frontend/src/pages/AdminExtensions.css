@@ -53,6 +53,24 @@
   animation: fadeIn 0.3s ease-out;
 }
 
+.extensions-hub {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.extension-alert {
+  border-left: 3px solid var(--color-accent);
+}
+
+.extension-alert-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+
 /* Extensions Hub */
 .extensions-grid {
   display: grid;
@@ -78,6 +96,24 @@
   justify-content: space-between;
 }
 
+.extension-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.extension-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.extension-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .extension-icon {
   font-size: 32px;
 }
@@ -95,6 +131,22 @@
   flex: 1;
 }
 
+.extension-meta {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.extension-meta strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
 .extension-footer {
   display: flex;
   align-items: center;
@@ -107,6 +159,36 @@
   font-size: 12px;
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);
+}
+
+.extension-updated {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.extension-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.extension-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.extension-loading,
+.extension-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+
+.extension-empty p {
+  margin: 0 0 12px;
 }
 
 /* Security Center */

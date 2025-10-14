@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"hash/fnv"
+	htmltmpl "html/template"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -18,6 +20,7 @@ import (
 	"text/template"
 	"time"
 
+	"aki-cloud/backend/internal/extensions"
 	"aki-cloud/backend/internal/infra"
 	"aki-cloud/backend/internal/models"
 	"aki-cloud/backend/internal/store"
@@ -37,6 +40,7 @@ type CoreDNSGenerator struct {
 type OpenRestyGenerator struct {
 	Store        *store.Store
 	Infra        *infra.Controller
+	Extensions   *extensions.Service
 	DataDir      string
 	NginxTmpl    string
 	SitesTmpl    string
@@ -166,10 +170,14 @@ func (g *CoreDNSGenerator) Render() error {
 		primaryNS = ensureDot(activeNS[0].FQDN)
 	}
 	for _, domain := range domains {
-		ttl := domain.TTL
-		if ttl <= 0 {
-			ttl = 60
-		}
+    ttl := domain.TTL
+    if ttl <= 0 {
+        ttl = 60
+    }
+    ttl = jitterSeconds(ttl, 20, domain.Domain)
+    if ttl <= 0 {
+        ttl = 60
+    }
 		challengeExtras := make([]ZoneRecord, 0, len(domain.TLS.Challenges))
 		expiryCutoff := now.Add(-1 * time.Minute)
 		for _, ch := range domain.TLS.Challenges {
@@ -202,7 +210,7 @@ func (g *CoreDNSGenerator) Render() error {
 			fmt.Printf("DEBUG: Domain %s is not proxied\n", domain.Domain)
 		}
 		// Fall back to origin IP if no edge IP assigned or not proxied
-		if len(arecords) == 0 {
+		if len(arecords) == 0 && strings.TrimSpace(domain.OriginIP) != "" {
 			fmt.Printf("DEBUG: Domain %s falling back to origin IP %s\n", domain.Domain, domain.OriginIP)
 			arecords = append(arecords, domain.OriginIP)
 		}
@@ -498,6 +506,20 @@ func (g *OpenRestyGenerator) Render() error {
 	if err := os.MkdirAll(originPullDir, 0o750); err != nil {
 		return err
 	}
+	placeholderDir := filepath.Join(g.OutputDir, "placeholders")
+	if err := os.MkdirAll(placeholderDir, 0o755); err != nil {
+		return err
+	}
+	if entries, err := os.ReadDir(placeholderDir); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			if strings.HasSuffix(entry.Name(), ".html") {
+				_ = os.Remove(filepath.Join(placeholderDir, entry.Name()))
+			}
+		}
+	}
 
 	nsList, err := g.Infra.ActiveNameServers()
 	if err != nil {
@@ -523,6 +545,31 @@ func (g *OpenRestyGenerator) Render() error {
 	limitConnPerIP := envIntPositive("EDGE_LIMIT_CONN_PER_IP", 200)
 	clientMaxBody := envStringOrDefault("EDGE_CLIENT_MAX_BODY", "64m")
 	limitReqNoDelay := envBool("EDGE_LIMIT_REQ_NODELAY", false)
+
+	edgeCacheCfg := extensions.EdgeCacheRuntimeConfig{}
+	placeholderCfg := extensions.PlaceholderRuntimeConfig{}
+	if g.Extensions != nil {
+		cfg, err := g.Extensions.EdgeCacheConfig()
+		if err != nil {
+			return err
+		}
+		edgeCacheCfg = cfg
+		pcfg, err := g.Extensions.PlaceholderConfig()
+		if err != nil {
+			return err
+		}
+		placeholderCfg = pcfg
+	}
+	if edgeCacheCfg.Enabled {
+		cachePath := strings.TrimSpace(edgeCacheCfg.Path)
+		if cachePath != "" {
+			if err := os.MkdirAll(cachePath, 0o755); err != nil {
+				return fmt.Errorf("create cache dir %s: %w", cachePath, err)
+			}
+		}
+	}
+	cacheUseStaleGlobal := strings.Join(edgeCacheCfg.UseStale, " ")
+	cacheBypassCookies := edgeCacheCfg.BypassCookies
 
 	edgeUsage := make(map[string]bool)
 	for _, domain := range domains {
@@ -573,15 +620,35 @@ func (g *OpenRestyGenerator) Render() error {
 			_ = os.Remove(filepath.Join(originPullDir, fmt.Sprintf("%s-origin.key", baseName)))
 		}
 
+		originAddress := strings.TrimSpace(domain.OriginIP)
+		placeholderActive := false
+		if placeholderCfg.Enabled && originAddress == "" {
+			placeholderActive = true
+		} else if originAddress == "" {
+			fmt.Printf("OpenResty generator: skipping domain %s, origin IP not set and placeholder disabled\n", domain.Domain)
+			continue
+		}
+		placeholderFileName := fmt.Sprintf("%s.html", baseName)
+		if placeholderActive {
+			html := renderPlaceholderHTML(domain.Domain, placeholderCfg)
+			if err := os.WriteFile(filepath.Join(placeholderDir, placeholderFileName), []byte(html), 0o644); err != nil {
+				return err
+			}
+		} else {
+			_ = os.Remove(filepath.Join(placeholderDir, placeholderFileName))
+		}
+
 		originScheme := "http"
 		verifyOrigin := false
-		if mode == models.EncryptionFull || mode == models.EncryptionFullStrict || mode == models.EncryptionStrictOriginPull {
-			originScheme = "https"
+		if originAddress != "" {
+			if mode == models.EncryptionFull || mode == models.EncryptionFullStrict || mode == models.EncryptionStrictOriginPull {
+				originScheme = "https"
+			}
+			if mode == models.EncryptionFullStrict || mode == models.EncryptionStrictOriginPull {
+				verifyOrigin = true
+			}
 		}
-		if mode == models.EncryptionFullStrict || mode == models.EncryptionStrictOriginPull {
-			verifyOrigin = true
-		}
-		strictOrigin := mode == models.EncryptionStrictOriginPull && originPullCert != "" && originPullKey != ""
+		strictOrigin := originAddress != "" && mode == models.EncryptionStrictOriginPull && originPullCert != "" && originPullKey != ""
 		serveTLS := hasCertMaterial && mode != models.EncryptionOff
 		redirectHTTP := serveTLS && mode != models.EncryptionFlexible
 		needsTLS := mode != models.EncryptionOff
@@ -606,7 +673,10 @@ func (g *OpenRestyGenerator) Render() error {
 			continue
 		}
 		edgeUsage[assignedIP] = true
-		proxyPass := fmt.Sprintf("%s://%s", originScheme, domain.OriginIP)
+		proxyPass := ""
+		if originAddress != "" && !placeholderActive {
+			proxyPass = fmt.Sprintf("%s://%s", originScheme, originAddress)
+		}
 		challengeUpstream := "http://127.0.0.1:8080"
 		if domain.TLS.LockNodeID != "" && domain.TLS.LockNodeID != localInfo.NodeID {
 			if node, ok := nodeMap[domain.TLS.LockNodeID]; ok {
@@ -615,34 +685,85 @@ func (g *OpenRestyGenerator) Render() error {
 				}
 			}
 		}
+		serverHeader := ""
+		if g.Extensions != nil {
+			if header, ok, err := g.Extensions.ServerHeaderForDomain(domain.Domain); err != nil {
+				fmt.Printf("OpenResty generator: server header lookup for %s failed: %v\n", domain.Domain, err)
+			} else if ok {
+				serverHeader = header
+			}
+		}
+		cacheActive := edgeCacheCfg.Enabled && !placeholderActive
+		cacheUseStale := strings.Join(edgeCacheCfg.UseStale, " ")
+		mainTTLSeconds := jitterSeconds(edgeCacheCfg.BaseTTLSeconds, edgeCacheCfg.TTLJitterPct, domain.Domain)
+		if mainTTLSeconds <= 0 {
+			mainTTLSeconds = 86400
+		}
+		notFoundTTLSeconds := edgeCacheCfg.NotFoundTTL
+		if notFoundTTLSeconds <= 0 {
+			notFoundTTLSeconds = 600
+		}
+		errorTTLSeconds := edgeCacheCfg.ErrorTTL
+		if errorTTLSeconds <= 0 {
+			errorTTLSeconds = 60
+		}
+		var cacheTTLMain, cacheTTLNotFound, cacheTTLError string
+		if cacheActive {
+			cacheTTLMain = formatTTLSeconds(mainTTLSeconds)
+			cacheTTLNotFound = formatTTLSeconds(jitterSeconds(notFoundTTLSeconds, edgeCacheCfg.TTLJitterPct/2, domain.Domain))
+			cacheTTLError = formatTTLSeconds(jitterSeconds(errorTTLSeconds, edgeCacheCfg.TTLJitterPct/2, domain.Domain))
+		}
 		data := map[string]interface{}{
-			"Domain":            domain.Domain,
-			"EdgeIP":            assignedIP,
-			"OriginIP":          domain.OriginIP,
-			"ProxyPass":         proxyPass,
-			"Mode":              mode,
-			"HasCertificate":    serveTLS,
-			"CertPath":          certPath,
-			"KeyPath":           keyPath,
-			"ChallengeDir":      challengeDir,
-			"RedirectHTTP":      redirectHTTP,
-			"PendingTLS":        pendingTLS,
-			"FallbackLabel":     baseName,
-			"OriginIsHTTPS":     originScheme == "https",
-			"VerifyOrigin":      verifyOrigin,
-			"OriginServerName":  domain.Domain,
-			"StrictOriginPull":  strictOrigin,
-			"OriginPullCert":    originPullCert,
-			"OriginPullKey":     originPullKey,
-			"ChallengeProxy":    challengeUpstream,
-			"PlaceholderCert":   placeholderCert,
-			"PlaceholderKey":    placeholderKey,
-			"LimitConnPerIP":    limitConnPerIP,
-			"LimitReqPerIP":     limitReqPerIP,
-			"LimitReqBurstIP":   limitReqPerIPBurst,
-			"LimitReqPerHost":   limitReqPerHost,
-			"LimitReqBurstHost": limitReqPerHostBurst,
-			"LimitReqNoDelay":   limitReqNoDelay,
+			"Domain":              domain.Domain,
+			"EdgeIP":              assignedIP,
+			"OriginIP":            originAddress,
+			"ProxyPass":           proxyPass,
+			"Mode":                mode,
+			"HasCertificate":      serveTLS,
+			"CertPath":            certPath,
+			"KeyPath":             keyPath,
+			"ChallengeDir":        challengeDir,
+			"RedirectHTTP":        redirectHTTP,
+			"PendingTLS":          pendingTLS,
+			"FallbackLabel":       baseName,
+			"OriginIsHTTPS":       originScheme == "https",
+			"OriginAvailable":     originAddress != "",
+			"VerifyOrigin":        verifyOrigin,
+			"OriginServerName":    domain.Domain,
+			"StrictOriginPull":    strictOrigin,
+			"OriginPullCert":      originPullCert,
+			"OriginPullKey":       originPullKey,
+			"ChallengeProxy":      challengeUpstream,
+			"PlaceholderCert":     placeholderCert,
+			"PlaceholderKey":      placeholderKey,
+			"PlaceholderEnabled":  placeholderActive,
+			"PlaceholderTitle":    placeholderCfg.Title,
+			"PlaceholderSubtitle": placeholderCfg.Subtitle,
+			"PlaceholderMessage":  placeholderCfg.Message,
+			"PlaceholderSupport": map[string]string{
+				"url":  placeholderCfg.SupportURL,
+				"text": placeholderCfg.SupportText,
+			},
+			"PlaceholderFooter":  placeholderCfg.Footer,
+			"PlaceholderRoot":    placeholderDir,
+			"PlaceholderFile":    placeholderFileName,
+			"LimitConnPerIP":     limitConnPerIP,
+			"LimitReqPerIP":      limitReqPerIP,
+			"LimitReqBurstIP":    limitReqPerIPBurst,
+			"LimitReqPerHost":    limitReqPerHost,
+			"LimitReqBurstHost":  limitReqPerHostBurst,
+			"LimitReqNoDelay":    limitReqNoDelay,
+			"CacheEnabled":       cacheActive,
+			"CacheZone":          edgeCacheCfg.ZoneName,
+			"CacheAddStatus":     edgeCacheCfg.AddStatusHeader,
+			"CacheUseStale":      cacheUseStale,
+			"CacheMinUses":       edgeCacheCfg.MinUses,
+			"CacheBypassCookies": edgeCacheCfg.BypassCookies,
+			"CachePath":          edgeCacheCfg.Path,
+			"ServerHeader":       serverHeader,
+			"CacheTTLMain":       cacheTTLMain,
+			"CacheTTLNotFound":   cacheTTLNotFound,
+			"CacheTTLError":      cacheTTLError,
 		}
 		buf := bytes.Buffer{}
 		if err := tmpl.Execute(&buf, data); err != nil {
@@ -668,18 +789,133 @@ func (g *OpenRestyGenerator) Render() error {
 		return err
 	}
 	nginxData := map[string]interface{}{
-		"SitesDir":          sitesDir,
-		"LimitReqPerIP":     limitReqPerIP,
-		"LimitReqPerHost":   limitReqPerHost,
-		"LimitConnPerIP":    limitConnPerIP,
-		"ClientMaxBodySize": clientMaxBody,
-		"LimitReqNoDelay":   limitReqNoDelay,
+		"SitesDir":           sitesDir,
+		"LimitReqPerIP":      limitReqPerIP,
+		"LimitReqPerHost":    limitReqPerHost,
+		"LimitConnPerIP":     limitConnPerIP,
+		"ClientMaxBodySize":  clientMaxBody,
+		"LimitReqNoDelay":    limitReqNoDelay,
+		"CacheEnabled":       edgeCacheCfg.Enabled,
+		"CachePath":          edgeCacheCfg.Path,
+		"CacheLevels":        edgeCacheCfg.Levels,
+		"CacheZoneName":      edgeCacheCfg.ZoneName,
+		"CacheKeysZone":      edgeCacheCfg.KeysZoneSize,
+		"CacheMaxSize":       edgeCacheCfg.MaxSize,
+		"CacheInactive":      edgeCacheCfg.Inactive,
+		"CacheUseStale":      cacheUseStaleGlobal,
+		"CacheMinUses":       edgeCacheCfg.MinUses,
+		"CacheBypassCookies": cacheBypassCookies,
 	}
 	buf := bytes.Buffer{}
 	if err := nginxTemplate.Execute(&buf, nginxData); err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(g.OutputDir, "nginx.conf"), buf.Bytes(), 0o644)
+}
+
+func jitterSeconds(base int, percent int, key string) int {
+	if base <= 0 || percent <= 0 {
+		if base <= 0 {
+			return base
+		}
+		return base
+	}
+	maxJitter := base * percent / 100
+	if maxJitter <= 0 {
+		return base
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(strings.ToLower(strings.TrimSpace(key))))
+	span := int(h.Sum32()%(uint32(2*maxJitter)+1)) - maxJitter
+	ttl := base + span
+	if ttl < 1 {
+		ttl = 1
+	}
+	return ttl
+}
+
+func formatTTLSeconds(seconds int) string {
+	if seconds <= 0 {
+		return "0s"
+	}
+	if seconds%86400 == 0 {
+		return fmt.Sprintf("%dd", seconds/86400)
+	}
+	if seconds%3600 == 0 {
+		return fmt.Sprintf("%dh", seconds/3600)
+	}
+	if seconds%60 == 0 {
+		return fmt.Sprintf("%dm", seconds/60)
+	}
+	return fmt.Sprintf("%ds", seconds)
+}
+
+func renderPlaceholderHTML(domain string, cfg extensions.PlaceholderRuntimeConfig) string {
+	domain = strings.TrimSpace(domain)
+	if domain == "" {
+		domain = "your-domain.example"
+	}
+	escDomain := htmltmpl.HTMLEscapeString(domain)
+	title := strings.TrimSpace(cfg.Title)
+	if title == "" {
+		title = "Domain delegated to aki.cloud"
+	}
+	subtitle := strings.TrimSpace(cfg.Subtitle)
+	message := strings.TrimSpace(cfg.Message)
+	supportURL := strings.TrimSpace(cfg.SupportURL)
+	supportText := strings.TrimSpace(cfg.SupportText)
+	footer := strings.TrimSpace(cfg.Footer)
+
+	b := strings.Builder{}
+	b.WriteString("<!doctype html>\n")
+	b.WriteString("<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>")
+	b.WriteString(htmltmpl.HTMLEscapeString(title))
+	b.WriteString(" • ")
+	b.WriteString(escDomain)
+	b.WriteString("</title>\n<style>\n")
+	b.WriteString("body{margin:0;font-family:'Inter',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;}\n")
+	b.WriteString(".card{max-width:540px;width:100%;background:rgba(15,23,42,0.8);border:1px solid rgba(148,163,184,0.2);border-radius:18px;padding:40px;box-shadow:0 24px 70px rgba(15,23,42,0.45);}\n")
+	b.WriteString(".badge{display:inline-block;padding:4px 10px;border-radius:999px;background:rgba(59,130,246,0.15);color:#60a5fa;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:16px;}\n")
+	b.WriteString("h1{margin:0;font-size:28px;line-height:1.2;}\n")
+	b.WriteString("p{margin:12px 0;font-size:16px;line-height:1.6;color:#cbd5f5;}\n")
+	b.WriteString(".domain{margin-top:18px;font-size:20px;font-weight:600;color:#f8fafc;}\n")
+	b.WriteString(".footer{margin-top:32px;font-size:13px;color:rgba(148,163,184,0.8);}\n")
+	b.WriteString(".cta{display:inline-flex;margin-top:20px;padding:10px 18px;border-radius:10px;border:1px solid rgba(96,165,250,0.4);color:#93c5fd;text-decoration:none;font-weight:600;transition:all .2s ease;}\n")
+	b.WriteString(".cta:hover{background:rgba(96,165,250,0.1);border-color:#93c5fd;color:#bfdbfe;}\n")
+	b.WriteString("</style>\n</head>\n<body>\n<div class=\"card\">\n<span class=\"badge\">aki.cloud</span>\n<h1>")
+	b.WriteString(htmltmpl.HTMLEscapeString(title))
+	b.WriteString("</h1>\n")
+	if subtitle != "" {
+		b.WriteString("<p>")
+		b.WriteString(htmltmpl.HTMLEscapeString(subtitle))
+		b.WriteString("</p>\n")
+	}
+	b.WriteString("<p class=\"domain\">")
+	b.WriteString(escDomain)
+	b.WriteString("</p>\n")
+	if message != "" {
+		b.WriteString("<p>")
+		b.WriteString(htmltmpl.HTMLEscapeString(message))
+		b.WriteString("</p>\n")
+	}
+	if supportURL != "" {
+		linkText := supportText
+		if linkText == "" {
+			linkText = "Configure origin"
+		}
+		b.WriteString("<a class=\"cta\" href=\"")
+		b.WriteString(htmltmpl.HTMLEscapeString(supportURL))
+		b.WriteString("\" target=\"_blank\" rel=\"noopener noreferrer\">")
+		b.WriteString(htmltmpl.HTMLEscapeString(linkText))
+		b.WriteString("</a>\n")
+	}
+	if footer != "" {
+		b.WriteString("<div class=\"footer\">")
+		b.WriteString(htmltmpl.HTMLEscapeString(footer))
+		b.WriteString("</div>\n")
+	}
+	b.WriteString("</div>\n</body>\n</html>")
+	return b.String()
 }
 
 type localEdgeNode struct {

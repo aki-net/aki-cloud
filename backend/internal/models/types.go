@@ -58,9 +58,11 @@ func (d *DomainRecord) Validate() error {
 	if !d.DeletedAt.IsZero() {
 		return nil
 	}
-	if net.ParseIP(d.OriginIP) == nil {
+	origin := strings.TrimSpace(d.OriginIP)
+	if origin != "" && net.ParseIP(origin) == nil {
 		return ErrValidation("origin_ip must be a valid IP address")
 	}
+	d.OriginIP = origin
 	if d.TTL <= 0 {
 		d.TTL = 60
 	}
@@ -345,7 +347,7 @@ type Node struct {
 	HealthyEdges int          `json:"healthy_edges,omitempty"`
 	TotalEdges   int          `json:"total_edges,omitempty"`
 	LastHealthAt time.Time    `json:"last_health_at,omitempty"`
-	
+
 	// Computed field for JSON serialization
 	Roles []NodeRole `json:"roles,omitempty"`
 }
@@ -379,7 +381,7 @@ func (n *Node) ComputeEdgeIPs() {
 		}
 	}
 	n.IPs = normalizeIPs(n.IPs)
-	
+
 	// Compute roles based on IP configuration
 	n.Roles = n.GetRoles()
 }
@@ -389,7 +391,7 @@ func (n Node) GetRoles() []NodeRole {
 	if n.IsDeleted() {
 		return nil
 	}
-	
+
 	roles := make([]NodeRole, 0, 2)
 	if len(n.EdgeIPs) > 0 {
 		roles = append(roles, NodeRoleEdge)
@@ -405,7 +407,7 @@ func (n Node) HasRole(role NodeRole) bool {
 	if n.IsDeleted() {
 		return false
 	}
-	
+
 	switch role {
 	case NodeRoleEdge:
 		return len(n.EdgeIPs) > 0

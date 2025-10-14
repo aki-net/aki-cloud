@@ -5,6 +5,11 @@ server {
     access_log /var/log/nginx/{{ .Domain }}.access.log combined;
     error_log  /var/log/nginx/{{ .Domain }}.error.log warn;
 
+    {{- if .ServerHeader }}
+    more_clear_headers Server;
+    more_set_headers "Server: {{ .ServerHeader }}";
+    {{- end }}
+
     limit_conn edge_conn_per_ip {{ .LimitConnPerIP }};
 
     proxy_connect_timeout 5s;
@@ -31,7 +36,15 @@ server {
     location / {
         limit_req zone=edge_req_per_ip burst={{ .LimitReqBurstIP }}{{ if .LimitReqNoDelay }} nodelay{{ end }};
         limit_req zone=edge_req_per_host burst={{ .LimitReqBurstHost }};
+        {{- if .PlaceholderEnabled }}
+        default_type text/html;
+        add_header Cache-Control "no-store";
+        root {{ .PlaceholderRoot }};
+        try_files /{{ .PlaceholderFile }} =404;
+        {{- else }}
+        {{- if .ProxyPass }}
         proxy_pass {{ .ProxyPass }};
+        {{- end }}
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $client_real_ip;
         proxy_set_header X-Forwarded-For $edge_forwarded_for;
@@ -43,6 +56,19 @@ server {
         proxy_buffering on;
         proxy_set_header CF-Connecting-IP $client_real_ip;
         proxy_set_header True-Client-IP $client_real_ip;
+        proxy_hide_header Server;
+        {{- if .CacheEnabled }}
+        proxy_cache {{ .CacheZone }};
+        proxy_cache_bypass $edge_cache_skip;
+        proxy_no_cache $edge_cache_skip;
+        proxy_cache_valid 200 301 302 {{ .CacheTTLMain }};
+        proxy_cache_valid 404 {{ .CacheTTLNotFound }};
+        proxy_cache_valid any {{ .CacheTTLError }};
+        {{- if .CacheAddStatus }}
+        add_header X-Cache-Status $upstream_cache_status always;
+        {{- end }}
+        {{- end }}
+        {{- end }}
     }
     {{- end }}
 }
@@ -82,7 +108,15 @@ server {
     location / {
         limit_req zone=edge_req_per_ip burst={{ .LimitReqBurstIP }}{{ if .LimitReqNoDelay }} nodelay{{ end }};
         limit_req zone=edge_req_per_host burst={{ .LimitReqBurstHost }};
+        {{- if .PlaceholderEnabled }}
+        default_type text/html;
+        add_header Cache-Control "no-store";
+        root {{ .PlaceholderRoot }};
+        try_files /{{ .PlaceholderFile }} =404;
+        {{- else }}
+        {{- if .ProxyPass }}
         proxy_pass {{ .ProxyPass }};
+        {{- end }}
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $client_real_ip;
         proxy_set_header X-Forwarded-For $edge_forwarded_for;
@@ -94,7 +128,19 @@ server {
         proxy_buffering on;
         proxy_set_header CF-Connecting-IP $client_real_ip;
         proxy_set_header True-Client-IP $client_real_ip;
-        {{- if .OriginIsHTTPS }}
+        proxy_hide_header Server;
+        {{- if .CacheEnabled }}
+        proxy_cache {{ .CacheZone }};
+        proxy_cache_bypass $edge_cache_skip;
+        proxy_no_cache $edge_cache_skip;
+        proxy_cache_valid 200 301 302 {{ .CacheTTLMain }};
+        proxy_cache_valid 404 {{ .CacheTTLNotFound }};
+        proxy_cache_valid any {{ .CacheTTLError }};
+        {{- if .CacheAddStatus }}
+        add_header X-Cache-Status $upstream_cache_status always;
+        {{- end }}
+        {{- end }}
+        {{- if and .OriginIsHTTPS .OriginAvailable }}
         proxy_ssl_server_name on;
         proxy_ssl_name {{ .OriginServerName }};
         {{- if .VerifyOrigin }}
@@ -105,6 +151,7 @@ server {
         {{- if .StrictOriginPull }}
         proxy_ssl_certificate {{ .OriginPullCert }};
         proxy_ssl_certificate_key {{ .OriginPullKey }};
+        {{- end }}
         {{- end }}
         {{- end }}
     }

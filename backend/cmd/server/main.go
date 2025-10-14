@@ -13,6 +13,7 @@ import (
 	"aki-cloud/backend/internal/api"
 	"aki-cloud/backend/internal/auth"
 	"aki-cloud/backend/internal/config"
+	"aki-cloud/backend/internal/extensions"
 	"aki-cloud/backend/internal/health"
 	"aki-cloud/backend/internal/infra"
 	"aki-cloud/backend/internal/orchestrator"
@@ -42,6 +43,7 @@ func main() {
 
 	syncSvc := syncsvc.New(st, cfg.DataDir, cfg.NodeID, secret)
 	infraCtl := infra.New(st, cfg.DataDir)
+	extSvc := extensions.New(st, cfg.NodeID)
 
 	healthMonitor := health.New(st, infraCtl, orch, cfg.NodeID, cfg.HealthInterval, cfg.HealthDialTimeout, cfg.HealthFailureThreshold, cfg.HealthFailureDecay)
 	slSvc := ssl.New(cfg, st, orch)
@@ -53,6 +55,7 @@ func main() {
 		Orchestrator: orch,
 		Sync:         syncSvc,
 		Infra:        infraCtl,
+		Extensions:   extSvc,
 	}
 
 	syncSvc.SetChangeHandler(func() {

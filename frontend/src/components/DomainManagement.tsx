@@ -325,6 +325,9 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     try {
       const domainName = "domain" in domain ? domain.domain : domain.domain;
       const newProxied = !domain.proxied;
+      const rawOrigin = (domain as any).origin_ip ?? "";
+      const currentOrigin =
+        typeof rawOrigin === "string" ? rawOrigin.trim() : "";
 
       // If disabling proxy, also disable TLS
       const tlsPayload = !newProxied
@@ -332,7 +335,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         : undefined;
 
       const updated = await domainsApi.update(domainName, {
-        origin_ip: domain.origin_ip,
+        origin_ip: currentOrigin,
         proxied: newProxied,
         ttl: domain.ttl,
         tls: tlsPayload,
@@ -362,6 +365,10 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         return;
       }
 
+      const originRaw = (domain as any).origin_ip ?? "";
+      const originValue =
+        typeof originRaw === "string" ? originRaw.trim() : "";
+
       let newMode: any;
       let useRecommended = false;
 
@@ -373,7 +380,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       }
 
       const updated = await domainsApi.update(domainName, {
-        origin_ip: domain.origin_ip,
+        origin_ip: originValue,
         proxied: domain.proxied,
         ttl: domain.ttl,
         tls: {
@@ -397,21 +404,25 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   const handleEditIP = (domain: Domain | DomainOverview) => {
     const domainName = "domain" in domain ? domain.domain : domain.domain;
     setEditingDomain(domainName);
-    setEditingIP(domain.origin_ip);
+    const current = (domain as any).origin_ip ?? "";
+    setEditingIP(typeof current === "string" ? current : "");
     setTimeout(() => editInputRef.current?.select(), 0);
   };
 
   const handleSaveIP = async (domain: Domain | DomainOverview) => {
     const domainName = "domain" in domain ? domain.domain : domain.domain;
 
-    if (!editingIP || editingIP === domain.origin_ip) {
+    const normalized = editingIP?.trim() ?? "";
+    const current = ((domain as any).origin_ip ?? "")
+      .toString()
+      .trim();
+    if (normalized === current) {
       setEditingDomain(null);
       return;
     }
-
     try {
       const updated = await domainsApi.update(domainName, {
-        origin_ip: editingIP,
+        origin_ip: normalized,
         proxied: domain.proxied,
         ttl: domain.ttl,
       });
@@ -805,23 +816,49 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   columns.push({
     key: "origin_ip",
     header: "Origin IP",
-    accessor: (d: any) => (
-      <div className="domain-ip">
-        {editingDomain === d.domain ? (
-          <input
-            ref={editInputRef}
-            className="ip-edit-input"
-            value={editingIP}
-            onChange={(e) => setEditingIP(e.target.value)}
-            onBlur={() => handleSaveIP(d)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleSaveIP(d);
-              if (e.key === "Escape") setEditingDomain(null);
-            }}
-          />
-        ) : (
-          <span className="ip-display mono" onClick={() => handleEditIP(d)}>
-            {d.origin_ip}
+    accessor: (d: any) => {
+      const originRaw = (d as any).origin_ip ?? "";
+      const originValue =
+        typeof originRaw === "string" ? originRaw : String(originRaw ?? "");
+      const trimmed = originValue.trim();
+      const isPlaceholder = trimmed === "";
+      const displayValue = isPlaceholder ? "aki.cloud placeholder" : trimmed;
+
+      if (editingDomain === d.domain) {
+        return (
+          <div className="domain-ip">
+            <input
+              ref={editInputRef}
+              className="ip-edit-input"
+              value={editingIP ?? ""}
+              onChange={(e) => setEditingIP(e.target.value)}
+              onBlur={() => handleSaveIP(d)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSaveIP(d);
+                if (e.key === "Escape") setEditingDomain(null);
+              }}
+            />
+          </div>
+        );
+      }
+
+      return (
+        <div className="domain-ip">
+          <span
+            className={`ip-display ${isPlaceholder ? "ip-placeholder" : "mono"}`}
+            onClick={() => handleEditIP(d)}
+            title={displayValue}
+          >
+            {displayValue}
+            {isPlaceholder && (
+              <Badge
+                variant="secondary"
+                size="sm"
+                className="placeholder-badge"
+              >
+                placeholder
+              </Badge>
+            )}
             <svg
               className="edit-icon"
               width="14"
@@ -835,9 +872,9 @@ export default function DomainManagement({ isAdmin = false }: Props) {
               <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
             </svg>
           </span>
-        )}
-      </div>
-    ),
+        </div>
+      );
+    },
   });
 
   // Proxy column - always present
@@ -1174,6 +1211,9 @@ function AddDomainModal({
         isAdmin && selectedEdgeLabels.length > 0
           ? { labels: selectedEdgeLabels }
           : undefined;
+      const normalizedOrigin = formData.origin_ip?.trim() ?? "";
+      const originValue = normalizedOrigin === "" ? "" : normalizedOrigin;
+      const ownerValue = formData.owner?.trim();
       if (bulkMode) {
         const domainList = bulkDomains
           .split("\n")
@@ -1181,18 +1221,25 @@ function AddDomainModal({
           .filter(Boolean);
         await domainsApi.bulkCreate({
           domains: domainList,
-          origin_ip: formData.origin_ip,
+          origin_ip: originValue,
           proxied: formData.proxied,
           ttl: formData.ttl,
           tls: formData.tls,
+          owner: ownerValue,
           edge: edgePayload,
         });
         toast.success(`Added ${domainList.length} domains`);
       } else {
-        await domainsApi.create({
-          ...formData,
+        const payload: CreateDomainPayload = {
+          domain: formData.domain.trim(),
+          proxied: formData.proxied,
+          ttl: formData.ttl,
+          tls: formData.tls,
           edge: edgePayload,
-        });
+          owner: ownerValue || undefined,
+          origin_ip: originValue,
+        };
+        await domainsApi.create(payload);
         toast.success(`Added ${formData.domain}`);
       }
       onAdd(false);
@@ -1263,13 +1310,16 @@ function AddDomainModal({
           <Input
             label="Origin IP"
             placeholder="192.168.1.1"
-            value={formData.origin_ip}
-            onChange={(e) =>
-              setFormData({ ...formData, origin_ip: e.target.value })
-            }
-            fullWidth
-            required
-          />
+          value={formData.origin_ip}
+          onChange={(e) =>
+            setFormData({ ...formData, origin_ip: e.target.value })
+          }
+          fullWidth
+        />
+        <p className="form-hint">
+          Leave blank to serve the aki.cloud placeholder page (requires the
+          Placeholder extension).
+        </p>
 
           <div className="form-row">
             <Input

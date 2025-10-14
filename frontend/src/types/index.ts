@@ -68,7 +68,7 @@ export interface Domain {
   domain: string;
   owner: string;
   owner_email?: string;
-  origin_ip: string;
+  origin_ip: string | null;
   proxied: boolean;
   ttl: number;
   updated_at: string;
@@ -84,7 +84,7 @@ export interface DomainTLSPayload {
 export interface CreateDomainPayload {
   domain: string;
   owner?: string;
-  origin_ip: string;
+  origin_ip?: string | null;
   proxied: boolean;
   ttl?: number;
   tls?: DomainTLSPayload;
@@ -92,8 +92,8 @@ export interface CreateDomainPayload {
 }
 
 export interface UpdateDomainPayload {
-  origin_ip: string;
-  proxied: boolean;
+  origin_ip?: string | null;
+  proxied?: boolean;
   ttl?: number;
   owner?: string;
   tls?: DomainTLSPayload;
@@ -102,7 +102,7 @@ export interface UpdateDomainPayload {
 
 export interface BulkDomainPayload {
   domains: string[];
-  origin_ip: string;
+  origin_ip?: string | null;
   owner?: string;
   proxied?: boolean;
   ttl?: number;
@@ -176,6 +176,25 @@ export interface NameServerEntry {
   name: string;
   fqdn: string;
   ipv4: string;
+}
+
+export interface ExtensionAction {
+  key: string;
+  label: string;
+  description?: string;
+}
+
+export interface Extension {
+  key: string;
+  name: string;
+  description: string;
+  category: string;
+  scope: string;
+  enabled: boolean;
+  config?: Record<string, unknown>;
+  actions?: ExtensionAction[];
+  updated_at?: string;
+  updated_by?: string;
 }
 
 export interface DomainOverview {

@@ -61,6 +61,10 @@ func (s *Store) nameServerStatusFile() string {
 	return filepath.Join(s.dataDir, "infra", "nameserver_status.json")
 }
 
+func (s *Store) extensionsFile() string {
+	return filepath.Join(s.dataDir, "extensions", "extensions.json")
+}
+
 func (s *Store) domainDir(domain string) string {
 	domain = strings.ToLower(domain)
 	return filepath.Join(s.dataDir, "domains", domain)
@@ -172,6 +176,89 @@ func (s *Store) SaveEdgeHealth(statuses []models.EdgeHealthStatus) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return writeJSONAtomic(s.edgeHealthFile(), statuses)
+}
+
+// GetExtensionsState returns the persisted extension configuration with version metadata.
+func (s *Store) GetExtensionsState() (models.ExtensionsState, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.readExtensionsStateLocked()
+}
+
+// SaveExtensionsState overwrites the stored extensions configuration.
+func (s *Store) SaveExtensionsState(state models.ExtensionsState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state.Config = normalizeExtensionsConfig(state.Config)
+	return writeJSONAtomic(s.extensionsFile(), state)
+}
+
+// UpdateExtensionsState applies a mutation function, bumps the version and writes the result atomically.
+func (s *Store) UpdateExtensionsState(nodeID string, mutator func(state *models.ExtensionsState) error) (models.ExtensionsState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.readExtensionsStateLocked()
+	if err != nil {
+		return models.ExtensionsState{}, err
+	}
+	if mutator != nil {
+		if err := mutator(&state); err != nil {
+			return state, err
+		}
+	}
+	state.Config = normalizeExtensionsConfig(state.Config)
+	state.Version.Counter++
+	if state.Version.Counter <= 0 {
+		state.Version.Counter = 1
+	}
+	state.Version.NodeID = nodeID
+	state.Version.Updated = time.Now().UTC().Unix()
+	if err := writeJSONAtomic(s.extensionsFile(), state); err != nil {
+		return models.ExtensionsState{}, err
+	}
+	return state, nil
+}
+
+func (s *Store) readExtensionsStateLocked() (models.ExtensionsState, error) {
+	path := s.extensionsFile()
+	state := models.ExtensionsState{
+		Config: normalizeExtensionsConfig(models.ExtensionsConfig{}),
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return state, nil
+		}
+		return models.ExtensionsState{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return models.ExtensionsState{}, err
+	}
+	if err := json.Unmarshal(data, &state); err == nil && state.Config.Global != nil {
+		state.Config = normalizeExtensionsConfig(state.Config)
+		return state, nil
+	}
+	// legacy format without version metadata
+	var cfg models.ExtensionsConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return models.ExtensionsState{}, err
+	}
+	state.Config = normalizeExtensionsConfig(cfg)
+	state.Version = models.ClockVersion{}
+	return state, nil
+}
+
+func normalizeExtensionsConfig(cfg models.ExtensionsConfig) models.ExtensionsConfig {
+	if cfg.Global == nil {
+		cfg.Global = make(map[string]models.ExtensionState)
+	}
+	if cfg.Domain == nil {
+		cfg.Domain = make(map[string]map[string]models.ExtensionState)
+	}
+	if cfg.Node == nil {
+		cfg.Node = make(map[string]map[string]models.ExtensionState)
+	}
+	return cfg
 }
 
 // UpsertEdgeHealth inserts or updates a single edge health record.
@@ -349,8 +436,8 @@ func (s *Store) SaveDomain(record models.DomainRecord) error {
 		log.Printf("store: refusing to persist domain with empty name")
 		return nil
 	}
-	if record.Owner == "" && record.OriginIP == "" && record.DeletedAt.IsZero() {
-		log.Printf("store: refusing to persist incomplete domain %s (missing owner/origin)", record.Domain)
+	if record.Owner == "" && record.DeletedAt.IsZero() {
+		log.Printf("store: refusing to persist incomplete domain %s (missing owner)", record.Domain)
 		return nil
 	}
 	if err := writeJSONAtomic(path, record); err != nil {

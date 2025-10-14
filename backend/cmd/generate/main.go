@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"aki-cloud/backend/internal/extensions"
 	"aki-cloud/backend/internal/infra"
 	"aki-cloud/backend/internal/render"
 	"aki-cloud/backend/internal/store"
@@ -18,7 +19,7 @@ func main() {
 	var nginxTemplate string
 	var sitesTemplate string
 	var openrestyOut string
-	
+
 	// Read NS configuration from environment
 	nsLabel := os.Getenv("NS_LABEL")
 	if nsLabel == "" {
@@ -48,6 +49,7 @@ func main() {
 	}
 
 	infraCtl := infra.New(store, dataDir)
+	extSvc := extensions.New(store, "")
 
 	switch component {
 	case "coredns":
@@ -56,7 +58,7 @@ func main() {
 			log.Fatalf("render coredns: %v", err)
 		}
 	case "openresty":
-		gen := render.OpenRestyGenerator{Store: store, Infra: infraCtl, DataDir: dataDir, NginxTmpl: nginxTemplate, SitesTmpl: sitesTemplate, OutputDir: openrestyOut, NSLabel: nsLabel, NSBaseDomain: nsBaseDomain}
+		gen := render.OpenRestyGenerator{Store: store, Infra: infraCtl, Extensions: extSvc, DataDir: dataDir, NginxTmpl: nginxTemplate, SitesTmpl: sitesTemplate, OutputDir: openrestyOut, NSLabel: nsLabel, NSBaseDomain: nsBaseDomain}
 		if err := gen.Render(); err != nil {
 			log.Fatalf("render openresty: %v", err)
 		}
@@ -65,7 +67,7 @@ func main() {
 		if err := corednsGen.Render(); err != nil {
 			log.Fatalf("render coredns: %v", err)
 		}
-		openrestyGen := render.OpenRestyGenerator{Store: store, Infra: infraCtl, DataDir: dataDir, NginxTmpl: nginxTemplate, SitesTmpl: sitesTemplate, OutputDir: openrestyOut, NSLabel: nsLabel, NSBaseDomain: nsBaseDomain}
+		openrestyGen := render.OpenRestyGenerator{Store: store, Infra: infraCtl, Extensions: extSvc, DataDir: dataDir, NginxTmpl: nginxTemplate, SitesTmpl: sitesTemplate, OutputDir: openrestyOut, NSLabel: nsLabel, NSBaseDomain: nsBaseDomain}
 		if err := openrestyGen.Render(); err != nil {
 			log.Fatalf("render openresty: %v", err)
 		}

@@ -97,3 +97,18 @@ func (s *Service) FlushSync(ctx context.Context) error {
 	}
 	return nil
 }
+
+// PurgeEdgeCache clears the edge cache via helper script.
+func (s *Service) PurgeEdgeCache(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, filepath.Join(s.scriptsDir, "purge_edge_cache.sh"))
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("PATH=%s", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"),
+	)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("purge edge cache: %w", err)
+	}
+	return nil
+}

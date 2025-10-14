@@ -63,6 +63,18 @@
   transition: all 0.15s ease;
 }
 
+.ip-placeholder {
+  font-family: var(--font-body);
+  font-style: italic;
+  color: var(--color-text-tertiary);
+}
+
+.placeholder-badge {
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
 .ip-display:hover {
   background: var(--color-bg-elevated);
   color: var(--color-accent);
