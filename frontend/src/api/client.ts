@@ -112,6 +112,11 @@ export const domains = {
     return res.data;
   },
 
+  purgeCache: async (domain: string): Promise<Domain> => {
+    const res = await client.post<Domain>(`/domains/${domain}/cache/purge`, {});
+    return res.data;
+  },
+
   reassignEdge: async (domain: string): Promise<Domain> => {
     const res = await client.post<Domain>(
       `/domains/${domain}/edge/reassign`,

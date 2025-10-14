@@ -420,6 +420,7 @@ func (s *Store) loadDomainsLocked() ([]models.DomainRecord, error) {
 			return nil, fmt.Errorf("reading domain %s: %w", domain, err)
 		}
 		rec.EnsureTLSDefaults()
+		rec.EnsureCacheVersion()
 		rec.Domain = strings.ToLower(domain)
 		records = append(records, rec)
 	}
@@ -431,6 +432,7 @@ func (s *Store) SaveDomain(record models.DomainRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record.EnsureTLSDefaults()
+	record.EnsureCacheVersion()
 	path := s.domainRecordFile(record.Domain)
 	if record.Domain == "" {
 		log.Printf("store: refusing to persist domain with empty name")
@@ -461,6 +463,7 @@ func (s *Store) GetDomain(domain string) (*models.DomainRecord, error) {
 		return nil, err
 	}
 	rec.EnsureTLSDefaults()
+	rec.EnsureCacheVersion()
 	rec.Domain = strings.ToLower(domain)
 	if rec.IsDeleted() {
 		return nil, fs.ErrNotExist
@@ -481,6 +484,7 @@ func (s *Store) GetDomainIncludingDeleted(domain string) (*models.DomainRecord, 
 		return nil, err
 	}
 	rec.EnsureTLSDefaults()
+	rec.EnsureCacheVersion()
 	rec.Domain = strings.ToLower(domain)
 	return &rec, nil
 }

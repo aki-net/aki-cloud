@@ -170,14 +170,14 @@ func (g *CoreDNSGenerator) Render() error {
 		primaryNS = ensureDot(activeNS[0].FQDN)
 	}
 	for _, domain := range domains {
-    ttl := domain.TTL
-    if ttl <= 0 {
-        ttl = 60
-    }
-    ttl = jitterSeconds(ttl, 20, domain.Domain)
-    if ttl <= 0 {
-        ttl = 60
-    }
+		ttl := domain.TTL
+		if ttl <= 0 {
+			ttl = 60
+		}
+		ttl = jitterSeconds(ttl, 20, domain.Domain)
+		if ttl <= 0 {
+			ttl = 60
+		}
 		challengeExtras := make([]ZoneRecord, 0, len(domain.TLS.Challenges))
 		expiryCutoff := now.Add(-1 * time.Minute)
 		for _, ch := range domain.TLS.Challenges {
@@ -695,6 +695,10 @@ func (g *OpenRestyGenerator) Render() error {
 		}
 		cacheActive := edgeCacheCfg.Enabled && !placeholderActive
 		cacheUseStale := strings.Join(edgeCacheCfg.UseStale, " ")
+		cacheVersion := domain.CacheVersion
+		if cacheVersion <= 0 {
+			cacheVersion = 1
+		}
 		mainTTLSeconds := jitterSeconds(edgeCacheCfg.BaseTTLSeconds, edgeCacheCfg.TTLJitterPct, domain.Domain)
 		if mainTTLSeconds <= 0 {
 			mainTTLSeconds = 86400
@@ -761,6 +765,7 @@ func (g *OpenRestyGenerator) Render() error {
 			"CacheBypassCookies": edgeCacheCfg.BypassCookies,
 			"CachePath":          edgeCacheCfg.Path,
 			"ServerHeader":       serverHeader,
+			"CacheVersion":       cacheVersion,
 			"CacheTTLMain":       cacheTTLMain,
 			"CacheTTLNotFound":   cacheTTLNotFound,
 			"CacheTTLError":      cacheTTLError,

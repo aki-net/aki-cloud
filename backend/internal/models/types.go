@@ -37,17 +37,18 @@ func MergeClock(local ClockVersion, remote ClockVersion) ClockVersion {
 
 // DomainRecord represents an apex A record for a managed zone.
 type DomainRecord struct {
-	Domain     string       `json:"domain"`
-	Owner      string       `json:"owner"`
-	OwnerEmail string       `json:"owner_email,omitempty"`
-	OriginIP   string       `json:"origin_ip"`
-	Proxied    bool         `json:"proxied"`
-	TTL        int          `json:"ttl"`
-	UpdatedAt  time.Time    `json:"updated_at"`
-	DeletedAt  time.Time    `json:"deleted_at,omitempty"`
-	TLS        DomainTLS    `json:"tls,omitempty"`
-	Edge       DomainEdge   `json:"edge,omitempty"`
-	Version    ClockVersion `json:"version"`
+	Domain       string       `json:"domain"`
+	Owner        string       `json:"owner"`
+	OwnerEmail   string       `json:"owner_email,omitempty"`
+	OriginIP     string       `json:"origin_ip"`
+	Proxied      bool         `json:"proxied"`
+	TTL          int          `json:"ttl"`
+	CacheVersion int64        `json:"cache_version,omitempty"`
+	UpdatedAt    time.Time    `json:"updated_at"`
+	DeletedAt    time.Time    `json:"deleted_at,omitempty"`
+	TLS          DomainTLS    `json:"tls,omitempty"`
+	Edge         DomainEdge   `json:"edge,omitempty"`
+	Version      ClockVersion `json:"version"`
 }
 
 // Validate performs minimal sanity checks.
@@ -56,6 +57,7 @@ func (d *DomainRecord) Validate() error {
 		return ErrValidation("domain must be provided")
 	}
 	if !d.DeletedAt.IsZero() {
+		d.EnsureCacheVersion()
 		return nil
 	}
 	origin := strings.TrimSpace(d.OriginIP)
@@ -66,6 +68,7 @@ func (d *DomainRecord) Validate() error {
 	if d.TTL <= 0 {
 		d.TTL = 60
 	}
+	d.EnsureCacheVersion()
 	if err := d.TLS.Validate(); err != nil {
 		return err
 	}
@@ -88,11 +91,20 @@ func (d *DomainRecord) EnsureTLSDefaults() {
 		d.TLS.RecommendedMode = EncryptionFlexible
 	}
 	d.Edge.Normalize()
+	d.EnsureCacheVersion()
 }
 
 // EnsureEdgeDefaults applies default values to edge settings.
 func (d *DomainRecord) EnsureEdgeDefaults() {
 	d.Edge.Normalize()
+	d.EnsureCacheVersion()
+}
+
+// EnsureCacheVersion initialises cache version if unset.
+func (d *DomainRecord) EnsureCacheVersion() {
+	if d.CacheVersion <= 0 {
+		d.CacheVersion = 1
+	}
 }
 
 // MatchesOwner reports whether the record belongs to the provided owner id or email.
@@ -124,6 +136,7 @@ func (d *DomainRecord) MarkDeleted(ts time.Time) {
 	}
 	d.DeletedAt = ts
 	d.Proxied = false
+	d.CacheVersion = 0
 	if d.TTL <= 0 {
 		d.TTL = 60
 	}

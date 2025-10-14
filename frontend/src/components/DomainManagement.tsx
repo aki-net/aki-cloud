@@ -46,6 +46,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     null,
   );
   const [rebalancingEdges, setRebalancingEdges] = useState(false);
+  const [purgingDomain, setPurgingDomain] = useState<string | null>(null);
 
   interface EdgeModalData {
     domain: string;
@@ -399,6 +400,38 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         error.response?.data?.error || "Failed to update TLS setting",
       );
     }
+  };
+
+  const handlePurgeCache = async (domainName: string) => {
+    try {
+      setPurgingDomain(domainName);
+      await domainsApi.purgeCache(domainName);
+      await loadData(false);
+      toast.success(`Purged cache for ${domainName}`);
+    } catch (error: any) {
+      toast.error(
+        error.response?.data?.error || `Failed to purge cache for ${domainName}`,
+      );
+    } finally {
+      setPurgingDomain(null);
+    }
+  };
+
+  const renderDomainActions = (record: Domain | DomainOverview) => {
+    const domainName = "domain" in record ? record.domain : record.domain;
+    const isPurging = purgingDomain === domainName;
+    return (
+      <div className="domain-actions">
+        <Button
+          variant="ghost"
+          size="sm"
+          loading={isPurging}
+          onClick={() => handlePurgeCache(domainName)}
+        >
+          Purge Cache
+        </Button>
+      </div>
+    );
   };
 
   const handleEditIP = (domain: Domain | DomainOverview) => {
@@ -927,6 +960,13 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         {format(new Date(d.updated_at), "MMM d, HH:mm")}
       </span>
     ),
+    width: "140px",
+  });
+
+  columns.push({
+    key: "actions",
+    header: "Actions",
+    accessor: (d: any) => renderDomainActions(d),
     width: "140px",
   });
 

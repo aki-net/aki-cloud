@@ -61,25 +61,26 @@ type loginAttemptDescriptor struct {
 }
 
 type domainOverview struct {
-	Domain      string                   `json:"domain"`
-	OwnerID     string                   `json:"owner_id"`
-	OwnerEmail  string                   `json:"owner_email,omitempty"`
-	OwnerExists bool                     `json:"owner_exists"`
-	OriginIP    string                   `json:"origin_ip"`
-	Proxied     bool                     `json:"proxied"`
-	TTL         int                      `json:"ttl"`
-	UpdatedAt   time.Time                `json:"updated_at"`
-	TLSMode     models.EncryptionMode    `json:"tls_mode,omitempty"`
-	TLSStatus   models.CertificateStatus `json:"tls_status,omitempty"`
-	TLSUseRec   bool                     `json:"tls_use_recommended"`
-	TLSRecMode  models.EncryptionMode    `json:"tls_recommended_mode,omitempty"`
-	TLSExpires  *time.Time               `json:"tls_expires_at,omitempty"`
-	TLSError    string                   `json:"tls_last_error,omitempty"`
-	TLSRetryAt  *time.Time               `json:"tls_retry_after,omitempty"`
-	EdgeIP      string                   `json:"edge_ip,omitempty"`
-	EdgeNodeID  string                   `json:"edge_node_id,omitempty"`
-	EdgeLabels  []string                 `json:"edge_labels,omitempty"`
-	EdgeUpdated *time.Time               `json:"edge_assigned_at,omitempty"`
+	Domain       string                   `json:"domain"`
+	OwnerID      string                   `json:"owner_id"`
+	OwnerEmail   string                   `json:"owner_email,omitempty"`
+	OwnerExists  bool                     `json:"owner_exists"`
+	OriginIP     string                   `json:"origin_ip"`
+	Proxied      bool                     `json:"proxied"`
+	TTL          int                      `json:"ttl"`
+	CacheVersion int64                    `json:"cache_version,omitempty"`
+	UpdatedAt    time.Time                `json:"updated_at"`
+	TLSMode      models.EncryptionMode    `json:"tls_mode,omitempty"`
+	TLSStatus    models.CertificateStatus `json:"tls_status,omitempty"`
+	TLSUseRec    bool                     `json:"tls_use_recommended"`
+	TLSRecMode   models.EncryptionMode    `json:"tls_recommended_mode,omitempty"`
+	TLSExpires   *time.Time               `json:"tls_expires_at,omitempty"`
+	TLSError     string                   `json:"tls_last_error,omitempty"`
+	TLSRetryAt   *time.Time               `json:"tls_retry_after,omitempty"`
+	EdgeIP       string                   `json:"edge_ip,omitempty"`
+	EdgeNodeID   string                   `json:"edge_node_id,omitempty"`
+	EdgeLabels   []string                 `json:"edge_labels,omitempty"`
+	EdgeUpdated  *time.Time               `json:"edge_assigned_at,omitempty"`
 }
 
 type nsCheckRequest struct {
@@ -330,6 +331,7 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/domains/bulk", s.authorizeUser(s.handleBulkCreateDomains))
 			r.Patch("/domains/bulk", s.authorizeUser(s.handleBulkUpdateDomains))
 			r.Put("/domains/{domain}", s.authorizeUser(s.handleUpdateDomain))
+			r.Post("/domains/{domain}/cache/purge", s.authorizeUser(s.handlePurgeDomainCache))
 			r.Post("/domains/{domain}/edge/reassign", func(w http.ResponseWriter, req *http.Request) {
 				s.requireAdmin(http.HandlerFunc(s.handleReassignDomainEdge)).ServeHTTP(w, req)
 			})
@@ -735,12 +737,13 @@ func (s *Server) attachOwnerMetadata(domain *models.DomainRecord) {
 
 func (s *Server) prepareDomainRecord(user userContext, domain string, owner string, origin string, proxied *bool, ttl *int, tlsPayload *domainTLSPayload, edgePayload *domainEdgePayload) (models.DomainRecord, error) {
 	record := models.DomainRecord{
-		Domain:     strings.ToLower(strings.TrimSpace(domain)),
-		Owner:      strings.TrimSpace(owner),
-		OriginIP:   strings.TrimSpace(origin),
-		TTL:        60,
-		Proxied:    true,
-		OwnerEmail: strings.ToLower(strings.TrimSpace(user.Email)),
+		Domain:       strings.ToLower(strings.TrimSpace(domain)),
+		Owner:        strings.TrimSpace(owner),
+		OriginIP:     strings.TrimSpace(origin),
+		TTL:          60,
+		Proxied:      true,
+		OwnerEmail:   strings.ToLower(strings.TrimSpace(user.Email)),
+		CacheVersion: 1,
 	}
 	if record.Domain == "" {
 		return models.DomainRecord{}, models.ErrValidation("domain must be provided")
@@ -808,7 +811,9 @@ func (s *Server) prepareDomainRecord(user userContext, domain string, owner stri
 	}
 	if existing, err := s.Store.GetDomainIncludingDeleted(record.Domain); err == nil && existing != nil {
 		record.Version = existing.Version
+		record.CacheVersion = existing.CacheVersion
 	}
+	record.EnsureCacheVersion()
 	record.UpdatedAt = now
 	record.Version.Counter++
 	record.Version.NodeID = s.Config.NodeID
@@ -1024,6 +1029,7 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: "forbidden"})
 			continue
 		}
+		prevOrigin := strings.TrimSpace(existing.OriginIP)
 		if payload.OriginIP != nil {
 			origin := strings.TrimSpace(*payload.OriginIP)
 			existing.OriginIP = origin
@@ -1037,6 +1043,12 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 				existing.TLS.UseRecommended = true
 				existing.TLS.Mode = models.EncryptionFlexible
 				queueTLSAutomation(existing, time.Now().UTC())
+			}
+		}
+		if payload.OriginIP != nil {
+			newOrigin := strings.TrimSpace(*payload.OriginIP)
+			if newOrigin != prevOrigin {
+				existing.CacheVersion++
 			}
 		}
 		if payload.TTL != nil && *payload.TTL > 0 {
@@ -1158,6 +1170,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid payload")
 		return
 	}
+	prevOrigin := strings.TrimSpace(existing.OriginIP)
 	updated := *existing
 	if payload.OriginIP != nil {
 		origin := strings.TrimSpace(*payload.OriginIP)
@@ -1172,6 +1185,12 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			updated.TLS.UseRecommended = true
 			updated.TLS.Mode = models.EncryptionFlexible
 			queueTLSAutomation(&updated, time.Now().UTC())
+		}
+	}
+	if payload.OriginIP != nil {
+		newOrigin := strings.TrimSpace(*payload.OriginIP)
+		if newOrigin != prevOrigin {
+			updated.CacheVersion++
 		}
 	}
 	if payload.TTL != nil && *payload.TTL > 0 {
@@ -1275,6 +1294,38 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	s.triggerSyncBroadcast()
 	go s.Orchestrator.Trigger(r.Context())
 	writeJSON(w, http.StatusOK, updated.Sanitize())
+}
+
+func (s *Server) handlePurgeDomainCache(w http.ResponseWriter, r *http.Request) {
+	user := userFromContext(r.Context())
+	domain := strings.ToLower(chi.URLParam(r, "domain"))
+	existing, err := s.Store.GetDomain(domain)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "domain not found")
+		return
+	}
+	s.attachOwnerMetadata(existing)
+	if !userOwnsDomain(user, *existing) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	existing.CacheVersion++
+	existing.EnsureCacheVersion()
+	now := time.Now().UTC()
+	existing.UpdatedAt = now
+	existing.Version.Counter++
+	if existing.Version.Counter <= 0 {
+		existing.Version.Counter = 1
+	}
+	existing.Version.NodeID = s.Config.NodeID
+	existing.Version.Updated = now.Unix()
+	if err := s.Store.UpsertDomain(*existing); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.triggerSyncBroadcast()
+	go s.Orchestrator.Trigger(r.Context())
+	writeJSON(w, http.StatusOK, existing.Sanitize())
 }
 
 func (s *Server) handleListExtensions(w http.ResponseWriter, r *http.Request) {
@@ -1969,18 +2020,19 @@ func (s *Server) handleDomainsOverview(w http.ResponseWriter, r *http.Request) {
 	overview := make([]domainOverview, 0, len(domains))
 	for _, domain := range domains {
 		entry := domainOverview{
-			Domain:      domain.Domain,
-			OwnerID:     domain.Owner,
-			OwnerExists: false,
-			OriginIP:    domain.OriginIP,
-			Proxied:     domain.Proxied,
-			TTL:         domain.TTL,
-			UpdatedAt:   domain.UpdatedAt,
-			TLSMode:     domain.TLS.Mode,
-			TLSStatus:   domain.TLS.Status,
-			TLSUseRec:   domain.TLS.UseRecommended,
-			TLSRecMode:  domain.TLS.RecommendedMode,
-			TLSError:    domain.TLS.LastError,
+			Domain:       domain.Domain,
+			OwnerID:      domain.Owner,
+			OwnerExists:  false,
+			OriginIP:     domain.OriginIP,
+			Proxied:      domain.Proxied,
+			TTL:          domain.TTL,
+			CacheVersion: domain.CacheVersion,
+			UpdatedAt:    domain.UpdatedAt,
+			TLSMode:      domain.TLS.Mode,
+			TLSStatus:    domain.TLS.Status,
+			TLSUseRec:    domain.TLS.UseRecommended,
+			TLSRecMode:   domain.TLS.RecommendedMode,
+			TLSError:     domain.TLS.LastError,
 		}
 		if domain.OwnerEmail != "" {
 			entry.OwnerEmail = strings.ToLower(domain.OwnerEmail)

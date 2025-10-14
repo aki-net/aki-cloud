@@ -5,6 +5,8 @@ server {
     access_log /var/log/nginx/{{ .Domain }}.access.log combined;
     error_log  /var/log/nginx/{{ .Domain }}.error.log warn;
 
+    set $edge_cache_version {{ .CacheVersion }};
+
     {{- if .ServerHeader }}
     more_clear_headers Server;
     more_set_headers "Server: {{ .ServerHeader }}";
@@ -45,6 +47,7 @@ server {
         {{- if .ProxyPass }}
         proxy_pass {{ .ProxyPass }};
         {{- end }}
+        proxy_cache_key "$scheme$host$request_uri|$edge_cache_version";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $client_real_ip;
         proxy_set_header X-Forwarded-For $edge_forwarded_for;
@@ -80,6 +83,8 @@ server {
 
     access_log /var/log/nginx/{{ .Domain }}.access.log combined;
     error_log  /var/log/nginx/{{ .Domain }}.error.log warn;
+
+    set $edge_cache_version {{ .CacheVersion }};
 
     limit_conn edge_conn_per_ip {{ .LimitConnPerIP }};
 
@@ -117,6 +122,7 @@ server {
         {{- if .ProxyPass }}
         proxy_pass {{ .ProxyPass }};
         {{- end }}
+        proxy_cache_key "$scheme$host$request_uri|$edge_cache_version";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $client_real_ip;
         proxy_set_header X-Forwarded-For $edge_forwarded_for;
@@ -168,6 +174,8 @@ server {
     ssl_session_timeout 1m;
     ssl_protocols TLSv1.2 TLSv1.3;
 
+    set $edge_cache_version {{ .CacheVersion }};
+
     limit_conn edge_conn_per_ip {{ .LimitConnPerIP }};
 
     proxy_connect_timeout 5s;
@@ -198,6 +206,7 @@ server {
         {{- if .ProxyPass }}
         proxy_pass {{ .ProxyPass }};
         {{- end }}
+        proxy_cache_key "$scheme$host$request_uri|$edge_cache_version";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $client_real_ip;
         proxy_set_header X-Forwarded-For $edge_forwarded_for;

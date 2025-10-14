@@ -136,6 +136,12 @@
   gap: 6px;
 }
 
+.domain-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-start;
+}
+
 /* TLS Display */
 .tls-display {
   display: flex;

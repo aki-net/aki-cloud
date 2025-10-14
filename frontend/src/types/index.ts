@@ -71,6 +71,7 @@ export interface Domain {
   origin_ip: string | null;
   proxied: boolean;
   ttl: number;
+  cache_version?: number;
   updated_at: string;
   tls: DomainTLS;
   edge?: DomainEdge;
@@ -205,6 +206,7 @@ export interface DomainOverview {
   origin_ip: string;
   proxied: boolean;
   ttl: number;
+  cache_version?: number;
   updated_at: string;
   tls_mode?: EncryptionMode;
   tls_status?: CertificateStatus;
