@@ -168,20 +168,73 @@ server {
     ssl_session_timeout 1m;
     ssl_protocols TLSv1.2 TLSv1.3;
 
+    limit_conn edge_conn_per_ip {{ .LimitConnPerIP }};
+
+    proxy_connect_timeout 5s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+
     location ^~ /.well-known/acme-challenge/ {
         default_type text/plain;
         proxy_pass {{ or .ChallengeProxy "http://127.0.0.1:8080" }}$request_uri;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $client_real_ip;
+        proxy_set_header X-Forwarded-For $edge_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header CF-Connecting-IP $client_real_ip;
+        proxy_set_header True-Client-IP $client_real_ip;
     }
 
     location / {
-        default_type text/plain;
+        limit_req zone=edge_req_per_ip burst={{ .LimitReqBurstIP }}{{ if .LimitReqNoDelay }} nodelay{{ end }};
+        limit_req zone=edge_req_per_host burst={{ .LimitReqBurstHost }};
+        {{- if .PlaceholderEnabled }}
+        default_type text/html;
         add_header Cache-Control "no-store";
-        return 503 "edge certificate provisioning in progress\n";
+        root {{ .PlaceholderRoot }};
+        try_files /{{ .PlaceholderFile }} =404;
+        {{- else }}
+        {{- if .ProxyPass }}
+        proxy_pass {{ .ProxyPass }};
+        {{- end }}
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $client_real_ip;
+        proxy_set_header X-Forwarded-For $edge_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header Connection "";
+        proxy_http_version 1.1;
+        proxy_intercept_errors off;
+        proxy_buffering on;
+        proxy_set_header CF-Connecting-IP $client_real_ip;
+        proxy_set_header True-Client-IP $client_real_ip;
+        proxy_hide_header Server;
+        {{- if .CacheEnabled }}
+        proxy_cache {{ .CacheZone }};
+        proxy_cache_bypass $edge_cache_skip;
+        proxy_no_cache $edge_cache_skip;
+        proxy_cache_valid 200 301 302 {{ .CacheTTLMain }};
+        proxy_cache_valid 404 {{ .CacheTTLNotFound }};
+        proxy_cache_valid any {{ .CacheTTLError }};
+        {{- if .CacheAddStatus }}
+        add_header X-Cache-Status $upstream_cache_status always;
+        {{- end }}
+        {{- end }}
+        {{- if and .OriginIsHTTPS .OriginAvailable }}
+        proxy_ssl_server_name on;
+        proxy_ssl_name {{ .OriginServerName }};
+        {{- if .VerifyOrigin }}
+        proxy_ssl_verify on;
+        {{- else }}
+        proxy_ssl_verify off;
+        {{- end }}
+        {{- if .StrictOriginPull }}
+        proxy_ssl_certificate {{ .OriginPullCert }};
+        proxy_ssl_certificate_key {{ .OriginPullKey }};
+        {{- end }}
+        {{- end }}
+        {{- end }}
     }
 }
 {{- end }}
