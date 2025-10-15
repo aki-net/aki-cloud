@@ -3,8 +3,8 @@ server {
     server_name {{ .Domain }};
 
     access_log /var/log/nginx/{{ .Domain }}.access.log combined;
-    {{- if .SearchBotLoggingEnabled }}
-    access_log $edge_searchbot_log searchbot if=$edge_searchbot_log_enabled;
+    {{- if and .SearchBotLoggingEnabled .SearchBotLogFile }}
+    access_log {{ .SearchBotLogFile }} searchbot if=$edge_searchbot_enabled;
     {{- end }}
     error_log  /var/log/nginx/{{ .Domain }}.error.log warn;
 
@@ -85,8 +85,8 @@ server {
     server_name {{ .Domain }};
 
     access_log /var/log/nginx/{{ .Domain }}.access.log combined;
-    {{- if .SearchBotLoggingEnabled }}
-    access_log $edge_searchbot_log searchbot if=$edge_searchbot_log_enabled;
+    {{- if and .SearchBotLoggingEnabled .SearchBotLogFile }}
+    access_log {{ .SearchBotLogFile }} searchbot if=$edge_searchbot_enabled;
     {{- end }}
     error_log  /var/log/nginx/{{ .Domain }}.error.log warn;
 

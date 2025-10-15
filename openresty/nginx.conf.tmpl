@@ -119,16 +119,10 @@ http {
         {{- end }}
     }
 
-    map $edge_searchbot_key $edge_searchbot_log {
-        default "";
-        {{- range .SearchBotLogging.Bots }}
-        {{ .Key }} {{ .LogPath }};
-        {{- end }}
-    }
-
-    map $edge_searchbot_log $edge_searchbot_log_enabled {
-        default 1;
+    map $edge_searchbot_key $edge_searchbot_enabled {
+        default 0;
         "" 0;
+        ~.+ 1;
     }
     {{- end }}
 

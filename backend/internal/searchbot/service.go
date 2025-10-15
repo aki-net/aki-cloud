@@ -36,6 +36,7 @@ type BotDefinition struct {
 type Config struct {
 	Enabled        bool
 	LogDir         string
+	LogFile        string
 	FileLimitBytes int64
 	CacheTTL       time.Duration
 	Bots           []BotDefinition
@@ -121,6 +122,10 @@ func (s *Service) UpdateConfig(cfg Config) error {
 		cfg.LogDir = "/data/searchbot/logs"
 	}
 	cfg.LogDir = filepath.Clean(cfg.LogDir)
+	cfg.LogFile = strings.TrimSpace(cfg.LogFile)
+	if cfg.LogFile == "" {
+		cfg.LogFile = filepath.Join(cfg.LogDir, "searchbots.log")
+	}
 	if cfg.FileLimitBytes <= 0 {
 		cfg.FileLimitBytes = 1024 * 1024 * 1024 // default 1 GiB
 	}
@@ -144,7 +149,7 @@ func (s *Service) UpdateConfig(cfg Config) error {
 			bot.Regex = key
 		}
 		bot.Key = key
-		bot.LogPath = filepath.Join(cfg.LogDir, fmt.Sprintf("%s.log", key))
+		bot.LogPath = cfg.LogFile
 		outBots = append(outBots, bot)
 		seen[key] = struct{}{}
 	}
@@ -160,6 +165,9 @@ func (s *Service) UpdateConfig(cfg Config) error {
 			return fmt.Errorf("ensure searchbot log dir: %w", err)
 		}
 		if err := ensureWorldWritableDir(cfg.LogDir); err != nil {
+			return err
+		}
+		if err := ensureWorldWritableFile(cfg.LogFile); err != nil {
 			return err
 		}
 	}
@@ -201,40 +209,45 @@ func (s *Service) LocalUsage() (NodeUsage, error) {
 	if !cfg.Enabled {
 		return usage, nil
 	}
-	total := int64(0)
+	sizeCache := make(map[string]int64, len(cfg.Bots))
 	usage.Bots = make([]BotUsage, 0, len(cfg.Bots))
 	for _, bot := range cfg.Bots {
-		var size int64
-		info, err := os.Stat(bot.LogPath)
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				usage.Bots = append(usage.Bots, BotUsage{
-					Key:   bot.Key,
-					Label: bot.Label,
-					Icon:  bot.Icon,
-					Bytes: 0,
-					Path:  bot.LogPath,
-				})
-				continue
-			}
-			return usage, err
-		}
-		size = info.Size()
-		if cfg.FileLimitBytes > 0 && size > cfg.FileLimitBytes+cfg.FileLimitBytes/10 {
-			if err := s.trimLogIfNeeded(bot.LogPath, cfg.FileLimitBytes); err == nil {
-				if updated, errStat := os.Stat(bot.LogPath); errStat == nil {
-					size = updated.Size()
+		path := strings.TrimSpace(bot.LogPath)
+		size, known := sizeCache[path]
+		if !known {
+			if path != "" {
+				info, err := os.Stat(path)
+				if err != nil {
+					if !errors.Is(err, fs.ErrNotExist) {
+						return usage, err
+					}
+				} else {
+					size = info.Size()
+					if cfg.FileLimitBytes > 0 && size > cfg.FileLimitBytes+cfg.FileLimitBytes/10 {
+						if err := s.trimLogIfNeeded(path, cfg.FileLimitBytes); err == nil {
+							if updated, errStat := os.Stat(path); errStat == nil {
+								size = updated.Size()
+							}
+						}
+					}
 				}
 			}
+			sizeCache[path] = size
 		}
-		total += size
 		usage.Bots = append(usage.Bots, BotUsage{
 			Key:   bot.Key,
 			Label: bot.Label,
 			Icon:  bot.Icon,
 			Bytes: size,
-			Path:  bot.LogPath,
+			Path:  path,
 		})
+	}
+	total := int64(0)
+	for path, size := range sizeCache {
+		if path == "" {
+			continue
+		}
+		total += size
 	}
 	usage.TotalBytes = total
 	return usage, nil
@@ -246,10 +259,19 @@ func (s *Service) ClearLogs() error {
 	if !cfg.Enabled {
 		return nil
 	}
+	seen := make(map[string]struct{}, len(cfg.Bots))
 	for _, bot := range cfg.Bots {
-		if err := truncateFile(bot.LogPath); err != nil {
+		path := strings.TrimSpace(bot.LogPath)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		if err := truncateFile(path); err != nil {
 			return err
 		}
+		seen[path] = struct{}{}
 	}
 	s.cacheMu.Lock()
 	s.cache = make(map[string]cacheEntry)
@@ -550,6 +572,26 @@ func ensureWorldWritableDir(path string) error {
 	}
 	if err := os.Chmod(path, 0o777); err != nil {
 		return fmt.Errorf("chmod searchbot log dir: %w", err)
+	}
+	return nil
+}
+
+func ensureWorldWritableFile(path string) error {
+	if path == "" {
+		return errors.New("log file path required")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
+		return fmt.Errorf("ensure log dir: %w", err)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o666)
+	if err != nil {
+		return fmt.Errorf("open log file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(path, 0o666); err != nil {
+		return fmt.Errorf("chmod log file: %w", err)
 	}
 	return nil
 }

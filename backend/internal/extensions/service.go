@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -446,6 +447,7 @@ func (s *Service) SearchBotConfig() (SearchBotRuntimeConfig, error) {
 	if logDir == "" {
 		logDir = "/data/searchbot/logs"
 	}
+	logFile := filepath.Join(logDir, "searchbots.log")
 	limitMB := intValue(cfg, "file_limit_mb", 1024)
 	if limitMB <= 0 {
 		limitMB = 1024
@@ -459,9 +461,15 @@ func (s *Service) SearchBotConfig() (SearchBotRuntimeConfig, error) {
 	if fileLimit < 10*1024*1024 {
 		fileLimit = 10 * 1024 * 1024
 	}
+	for i := range bots {
+		if bots[i].LogPath == "" {
+			bots[i].LogPath = logFile
+		}
+	}
 	out = SearchBotRuntimeConfig{
 		Enabled:        ext.State.Enabled,
 		LogDir:         logDir,
+		LogFile:        logFile,
 		FileLimitBytes: fileLimit,
 		CacheTTL:       time.Duration(cacheMinutes) * time.Minute,
 		Bots:           bots,
@@ -620,12 +628,14 @@ type SearchBotDefinition struct {
 	Icon    string
 	Matches []string
 	Regex   string
+	LogPath string
 }
 
 // SearchBotRuntimeConfig captures runtime settings for crawler logging.
 type SearchBotRuntimeConfig struct {
 	Enabled        bool
 	LogDir         string
+	LogFile        string
 	FileLimitBytes int64
 	CacheTTL       time.Duration
 	Bots           []SearchBotDefinition
