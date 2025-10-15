@@ -156,8 +156,11 @@ func (s *Service) UpdateConfig(cfg Config) error {
 	})
 	cfg.Bots = outBots
 	if cfg.Enabled {
-		if err := os.MkdirAll(cfg.LogDir, 0o755); err != nil {
+		if err := os.MkdirAll(cfg.LogDir, 0o777); err != nil {
 			return fmt.Errorf("ensure searchbot log dir: %w", err)
+		}
+		if err := ensureWorldWritableDir(cfg.LogDir); err != nil {
+			return err
 		}
 	}
 	s.mu.Lock()
@@ -535,4 +538,18 @@ func truncateFile(path string) error {
 func normalizeDomain(domain string) string {
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	return strings.Trim(domain, ".")
+}
+
+func ensureWorldWritableDir(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("expected directory at %s", path)
+	}
+	if err := os.Chmod(path, 0o777); err != nil {
+		return fmt.Errorf("chmod searchbot log dir: %w", err)
+	}
+	return nil
 }
