@@ -26,6 +26,17 @@ interface Props {
   isAdmin?: boolean;
 }
 
+interface EdgeModalData {
+  domain: string;
+  origin_ip: string;
+  proxied: boolean;
+  ttl: number;
+  labels: string[];
+  assigned_ip?: string;
+  node_name?: string;
+  node_id?: string;
+}
+
 export default function DomainManagement({ isAdmin = false }: Props) {
   const { user } = useAuth();
   const [domains, setDomains] = useState<Domain[]>([]);
@@ -57,19 +68,9 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     new Set(),
   );
 
-  interface EdgeModalData {
-    domain: string;
-    origin_ip: string;
-    proxied: boolean;
-    ttl: number;
-    labels: string[];
-    assigned_ip?: string;
-    node_name?: string;
-    node_id?: string;
-  }
   const editInputRef = useRef<HTMLInputElement>(null);
   const loadDataRef = useRef<() => Promise<void>>();
-  const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null);
+  const [refreshInterval, setRefreshInterval] = useState<number | null>(null);
 
   useEffect(() => {
     loadData(true);
@@ -351,7 +352,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     const meta = tlsStatusMeta[statusKey] || tlsStatusMeta.none;
     return (
       <div className="tls-status-chip">
-        <Badge variant={meta.variant} size="sm" dot title={error || undefined}>
+        <Badge variant={meta.variant} size="sm" dot>
           {meta.label}
         </Badge>
         {retryHint && <span className="tls-retry-hint">{retryHint}</span>}
@@ -395,7 +396,7 @@ const resolveWhois = (
     if ("edge" in record) {
       return record.edge?.labels || [];
     }
-    return record.edge_labels || [];
+    return (record as any).edge_labels || [];
   };
 
   const buildEdgeModalData = (
@@ -406,17 +407,17 @@ const resolveWhois = (
     const assignedIp =
       override?.edge?.assigned_ip ??
       source?.edge?.assigned_ip ??
-      ("edge" in record ? record.edge?.assigned_ip : record.edge_ip);
+      ("edge" in record ? record.edge?.assigned_ip : (record as any).edge_ip);
     const nodeId =
       override?.edge?.assigned_node_id ??
       source?.edge?.assigned_node_id ??
-      ("edge" in record ? record.edge?.assigned_node_id : record.edge_node_id);
+      ("edge" in record ? record.edge?.assigned_node_id : (record as any).edge_node_id);
     const labels =
       override?.edge?.labels ??
       source?.edge?.labels ??
       ("edge" in record
         ? (record.edge?.labels ?? [])
-        : (record.edge_labels ?? []));
+        : ((record as any).edge_labels ?? []));
     const originIp =
       override?.origin_ip ?? source?.origin_ip ?? record.origin_ip;
     const proxied = override?.proxied ?? source?.proxied ?? record.proxied;
@@ -428,13 +429,13 @@ const resolveWhois = (
         : undefined;
     return {
       domain: record.domain,
-      origin_ip: originIp,
+      origin_ip: originIp || "",
       proxied,
       ttl,
       labels,
       assigned_ip: assignedIp,
       node_id: nodeId,
-      node_name: nodeName,
+      node_name: nodeName || undefined,
     };
   };
 
@@ -480,7 +481,7 @@ const resolveWhois = (
             {info.labels.map((label) => (
               <Badge
                 key={`${record.domain}-edge-label-${label}`}
-                variant="secondary"
+                variant="info"
                 size="sm"
               >
                 {label}
@@ -697,7 +698,7 @@ const resolveWhois = (
           }}
           title="Set expiration manually"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M12 20h9"/>
             <path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
           </svg>
@@ -708,7 +709,7 @@ const resolveWhois = (
 
   const handleToggleProxy = async (domain: Domain | DomainOverview) => {
     try {
-      const domainName = "domain" in domain ? domain.domain : domain.domain;
+      const domainName = domain.domain;
       const newProxied = !domain.proxied;
       const rawOrigin = (domain as any).origin_ip ?? "";
       const currentOrigin =
@@ -743,7 +744,7 @@ const resolveWhois = (
     mode: string,
   ) => {
     try {
-      const domainName = "domain" in domain ? domain.domain : domain.domain;
+      const domainName = domain.domain;
 
       if (!domain.proxied && mode !== "off") {
         toast.error("Enable proxy first to use TLS");
@@ -802,7 +803,7 @@ const resolveWhois = (
   };
 
   const renderDomainActions = (record: Domain | DomainOverview) => {
-    const domainName = "domain" in record ? record.domain : record.domain;
+    const domainName = record.domain;
     const isPurging = purgingDomain === domainName;
     return (
       <div className="domain-actions">
@@ -818,10 +819,8 @@ const resolveWhois = (
               <path d="M21 12a9 9 0 11-6.219-8.56"/>
             </svg>
           ) : (
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="1 4 1 10 7 10"/>
-              <polyline points="23 20 23 14 17 14"/>
-              <path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/>
+            <svg width="16" height="16" viewBox="0 0 32 32" fill="currentColor">
+              <path d="M 28.28125 2.28125 L 18.28125 12.28125 L 17 11 L 17 10.96875 L 16.96875 10.9375 C 16.328125 10.367188 15.492188 10.09375 14.6875 10.09375 C 13.882813 10.09375 13.105469 10.394531 12.5 11 L 12.34375 11.125 L 11.84375 11.625 L 11.5 11.90625 L 2.375 19 L 1.5 19.71875 L 12.28125 30.5 L 13 29.625 L 20.0625 20.5625 L 20.09375 20.59375 L 21.09375 19.59375 L 21.125 19.59375 L 21.15625 19.5625 C 22.296875 18.277344 22.304688 16.304688 21.09375 15.09375 L 19.71875 13.71875 L 29.71875 3.71875 Z M 14.6875 12.09375 C 14.996094 12.085938 15.335938 12.191406 15.59375 12.40625 C 15.605469 12.414063 15.613281 12.429688 15.625 12.4375 L 19.6875 16.5 C 20.0625 16.875 20.097656 17.671875 19.6875 18.1875 C 19.671875 18.207031 19.671875 18.230469 19.65625 18.25 L 19.34375 18.53125 L 13.5625 12.75 L 13.90625 12.40625 C 14.097656 12.214844 14.378906 12.101563 14.6875 12.09375 Z M 12.03125 14.03125 L 17.96875 19.96875 L 12.09375 27.46875 L 10.65625 26.03125 L 12.8125 23.78125 L 11.375 22.40625 L 9.25 24.625 L 7.9375 23.3125 L 11.8125 19.40625 L 10.40625 18 L 6.5 21.875 L 4.53125 19.90625 Z"/>
             </svg>
           )}
         </button>
@@ -830,7 +829,7 @@ const resolveWhois = (
   };
 
   const handleEditIP = (domain: Domain | DomainOverview) => {
-    const domainName = "domain" in domain ? domain.domain : domain.domain;
+    const domainName = domain.domain;
     setEditingDomain(domainName);
     const current = (domain as any).origin_ip ?? "";
     setEditingIP(typeof current === "string" ? current : "");
@@ -838,7 +837,7 @@ const resolveWhois = (
   };
 
   const handleSaveIP = async (domain: Domain | DomainOverview) => {
-    const domainName = "domain" in domain ? domain.domain : domain.domain;
+    const domainName = domain.domain;
 
     const normalized = editingIP?.trim() ?? "";
     const current = ((domain as any).origin_ip ?? "")
@@ -1174,8 +1173,8 @@ const resolveWhois = (
     if (viewMode === "my") {
       return domains.filter(
         (d) =>
-          (d.domain.toLowerCase().includes(query) ||
-            d.origin_ip.includes(searchQuery)) &&
+        (d.domain.toLowerCase().includes(query) ||
+          (d.origin_ip || "").includes(searchQuery)) &&
           matchesLabel(d),
       );
     }
@@ -1230,7 +1229,7 @@ const resolveWhois = (
     key: "nameservers",
     header: "Nameservers",
     accessor: (d: any) => renderNameserverCell(d),
-    width: "220px",
+    width: "320px",
   });
 
   // Owner column - only for admin in all/orphaned mode
@@ -1311,7 +1310,7 @@ const resolveWhois = (
     key: "whois",
     header: "Renewal",
     accessor: (d: any) => renderWhoisCell(d),
-    width: "200px",
+    width: "100px",
   });
 
   // Proxy column - always present
@@ -1556,6 +1555,17 @@ const resolveWhois = (
             {nameservers.map((ns) => (
               <div key={ns.node_id} className="nameserver-item">
                 <span className="ns-fqdn mono">{ns.fqdn}</span>
+                <button
+                  className="ns-copy-btn"
+                  type="button"
+                  onClick={() => copyToClipboard(ns.fqdn)}
+                  title="Copy to clipboard"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+                  </svg>
+                </button>
               </div>
             ))}
           </div>
@@ -1734,7 +1744,7 @@ function AddDomainModal({
           <Input
             label="Origin IP"
             placeholder="192.168.1.1"
-          value={formData.origin_ip}
+          value={formData.origin_ip || ""}
           onChange={(e) =>
             setFormData({ ...formData, origin_ip: e.target.value })
           }
