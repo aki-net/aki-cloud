@@ -39,6 +39,8 @@ const SEARCHBOT_PERIODS: Array<{
   { key: "year", short: "Y", label: "This year" },
 ];
 
+const SEARCHBOT_HIDDEN_KEYS = new Set(["bingbot", "yandexbot", "baiduspider"]);
+
 interface Props {
   isAdmin?: boolean;
 }
@@ -102,11 +104,13 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     if (entries.length === 0) {
       return [] as Array<{ key: string; label: string; icon?: string }>;
     }
-    return entries[0].bots.map((bot) => ({
-      key: bot.key,
-      label: bot.label,
-      icon: bot.icon,
-    }));
+    return entries[0].bots
+      .filter((bot) => !SEARCHBOT_HIDDEN_KEYS.has(bot.key))
+      .map((bot) => ({
+        key: bot.key,
+        label: bot.label,
+        icon: bot.icon,
+      }));
   }, [searchBotStats]);
 
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -978,7 +982,9 @@ const resolveWhois = (
       year: { current: 0, previous: 0, delta: 0 },
       total: 0,
     }));
-    const botsToRender = stats?.bots ?? fallbackBots;
+    const botsToRender = (stats?.bots ?? fallbackBots).filter(
+      (bot) => !SEARCHBOT_HIDDEN_KEYS.has(bot.key),
+    );
     const showSearchBots =
       searchBotAvailable !== false && botsToRender.length > 0;
     const isRefreshingBots = !!searchBotRefreshing[domainKey];
