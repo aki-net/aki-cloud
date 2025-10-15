@@ -186,6 +186,15 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     return `Retry ${formatDistanceToNow(retry, { addSuffix: true })}`;
   };
 
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("Copied to clipboard");
+    } catch {
+      toast.error("Failed to copy");
+    }
+  };
+
   const renderNameserverCategory = (
     label: string,
     entries?: DomainNameserverEntry[],
@@ -201,8 +210,27 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         <div className="ns-category-header">{header}</div>
         {entries.map((entry) => (
           <div className="ns-row" key={`${header}-${entry.name}`}>
-            <span className="ns-host">{entry.name}</span>
-            {showIPs && entry.ipv4 && <span className="ns-ip">{entry.ipv4}</span>}
+            <div className="ns-row-content">
+              <span className="ns-host">{entry.name}</span>
+              {showIPs && entry.ipv4 && <span className="ns-ip">{entry.ipv4}</span>}
+            </div>
+            <button
+              className="ns-copy-btn"
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                const textToCopy = showIPs && entry.ipv4 
+                  ? `${entry.name} ${entry.ipv4}`
+                  : entry.name;
+                copyToClipboard(textToCopy);
+              }}
+              title="Copy to clipboard"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+              </svg>
+            </button>
           </div>
         ))}
       </div>
@@ -425,12 +453,16 @@ const resolveWhois = (
     const displayLabel = info.proxied
       ? info.assigned_ip || "Pending assignment"
       : "Proxy disabled";
-    const ipClass = info.proxied && info.assigned_ip ? "" : "edge-ip-muted";
+    const ipClass = info.proxied && info.assigned_ip ? "edge-ip-active" : "edge-ip-muted";
     const nodeSuffix =
       info.proxied && info.node_name ? ` (${info.node_name})` : "";
     return (
       <div className="edge-cell">
-        <div className="edge-assignment">
+        <button
+          className="edge-assignment-btn"
+          onClick={() => openEdgeModal(record)}
+          type="button"
+        >
           <span
             className={`edge-ip mono ${ipClass}`}
             title={
@@ -442,7 +474,7 @@ const resolveWhois = (
             {displayLabel}
             {nodeSuffix}
           </span>
-        </div>
+        </button>
         {info.labels.length > 0 && (
           <div className="edge-labels">
             {info.labels.map((label) => (
@@ -456,15 +488,6 @@ const resolveWhois = (
             ))}
           </div>
         )}
-        <div className="edge-actions">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => openEdgeModal(record)}
-          >
-            Configure
-          </Button>
-        </div>
       </div>
     );
   };
@@ -667,14 +690,17 @@ const resolveWhois = (
         </button>
         <button
           type="button"
-          className="whois-manual-link"
+          className="whois-manual-btn"
           onClick={(event) => {
             event.stopPropagation();
             handleManualWhois(record, whois);
           }}
           title="Set expiration manually"
         >
-          Set
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 20h9"/>
+            <path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
+          </svg>
         </button>
       </div>
     );
@@ -780,14 +806,25 @@ const resolveWhois = (
     const isPurging = purgingDomain === domainName;
     return (
       <div className="domain-actions">
-        <Button
-          variant="ghost"
-          size="sm"
-          loading={isPurging}
+        <button
+          className="action-btn"
+          type="button"
           onClick={() => handlePurgeCache(domainName)}
+          disabled={isPurging}
+          title="Purge cache"
         >
-          Purge Cache
-        </Button>
+          {isPurging ? (
+            <svg className="action-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 12a9 9 0 11-6.219-8.56"/>
+            </svg>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polyline points="1 4 1 10 7 10"/>
+              <polyline points="23 20 23 14 17 14"/>
+              <path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/>
+            </svg>
+          )}
+        </button>
       </div>
     );
   };
@@ -1047,34 +1084,36 @@ const resolveWhois = (
         isAdmin || domains.some((d) => d.domain === domain.domain);
 
       return (
-        <div className="tls-display">
-          <select
-            className="tls-mode-select"
-            value={currentValue}
-            onChange={(e) => canEdit && handleChangeTLS(domain, e.target.value)}
-            disabled={!domain.proxied || !canEdit}
-          >
-            <option value="off">Off</option>
-            <option value="flexible">Flexible</option>
-            <option value="full">Full</option>
-            <option value="full_strict">Full Strict</option>
-            <option value="auto">Auto</option>
-          </select>
-          {domain.tls_use_recommended && (
-            <span className="tls-auto-hint">
-              Auto →{" "}
-              {domain.tls_recommended_mode
-                ? modeLabel(domain.tls_recommended_mode)
-                : "detecting…"}
-            </span>
-          )}
-          {renderStatusIndicator(statusKey, domain.tls_last_error, retryHint)}
-          {/* Show error icon for errored status */}
-          {domain.tls_status === "errored" && domain.tls_last_error && (
-            <div className="tls-error-tooltip" title={domain.tls_last_error}>
-              ⚠️
-            </div>
-          )}
+        <div className="tls-display-compact">
+          <div className="tls-select-wrapper">
+            <select
+              className="tls-mode-select-compact"
+              value={currentValue}
+              onChange={(e) => canEdit && handleChangeTLS(domain, e.target.value)}
+              disabled={!domain.proxied || !canEdit}
+            >
+              <option value="off">Off</option>
+              <option value="flexible">Flexible</option>
+              <option value="full">Full</option>
+              <option value="full_strict">Strict</option>
+              <option value="auto">Auto</option>
+            </select>
+            {domain.tls_use_recommended && (
+              <span className="tls-auto-subtitle">
+                → {domain.tls_recommended_mode
+                  ? modeLabel(domain.tls_recommended_mode)
+                  : "detecting"}
+              </span>
+            )}
+          </div>
+          <div className="tls-status-indicator">
+            {statusKey !== "none" && (
+              <span 
+                className={`tls-status-dot tls-status-dot--${statusKey}`}
+                title={domain.tls_last_error || retryHint || statusKey}
+              />
+            )}
+          </div>
         </div>
       );
     }
@@ -1085,34 +1124,36 @@ const resolveWhois = (
     const retryHint = computeRetryHint(domain.tls.retry_after);
 
     return (
-      <div className="tls-display">
-        <select
-          className="tls-mode-select"
-          value={currentValue}
-          onChange={(e) => handleChangeTLS(domain, e.target.value)}
-          disabled={!domain.proxied}
-        >
-          <option value="off">Off</option>
-          <option value="flexible">Flexible</option>
-          <option value="full">Full</option>
-          <option value="full_strict">Full Strict</option>
-          <option value="auto">Auto</option>
-        </select>
-        {domain.tls.use_recommended && (
-          <span className="tls-auto-hint">
-            Auto →{" "}
-            {domain.tls.recommended_mode
-              ? modeLabel(domain.tls.recommended_mode)
-              : "detecting…"}
-          </span>
-        )}
-        {renderStatusIndicator(statusKey, domain.tls.last_error, retryHint)}
-        {/* Show error icon for errored status */}
-        {domain.tls.status === "errored" && domain.tls.last_error && (
-          <div className="tls-error-tooltip" title={domain.tls.last_error}>
-            ⚠️
-          </div>
-        )}
+      <div className="tls-display-compact">
+        <div className="tls-select-wrapper">
+          <select
+            className="tls-mode-select-compact"
+            value={currentValue}
+            onChange={(e) => handleChangeTLS(domain, e.target.value)}
+            disabled={!domain.proxied}
+          >
+            <option value="off">Off</option>
+            <option value="flexible">Flexible</option>
+            <option value="full">Full</option>
+            <option value="full_strict">Strict</option>
+            <option value="auto">Auto</option>
+          </select>
+          {domain.tls.use_recommended && (
+            <span className="tls-auto-subtitle">
+              → {domain.tls.recommended_mode
+                ? modeLabel(domain.tls.recommended_mode)
+                : "detecting"}
+            </span>
+          )}
+        </div>
+        <div className="tls-status-indicator">
+          {statusKey !== "none" && (
+            <span 
+              className={`tls-status-dot tls-status-dot--${statusKey}`}
+              title={domain.tls.last_error || retryHint || statusKey}
+            />
+          )}
+        </div>
       </div>
     );
   };
@@ -1189,7 +1230,7 @@ const resolveWhois = (
     key: "nameservers",
     header: "Nameservers",
     accessor: (d: any) => renderNameserverCell(d),
-    width: "260px",
+    width: "220px",
   });
 
   // Owner column - only for admin in all/orphaned mode
@@ -1247,16 +1288,7 @@ const resolveWhois = (
             onClick={() => handleEditIP(d)}
             title={displayValue}
           >
-            {displayValue}
-            {isPlaceholder && (
-              <Badge
-                variant="secondary"
-                size="sm"
-                className="placeholder-badge"
-              >
-                placeholder
-              </Badge>
-            )}
+            {isPlaceholder ? "placeholder" : displayValue}
             <svg
               className="edit-icon"
               width="14"
@@ -1311,35 +1343,15 @@ const resolveWhois = (
     key: "tls",
     header: "TLS",
     accessor: (d: any) => getTLSDisplay(d),
-    width: "200px",
-  });
-
-  // TTL column - always present
-  columns.push({
-    key: "ttl",
-    header: "TTL",
-    accessor: (d: any) => <span className="mono">{d.ttl}s</span>,
-    width: "80px",
-    align: "right" as const,
-  });
-
-  // Updated column - always present
-  columns.push({
-    key: "updated",
-    header: "Updated",
-    accessor: (d: any) => (
-      <span className="text-secondary">
-        {format(new Date(d.updated_at), "MMM d, HH:mm")}
-      </span>
-    ),
     width: "140px",
   });
 
   columns.push({
     key: "actions",
-    header: "Actions",
+    header: "",
     accessor: (d: any) => renderDomainActions(d),
-    width: "140px",
+    width: "50px",
+    align: "center" as const,
   });
 
   return (
@@ -1729,8 +1741,7 @@ function AddDomainModal({
           fullWidth
         />
         <p className="form-hint">
-          Leave blank to serve the aki.cloud placeholder page (requires the
-          Placeholder extension).
+          Leave blank for aki.cloud placeholder
         </p>
 
           <div className="form-row">
