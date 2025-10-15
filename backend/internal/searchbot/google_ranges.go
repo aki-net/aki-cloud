@@ -116,8 +116,12 @@ func downloadGooglebotRanges(ctx context.Context, url string) ([]string, []byte,
 	}
 	out := make([]string, 0, len(payload.Prefixes))
 	for _, prefix := range payload.Prefixes {
-		if !strings.EqualFold(prefix.Service, "Googlebot") {
-			continue
+		service := strings.TrimSpace(prefix.Service)
+		if service != "" {
+			service = strings.ToLower(service)
+			if notGoogleService(service) {
+				continue
+			}
 		}
 		if p := strings.TrimSpace(prefix.IPv4Prefix); p != "" {
 			out = append(out, p)
@@ -128,6 +132,16 @@ func downloadGooglebotRanges(ctx context.Context, url string) ([]string, []byte,
 	}
 	sort.Strings(out)
 	return out, raw, nil
+}
+
+func notGoogleService(service string) bool {
+	if service == "" {
+		return false
+	}
+	if strings.HasPrefix(service, "googlebot") {
+		return false
+	}
+	return true
 }
 
 func writeGeoFile(path string, ranges []string) error {
