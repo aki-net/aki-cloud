@@ -40,6 +40,7 @@ const SEARCHBOT_PERIODS: Array<{
 ];
 
 const SEARCHBOT_HIDDEN_KEYS = new Set(["bingbot", "yandexbot", "baiduspider"]);
+const PASSIVE_SEARCHBOT_REFRESH_MS = 60 * 60 * 1000;
 
 interface Props {
   isAdmin?: boolean;
@@ -99,6 +100,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   const [searchBotExporting, setSearchBotExporting] = useState<string | null>(
     null,
   );
+  const searchBotLastPassiveRef = useRef<number>(0);
   const sampleSearchBots = useMemo(() => {
     const entries = Object.values(searchBotStats);
     if (entries.length === 0) {
@@ -196,9 +198,14 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       domainData.forEach((item) => domainNames.add(item.domain));
       overviewData.forEach((item) => domainNames.add(item.domain));
       const namesArray = Array.from(domainNames);
-      if (!searchBotPrimed) {
+      const now = Date.now();
+      const shouldPassiveRefresh =
+        now - searchBotLastPassiveRef.current >= PASSIVE_SEARCHBOT_REFRESH_MS;
+
+      if (!searchBotPrimed || shouldPassiveRefresh) {
         if (namesArray.length === 0) {
           setSearchBotPrimed(true);
+          searchBotLastPassiveRef.current = now;
         } else {
           await primeSearchBotStats(namesArray);
         }
@@ -317,13 +324,19 @@ export default function DomainManagement({ isAdmin = false }: Props) {
 
   const primeSearchBotStats = useCallback(
     async (domainList: string[]) => {
-      if (searchBotAvailable === false || domainList.length === 0) {
+      if (searchBotAvailable === false) {
+        return;
+      }
+      if (domainList.length === 0) {
+        searchBotLastPassiveRef.current = Date.now();
+        setSearchBotPrimed(true);
         return;
       }
       await Promise.allSettled(
         domainList.map((domain) => fetchSearchBotStatsForDomain(domain, { silent: true })),
       );
       setSearchBotPrimed(true);
+      searchBotLastPassiveRef.current = Date.now();
     },
     [fetchSearchBotStatsForDomain, searchBotAvailable],
   );
