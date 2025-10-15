@@ -52,6 +52,14 @@ export interface DomainEdge {
   assigned_at?: string;
 }
 
+export interface DomainWhois {
+  expires_at?: string;
+  checked_at?: string;
+  source?: string;
+  raw_expires?: string;
+  last_error?: string;
+}
+
 export interface DomainNameserverEntry {
   name: string;
   ipv4?: string;
@@ -88,6 +96,7 @@ export interface Domain {
   edge?: DomainEdge;
   vanity_ns?: string[];
   nameservers?: DomainNameserverSet;
+  whois?: DomainWhois;
 }
 
 export interface DomainTLSPayload {
@@ -112,6 +121,11 @@ export interface UpdateDomainPayload {
   owner?: string;
   tls?: DomainTLSPayload;
   edge?: DomainEdgePayload;
+}
+
+export interface DomainWhoisOverridePayload {
+  expires_at: string;
+  raw_input?: string;
 }
 
 export interface BulkDomainPayload {
@@ -233,6 +247,7 @@ export interface DomainOverview {
   edge_labels?: string[];
   edge_assigned_at?: string;
   nameservers?: DomainNameserverSet;
+  whois?: DomainWhois;
 }
 
 export interface NameServerStatus {

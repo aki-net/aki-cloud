@@ -49,6 +49,7 @@ type DomainRecord struct {
 	DeletedAt    time.Time    `json:"deleted_at,omitempty"`
 	TLS          DomainTLS    `json:"tls,omitempty"`
 	Edge         DomainEdge   `json:"edge,omitempty"`
+	Whois        DomainWhois  `json:"whois,omitempty"`
 	Version      ClockVersion `json:"version"`
 }
 
@@ -77,6 +78,7 @@ func (d *DomainRecord) Validate() error {
 	if err := d.Edge.Validate(); err != nil {
 		return err
 	}
+	d.Whois.Normalize()
 	return nil
 }
 
@@ -93,12 +95,14 @@ func (d *DomainRecord) EnsureTLSDefaults() {
 	}
 	d.Edge.Normalize()
 	d.EnsureCacheVersion()
+	d.Whois.Normalize()
 }
 
 // EnsureEdgeDefaults applies default values to edge settings.
 func (d *DomainRecord) EnsureEdgeDefaults() {
 	d.Edge.Normalize()
 	d.EnsureCacheVersion()
+	d.Whois.Normalize()
 }
 
 // EnsureCacheVersion initialises cache version if unset.
@@ -107,6 +111,7 @@ func (d *DomainRecord) EnsureCacheVersion() {
 		d.CacheVersion = 1
 	}
 	sort.Strings(d.VanityNS)
+	d.Whois.Normalize()
 }
 
 // MatchesOwner reports whether the record belongs to the provided owner id or email.
@@ -162,6 +167,7 @@ func (d *DomainRecord) MarkDeleted(ts time.Time) {
 	d.TLS.Certificate = nil
 	d.TLS.OriginPullSecret = nil
 	d.UpdatedAt = ts
+	d.Whois = DomainWhois{}
 }
 
 // Sanitize redacts sensitive TLS material before returning records via API.
@@ -211,6 +217,33 @@ func (e DomainEdge) Validate() error {
 		return ErrValidation("assigned_ip must be a valid IP address")
 	}
 	return nil
+}
+
+// DomainWhois captures WHOIS-derived renewal metadata.
+type DomainWhois struct {
+	ExpiresAt  time.Time `json:"expires_at,omitempty"`
+	CheckedAt  time.Time `json:"checked_at,omitempty"`
+	Source     string    `json:"source,omitempty"`
+	RawExpires string    `json:"raw_expires,omitempty"`
+	LastError  string    `json:"last_error,omitempty"`
+}
+
+// Normalize standardises string fields and collapses empty values.
+func (w *DomainWhois) Normalize() {
+	if w == nil {
+		return
+	}
+	w.Source = strings.ToLower(strings.TrimSpace(w.Source))
+	w.RawExpires = strings.TrimSpace(w.RawExpires)
+	w.LastError = strings.TrimSpace(w.LastError)
+	if w.Source == "" && w.RawExpires == "" && w.LastError == "" && w.ExpiresAt.IsZero() && w.CheckedAt.IsZero() {
+		*w = DomainWhois{}
+	}
+}
+
+// IsZero reports whether the WHOIS state carries any data.
+func (w DomainWhois) IsZero() bool {
+	return w == (DomainWhois{})
 }
 
 // EncryptionMode describes client<->edge and edge<->origin TLS behaviour.

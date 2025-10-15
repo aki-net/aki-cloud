@@ -20,6 +20,7 @@ import (
 	"aki-cloud/backend/internal/ssl"
 	"aki-cloud/backend/internal/store"
 	syncsvc "aki-cloud/backend/internal/sync"
+	"aki-cloud/backend/internal/whois"
 )
 
 func main() {
@@ -44,6 +45,7 @@ func main() {
 	syncSvc := syncsvc.New(st, cfg.DataDir, cfg.NodeID, secret)
 	infraCtl := infra.New(st, cfg.DataDir)
 	extSvc := extensions.New(st, cfg.NodeID)
+	whoisSvc := whois.New(15 * time.Second)
 
 	healthMonitor := health.New(st, infraCtl, orch, cfg.NodeID, cfg.HealthInterval, cfg.HealthDialTimeout, cfg.HealthFailureThreshold, cfg.HealthFailureDecay)
 	slSvc := ssl.New(cfg, st, orch)
@@ -56,6 +58,7 @@ func main() {
 		Sync:         syncSvc,
 		Infra:        infraCtl,
 		Extensions:   extSvc,
+		Whois:        whoisSvc,
 	}
 
 	syncSvc.SetChangeHandler(func() {

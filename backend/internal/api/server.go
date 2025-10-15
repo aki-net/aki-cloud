@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -27,7 +28,9 @@ import (
 	"aki-cloud/backend/internal/orchestrator"
 	"aki-cloud/backend/internal/store"
 	syncsvc "aki-cloud/backend/internal/sync"
+	"aki-cloud/backend/internal/whois"
 
+	"github.com/araddon/dateparse"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 	"github.com/go-chi/httprate"
@@ -47,6 +50,7 @@ type Server struct {
 	Sync            *syncsvc.Service
 	Infra           *infra.Controller
 	Extensions      *extensions.Service
+	Whois           *whois.Service
 	edgeReconcileMu sync.Mutex
 }
 
@@ -82,6 +86,7 @@ type domainOverview struct {
 	EdgeLabels   []string                 `json:"edge_labels,omitempty"`
 	EdgeUpdated  *time.Time               `json:"edge_assigned_at,omitempty"`
 	Nameservers  *domainNameServerSet     `json:"nameservers,omitempty"`
+	Whois        *models.DomainWhois      `json:"whois,omitempty"`
 }
 
 type nsCheckRequest struct {
@@ -106,6 +111,11 @@ type domainTLSPayload struct {
 
 type domainEdgePayload struct {
 	Labels []string `json:"labels,omitempty"`
+}
+
+type domainWhoisManualPayload struct {
+	ExpiresAt string `json:"expires_at"`
+	RawInput  string `json:"raw_input,omitempty"`
 }
 
 type createDomainPayload struct {
@@ -415,6 +425,8 @@ func (s *Server) Routes() http.Handler {
 			r.Patch("/domains/bulk", s.authorizeUser(s.handleBulkUpdateDomains))
 			r.Put("/domains/{domain}", s.authorizeUser(s.handleUpdateDomain))
 			r.Post("/domains/{domain}/cache/purge", s.authorizeUser(s.handlePurgeDomainCache))
+			r.Post("/domains/{domain}/whois/refresh", s.authorizeUser(s.handleRefreshDomainWhois))
+			r.Put("/domains/{domain}/whois", s.authorizeUser(s.handleOverrideDomainWhois))
 			r.Post("/domains/{domain}/edge/reassign", func(w http.ResponseWriter, req *http.Request) {
 				s.requireAdmin(http.HandlerFunc(s.handleReassignDomainEdge)).ServeHTTP(w, req)
 			})
@@ -969,6 +981,25 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 	}
 	s.triggerSyncBroadcast()
 	go s.Orchestrator.Trigger(r.Context())
+	if s.Whois != nil {
+		domainName := record.Domain
+		go func() {
+			ctx := context.Background()
+			updated, err := s.refreshDomainWhois(ctx, domainName, "auto")
+			if err != nil {
+				log.Printf("whois refresh %s (create) failed: %v", domainName, err)
+				if updated != nil {
+					s.triggerSyncBroadcast()
+					s.Orchestrator.Trigger(ctx)
+				}
+				return
+			}
+			if updated != nil {
+				s.triggerSyncBroadcast()
+				s.Orchestrator.Trigger(ctx)
+			}
+		}()
+	}
 	writeJSON(w, http.StatusCreated, record.Sanitize())
 }
 
@@ -1047,6 +1078,25 @@ func (s *Server) handleBulkCreateDomains(w http.ResponseWriter, r *http.Request)
 			continue
 		}
 		success++
+		if s.Whois != nil {
+			domainName := record.Domain
+			go func() {
+				ctx := context.Background()
+				updated, err := s.refreshDomainWhois(ctx, domainName, "auto")
+				if err != nil {
+					log.Printf("whois refresh %s (bulk create) failed: %v", domainName, err)
+					if updated != nil {
+						s.triggerSyncBroadcast()
+						s.Orchestrator.Trigger(ctx)
+					}
+					return
+				}
+				if updated != nil {
+					s.triggerSyncBroadcast()
+					s.Orchestrator.Trigger(ctx)
+				}
+			}()
+		}
 		sanitized := record.Sanitize()
 		recCopy := sanitized
 		results = append(results, bulkDomainResult{Domain: domain, Status: "created", Record: &recCopy})
@@ -1426,6 +1476,169 @@ func (s *Server) handlePurgeDomainCache(w http.ResponseWriter, r *http.Request) 
 	s.triggerSyncBroadcast()
 	go s.Orchestrator.Trigger(r.Context())
 	writeJSON(w, http.StatusOK, existing.Sanitize())
+}
+
+func (s *Server) handleRefreshDomainWhois(w http.ResponseWriter, r *http.Request) {
+	domain := strings.ToLower(chi.URLParam(r, "domain"))
+	if domain == "" {
+		writeError(w, http.StatusBadRequest, "domain required")
+		return
+	}
+	user := userFromContext(r.Context())
+	existing, err := s.Store.GetDomain(domain)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "domain not found")
+		return
+	}
+	s.attachOwnerMetadata(existing)
+	if !userOwnsDomain(user, *existing) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	updated, lookupErr := s.refreshDomainWhois(r.Context(), existing.Domain, "auto")
+	if updated == nil {
+		if errors.Is(lookupErr, fs.ErrNotExist) {
+			writeError(w, http.StatusNotFound, "domain not found")
+			return
+		}
+		if lookupErr != nil {
+			writeError(w, http.StatusInternalServerError, lookupErr.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to refresh whois")
+		return
+	}
+	if lookupErr != nil {
+		log.Printf("whois refresh %s failed: %v", existing.Domain, lookupErr)
+	}
+	s.attachOwnerMetadata(updated)
+	s.triggerSyncBroadcast()
+	go s.Orchestrator.Trigger(r.Context())
+	writeJSON(w, http.StatusOK, updated.Sanitize())
+}
+
+func (s *Server) handleOverrideDomainWhois(w http.ResponseWriter, r *http.Request) {
+	domain := strings.ToLower(chi.URLParam(r, "domain"))
+	if domain == "" {
+		writeError(w, http.StatusBadRequest, "domain required")
+		return
+	}
+	user := userFromContext(r.Context())
+	existing, err := s.Store.GetDomain(domain)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "domain not found")
+		return
+	}
+	s.attachOwnerMetadata(existing)
+	if !userOwnsDomain(user, *existing) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	var payload domainWhoisManualPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	value := strings.TrimSpace(payload.ExpiresAt)
+	if value == "" {
+		writeError(w, http.StatusBadRequest, "expires_at required")
+		return
+	}
+	parsed, err := dateparse.ParseIn(value, time.UTC)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid expires_at: %v", err))
+		return
+	}
+	now := time.Now().UTC()
+	rawInput := strings.TrimSpace(payload.RawInput)
+	if rawInput == "" {
+		rawInput = value
+	}
+	updated, err := s.Store.MutateDomain(existing.Domain, func(rec *models.DomainRecord) error {
+		rec.Whois.ExpiresAt = parsed.UTC()
+		rec.Whois.CheckedAt = now
+		rec.Whois.Source = "manual"
+		rec.Whois.LastError = ""
+		if rawInput != "" {
+			rec.Whois.RawExpires = rawInput
+		} else {
+			rec.Whois.RawExpires = rec.Whois.ExpiresAt.Format(time.RFC3339)
+		}
+		rec.Version.Counter++
+		if rec.Version.Counter <= 0 {
+			rec.Version.Counter = 1
+		}
+		rec.Version.NodeID = s.Config.NodeID
+		rec.Version.Updated = now.Unix()
+		rec.UpdatedAt = now
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			writeError(w, http.StatusNotFound, "domain not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.attachOwnerMetadata(updated)
+	s.triggerSyncBroadcast()
+	go s.Orchestrator.Trigger(r.Context())
+	writeJSON(w, http.StatusOK, updated.Sanitize())
+}
+
+func (s *Server) refreshDomainWhois(ctx context.Context, domain string, source string) (*models.DomainRecord, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if source == "" {
+		source = "auto"
+	}
+	now := time.Now().UTC()
+	var (
+		lookupResult whois.Result
+		lookupErr    error
+	)
+	if s.Whois == nil {
+		lookupErr = errors.New("whois service unavailable")
+	} else {
+		lookupResult, lookupErr = s.Whois.Lookup(ctx, domain)
+	}
+	updated, err := s.Store.MutateDomain(domain, func(rec *models.DomainRecord) error {
+		rec.Whois.CheckedAt = now
+		rec.Whois.Source = source
+		if lookupErr == nil && !lookupResult.ExpiresAt.IsZero() {
+			rec.Whois.ExpiresAt = lookupResult.ExpiresAt.UTC()
+			rec.Whois.LastError = ""
+		} else {
+			if lookupErr != nil {
+				rec.Whois.LastError = lookupErr.Error()
+			} else {
+				rec.Whois.LastError = whois.ErrNoExpiration.Error()
+			}
+		}
+		if lookupResult.RawExpiration != "" {
+			rec.Whois.RawExpires = lookupResult.RawExpiration
+		}
+		rec.Version.Counter++
+		if rec.Version.Counter <= 0 {
+			rec.Version.Counter = 1
+		}
+		rec.Version.NodeID = s.Config.NodeID
+		rec.Version.Updated = now.Unix()
+		rec.UpdatedAt = now
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if lookupErr == nil && !lookupResult.ExpiresAt.IsZero() {
+		return updated, nil
+	}
+	if lookupErr != nil {
+		return updated, lookupErr
+	}
+	return updated, whois.ErrNoExpiration
 }
 
 func (s *Server) handleListExtensions(w http.ResponseWriter, r *http.Request) {
@@ -2180,6 +2393,11 @@ func (s *Server) handleDomainsOverview(w http.ResponseWriter, r *http.Request) {
 		if nsSet, _ := s.composeNameserverSet(domain.Domain, nsList, defaultEntries); len(nsSet.Default) > 0 || len(nsSet.Anycast) > 0 || len(nsSet.Vanity) > 0 {
 			nsCopy := nsSet
 			entry.Nameservers = &nsCopy
+		}
+		if !domain.Whois.IsZero() {
+			copy := domain.Whois
+			copy.Normalize()
+			entry.Whois = &copy
 		}
 		overview = append(overview, entry)
 	}

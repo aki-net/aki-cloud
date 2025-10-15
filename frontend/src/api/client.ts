@@ -16,6 +16,7 @@ import {
   NameServerStatus,
   ReassignAllEdgesResponse,
   Extension,
+  DomainWhoisOverridePayload,
 } from "../types";
 
 const resolveApiBase = (): string => {
@@ -114,6 +115,19 @@ export const domains = {
 
   purgeCache: async (domain: string): Promise<Domain> => {
     const res = await client.post<Domain>(`/domains/${domain}/cache/purge`, {});
+    return res.data;
+  },
+
+  refreshWhois: async (domain: string): Promise<Domain> => {
+    const res = await client.post<Domain>(`/domains/${domain}/whois/refresh`, {});
+    return res.data;
+  },
+
+  overrideWhois: async (
+    domain: string,
+    payload: DomainWhoisOverridePayload,
+  ): Promise<Domain> => {
+    const res = await client.put<Domain>(`/domains/${domain}/whois`, payload);
     return res.data;
   },
 

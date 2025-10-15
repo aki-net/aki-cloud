@@ -8,6 +8,7 @@ import {
   EdgeEndpoint,
   DomainNameserverEntry,
   DomainNameserverSet,
+  DomainWhois,
 } from "../types";
 import Table from "./ui/Table";
 import Button from "./ui/Button";
@@ -17,7 +18,7 @@ import Badge from "./ui/Badge";
 import Card from "./ui/Card";
 import PageHeader from "./PageHeader";
 import toast from "react-hot-toast";
-import { format, formatDistanceToNow } from "date-fns";
+import { format, formatDistanceToNow, differenceInCalendarDays } from "date-fns";
 import { useAuth } from "../contexts/AuthContext";
 import "./DomainManagement.css";
 
@@ -51,6 +52,9 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   const [purgingDomain, setPurgingDomain] = useState<string | null>(null);
   const [expandedNameservers, setExpandedNameservers] = useState<string | null>(
     null,
+  );
+  const [refreshingWhois, setRefreshingWhois] = useState<Set<string>>(
+    new Set(),
   );
 
   interface EdgeModalData {
@@ -330,6 +334,31 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   const findFullDomain = (domainName: string) =>
     domains.find((d) => d.domain === domainName);
 
+  const markWhoisRefreshing = (domainName: string, refreshing: boolean) => {
+    setRefreshingWhois((current) => {
+      const next = new Set(current);
+      if (refreshing) {
+        next.add(domainName);
+      } else {
+        next.delete(domainName);
+      }
+      return next;
+    });
+  };
+
+const resolveWhois = (
+  record: Domain | DomainOverview,
+): DomainWhois | undefined => {
+  const full = findFullDomain(record.domain);
+  if (full?.whois) {
+    return full.whois;
+  }
+  if ("whois" in record) {
+    return record.whois;
+  }
+  return undefined;
+};
+
   const getDomainLabels = (record: Domain | DomainOverview): string[] => {
     const full = findFullDomain(record.domain);
     if (full?.edge?.labels) {
@@ -436,6 +465,217 @@ export default function DomainManagement({ isAdmin = false }: Props) {
             Configure
           </Button>
         </div>
+      </div>
+    );
+  };
+
+  const handleManualWhois = async (
+    record: Domain | DomainOverview,
+    whois?: DomainWhois,
+    options?: { skipReload?: boolean },
+  ) => {
+    const domainName = record.domain;
+    let fallbackExpiry = "";
+    if (whois?.expires_at) {
+      const parsed = new Date(whois.expires_at);
+      fallbackExpiry = Number.isNaN(parsed.getTime())
+        ? whois.expires_at
+        : format(parsed, "yyyy-MM-dd");
+    }
+    const previousValue = whois?.raw_expires
+      ? whois.raw_expires
+      : fallbackExpiry;
+    const parts: string[] = [];
+    if (whois?.last_error) {
+      parts.push(`Last error: ${whois.last_error}`);
+    }
+    if (previousValue) {
+      parts.push(`Previous value: ${previousValue}`);
+    }
+    parts.push("Enter new expiration date (YYYY-MM-DD or RFC3339)");
+    const promptText = parts.join("\n");
+    const input = window.prompt(
+      `${domainName} renewal override\n${promptText}`,
+      previousValue,
+    );
+    if (!input) {
+      return;
+    }
+    const normalized = input.trim();
+    if (!normalized) {
+      toast.error("Expiration date is required");
+      return;
+    }
+    try {
+      const updated = await domainsApi.overrideWhois(domainName, {
+        expires_at: normalized,
+        raw_input: normalized,
+      });
+      toast.success(`Renewal date saved for ${domainName}`);
+      setDomains((current) =>
+        current.some((d) => d.domain === domainName)
+          ? current.map((d) => (d.domain === domainName ? updated : d))
+          : current,
+      );
+      setAllDomains((current) =>
+        current.map((entry) =>
+          entry.domain === domainName
+            ? {
+                ...entry,
+                whois: updated.whois,
+                updated_at: updated.updated_at,
+                proxied: updated.proxied,
+                origin_ip: updated.origin_ip ?? entry.origin_ip,
+                ttl: updated.ttl,
+              }
+            : entry,
+        ),
+      );
+      if (!options?.skipReload) {
+        loadData(false);
+      }
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.error ||
+        "Failed to save manual WHOIS information";
+      toast.error(message);
+    } finally {
+      // no-op
+    }
+  };
+
+  const handleRefreshWhois = async (record: Domain | DomainOverview) => {
+    const domainName = record.domain;
+    markWhoisRefreshing(domainName, true);
+    try {
+      const updated = await domainsApi.refreshWhois(domainName);
+      setDomains((current) =>
+        current.some((d) => d.domain === domainName)
+          ? current.map((d) => (d.domain === domainName ? updated : d))
+          : current,
+      );
+      setAllDomains((current) =>
+        current.map((entry) =>
+          entry.domain === domainName
+            ? {
+                ...entry,
+                whois: updated.whois,
+                updated_at: updated.updated_at,
+                proxied: updated.proxied,
+                origin_ip: updated.origin_ip ?? entry.origin_ip,
+                ttl: updated.ttl,
+              }
+            : entry,
+        ),
+      );
+
+      const whois = updated.whois;
+      if (whois?.expires_at && !whois.last_error) {
+        const expiry = new Date(whois.expires_at);
+        if (!Number.isNaN(expiry.getTime())) {
+          const diff = differenceInCalendarDays(expiry, new Date());
+          const suffix = Math.abs(diff) === 1 ? "day" : "days";
+          toast.success(
+            diff >= 0
+              ? `WHOIS updated: ${diff} ${suffix} remaining`
+              : `WHOIS updated: expired ${Math.abs(diff)} ${suffix} ago`,
+          );
+        } else {
+          toast.success("WHOIS refreshed");
+        }
+      } else {
+        const message =
+          whois?.last_error ||
+          "WHOIS data unavailable. Please update the renewal date manually.";
+        toast.error(message);
+        markWhoisRefreshing(domainName, false);
+        await handleManualWhois(updated, whois, { skipReload: true });
+      }
+      loadData(false);
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.error || "Failed to refresh WHOIS details";
+      toast.error(message);
+    } finally {
+      markWhoisRefreshing(domainName, false);
+    }
+  };
+
+  const renderWhoisCell = (record: Domain | DomainOverview) => {
+    const whois = resolveWhois(record);
+    const isRefreshing = refreshingWhois.has(record.domain);
+
+    let label = "—";
+    let tone: "critical" | "warning" | "ok" | "neutral" | "unknown" = "neutral";
+    let tooltip: string | undefined;
+
+    if (whois?.expires_at) {
+      const expiry = new Date(whois.expires_at);
+      if (
+        !Number.isNaN(expiry.getTime()) &&
+        expiry.getUTCFullYear() > 1900
+      ) {
+        const days = differenceInCalendarDays(expiry, new Date());
+        label = days.toString();
+        if (days < 0 || days < 30) {
+          tone = "critical";
+        } else if (days < 90) {
+          tone = "warning";
+        } else {
+          tone = "ok";
+        }
+        const tooltipParts = [`Expires on ${format(expiry, "yyyy-MM-dd")}`];
+        if (whois.raw_expires && whois.raw_expires !== whois.expires_at) {
+          tooltipParts.push(`Raw: ${whois.raw_expires}`);
+        }
+        if (whois.checked_at) {
+          const checked = new Date(whois.checked_at);
+          if (!Number.isNaN(checked.getTime())) {
+            tooltipParts.push(
+              `Checked ${formatDistanceToNow(checked, { addSuffix: true })}`,
+            );
+          }
+        }
+        tooltip = tooltipParts.join("\n");
+      }
+    } else if (whois?.last_error) {
+      const message = whois.last_error.toLowerCase();
+      if (message.includes("expiration not found")) {
+        label = "🤷";
+        tone = "unknown";
+      }
+      tooltip = whois.last_error;
+    } else if (!whois) {
+      label = "—";
+    }
+
+    const displayValue = isRefreshing ? "…" : label;
+
+    return (
+      <div className="whois-cell">
+        <button
+          type="button"
+          className={`whois-trigger whois-trigger--${tone}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            handleRefreshWhois(record);
+          }}
+          title={tooltip}
+          disabled={isRefreshing}
+        >
+          {displayValue}
+        </button>
+        <button
+          type="button"
+          className="whois-manual-link"
+          onClick={(event) => {
+            event.stopPropagation();
+            handleManualWhois(record, whois);
+          }}
+          title="Set expiration manually"
+        >
+          Set
+        </button>
       </div>
     );
   };
@@ -1033,6 +1273,13 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         </div>
       );
     },
+  });
+
+  columns.push({
+    key: "whois",
+    header: "Renewal",
+    accessor: (d: any) => renderWhoisCell(d),
+    width: "200px",
   });
 
   // Proxy column - always present
