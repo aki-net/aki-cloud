@@ -129,6 +129,9 @@ server {
     {{- end }}
 
     limit_conn edge_conn_per_ip {{ .LimitConnPerIP }};
+    {{- if .WAFEnabled }}
+    error_page 403 = @edge_waf_block;
+    {{- end }}
 
     ssl_certificate {{ .CertPath }};
     ssl_certificate_key {{ .KeyPath }};
