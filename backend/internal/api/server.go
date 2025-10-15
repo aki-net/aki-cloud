@@ -1783,6 +1783,11 @@ func (s *Server) RefreshSearchBotConfig() {
 	sbCfg := searchbot.Config{
 		Enabled:        cfg.Enabled,
 		LogDir:         cfg.LogDir,
+		LogFile:        cfg.LogFile,
+		RangesDir:      cfg.RangesDir,
+		GeoFile:        cfg.GeoFile,
+		JSONFile:       cfg.JSONFile,
+		RangesURL:      cfg.RangesURL,
 		FileLimitBytes: cfg.FileLimitBytes,
 		CacheTTL:       cfg.CacheTTL,
 	}
@@ -1798,6 +1803,11 @@ func (s *Server) RefreshSearchBotConfig() {
 	if err := s.SearchBot.UpdateConfig(sbCfg); err != nil {
 		log.Printf("searchbot: failed to apply runtime config: %v", err)
 	}
+	go func() {
+		if err := s.SearchBot.RefreshGoogleRanges(context.Background()); err != nil {
+			log.Printf("searchbot: refresh google ranges failed: %v", err)
+		}
+	}()
 }
 
 func extensionToDTO(ext extensions.Extension) extensionDTO {

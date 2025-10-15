@@ -447,7 +447,15 @@ func (s *Service) SearchBotConfig() (SearchBotRuntimeConfig, error) {
 	if logDir == "" {
 		logDir = "/data/searchbot/logs"
 	}
+	logDir = filepath.Clean(logDir)
 	logFile := filepath.Join(logDir, "searchbots.log")
+	baseDir := filepath.Dir(logDir)
+	if baseDir == "." || baseDir == "/" {
+		baseDir = "/data/searchbot"
+	}
+	rangesDir := filepath.Join(baseDir, "ranges")
+	geoFile := filepath.Join(rangesDir, "google.geo")
+	jsonFile := filepath.Join(rangesDir, "google.json")
 	limitMB := intValue(cfg, "file_limit_mb", 1024)
 	if limitMB <= 0 {
 		limitMB = 1024
@@ -470,6 +478,10 @@ func (s *Service) SearchBotConfig() (SearchBotRuntimeConfig, error) {
 		Enabled:        ext.State.Enabled,
 		LogDir:         logDir,
 		LogFile:        logFile,
+		RangesDir:      rangesDir,
+		GeoFile:        geoFile,
+		JSONFile:       jsonFile,
+		RangesURL:      googlebotRangesURL,
 		FileLimitBytes: fileLimit,
 		CacheTTL:       time.Duration(cacheMinutes) * time.Minute,
 		Bots:           bots,
@@ -621,6 +633,8 @@ type EdgeCacheRuntimeConfig struct {
 	TTLJitterPct    int
 }
 
+const googlebotRangesURL = "https://developers.google.com/static/search/apis/ipranges/googlebot.json"
+
 // SearchBotDefinition describes a search crawler signature we want to capture.
 type SearchBotDefinition struct {
 	Key     string
@@ -636,6 +650,10 @@ type SearchBotRuntimeConfig struct {
 	Enabled        bool
 	LogDir         string
 	LogFile        string
+	RangesDir      string
+	GeoFile        string
+	JSONFile       string
+	RangesURL      string
 	FileLimitBytes int64
 	CacheTTL       time.Duration
 	Bots           []SearchBotDefinition

@@ -119,6 +119,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	searchBotSvc.StartGoogleRangeUpdater(ctx, 24*time.Hour)
+
 	go func(ctx context.Context) {
 		if server.SyncLocalNodeCapabilities(context.Background()) {
 			return

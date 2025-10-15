@@ -2,6 +2,7 @@ package searchbot
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -22,6 +23,8 @@ var (
 	ErrBotNotFound = errors.New("search bot not found")
 )
 
+const DefaultGoogleRangesURL = "https://developers.google.com/static/search/apis/ipranges/googlebot.json"
+
 // BotDefinition describes the crawlers we capture.
 type BotDefinition struct {
 	Key     string   `json:"key"`
@@ -37,6 +40,10 @@ type Config struct {
 	Enabled        bool
 	LogDir         string
 	LogFile        string
+	RangesDir      string
+	GeoFile        string
+	JSONFile       string
+	RangesURL      string
 	FileLimitBytes int64
 	CacheTTL       time.Duration
 	Bots           []BotDefinition
@@ -97,9 +104,10 @@ type Service struct {
 	nodeID string
 	clock  func() time.Time
 
-	mu     sync.RWMutex
-	cfg    Config
-	botMap map[string]BotDefinition
+	mu              sync.RWMutex
+	cfg             Config
+	botMap          map[string]BotDefinition
+	rangesUpdatedAt time.Time
 
 	cacheMu sync.RWMutex
 	cache   map[string]cacheEntry
@@ -125,6 +133,26 @@ func (s *Service) UpdateConfig(cfg Config) error {
 	cfg.LogFile = strings.TrimSpace(cfg.LogFile)
 	if cfg.LogFile == "" {
 		cfg.LogFile = filepath.Join(cfg.LogDir, "searchbots.log")
+	}
+	cfg.LogFile = filepath.Clean(cfg.LogFile)
+	cfg.RangesDir = strings.TrimSpace(cfg.RangesDir)
+	if cfg.RangesDir == "" {
+		cfg.RangesDir = filepath.Join(filepath.Dir(cfg.LogDir), "ranges")
+	}
+	cfg.RangesDir = filepath.Clean(cfg.RangesDir)
+	cfg.GeoFile = strings.TrimSpace(cfg.GeoFile)
+	if cfg.GeoFile == "" {
+		cfg.GeoFile = filepath.Join(cfg.RangesDir, "google.geo")
+	}
+	cfg.GeoFile = filepath.Clean(cfg.GeoFile)
+	cfg.JSONFile = strings.TrimSpace(cfg.JSONFile)
+	if cfg.JSONFile == "" {
+		cfg.JSONFile = filepath.Join(cfg.RangesDir, "google.json")
+	}
+	cfg.JSONFile = filepath.Clean(cfg.JSONFile)
+	cfg.RangesURL = strings.TrimSpace(cfg.RangesURL)
+	if cfg.RangesURL == "" {
+		cfg.RangesURL = DefaultGoogleRangesURL
 	}
 	if cfg.FileLimitBytes <= 0 {
 		cfg.FileLimitBytes = 1024 * 1024 * 1024 // default 1 GiB
@@ -160,14 +188,23 @@ func (s *Service) UpdateConfig(cfg Config) error {
 		return outBots[i].Key < outBots[j].Key
 	})
 	cfg.Bots = outBots
+	if err := os.MkdirAll(cfg.LogDir, 0o777); err != nil {
+		return fmt.Errorf("ensure searchbot log dir: %w", err)
+	}
+	if err := ensureWorldWritableDir(cfg.LogDir); err != nil {
+		return err
+	}
+	if err := ensureWorldWritableFile(cfg.LogFile); err != nil {
+		return err
+	}
 	if cfg.Enabled {
-		if err := os.MkdirAll(cfg.LogDir, 0o777); err != nil {
-			return fmt.Errorf("ensure searchbot log dir: %w", err)
+		if err := os.MkdirAll(cfg.RangesDir, 0o777); err != nil {
+			return fmt.Errorf("ensure searchbot ranges dir: %w", err)
 		}
-		if err := ensureWorldWritableDir(cfg.LogDir); err != nil {
+		if err := ensureWorldWritableDir(cfg.RangesDir); err != nil {
 			return err
 		}
-		if err := ensureWorldWritableFile(cfg.LogFile); err != nil {
+		if err := ensureWorldWritableFile(cfg.GeoFile); err != nil {
 			return err
 		}
 	}
@@ -341,7 +378,7 @@ func (s *Service) ExportLogs(domain string, botKey string, w io.Writer) (int64, 
 		line, err := reader.ReadString('\n')
 		if len(line) > 0 {
 			entry, parseErr := parseLogLine(line)
-			if parseErr == nil && strings.EqualFold(entry.BotKey, bot.Key) && strings.EqualFold(entry.Host, domain) {
+			if parseErr == nil && entry.Verified != 0 && strings.EqualFold(entry.BotKey, bot.Key) && strings.EqualFold(entry.Host, domain) {
 				n, writeErr := writer.WriteString(line)
 				written += int64(n)
 				if writeErr != nil {
@@ -408,7 +445,7 @@ func (s *Service) computeDomainStats(cfg Config, domain string) (DomainStats, er
 			line, err := reader.ReadString('\n')
 			if len(line) > 0 {
 				entry, parseErr := parseLogLine(line)
-				if parseErr == nil && strings.EqualFold(entry.BotKey, bot.Key) && strings.EqualFold(entry.Host, domain) {
+				if parseErr == nil && entry.Verified != 0 && strings.EqualFold(entry.BotKey, bot.Key) && strings.EqualFold(entry.Host, domain) {
 					ts := entry.Timestamp.UTC()
 					if !ts.Before(todayStart) {
 						totals.todayCurrent++
@@ -512,32 +549,53 @@ func (s *Service) trimLogIfNeeded(path string, limit int64) error {
 }
 
 type logEntry struct {
-	BotKey    string
-	Host      string
-	Timestamp time.Time
+	BotKey               string  `json:"bot"`
+	Verified             int     `json:"verified"`
+	Host                 string  `json:"host"`
+	RemoteAddr           string  `json:"remote_addr"`
+	Method               string  `json:"method"`
+	URI                  string  `json:"uri"`
+	Status               int     `json:"status"`
+	BodyBytesSent        int64   `json:"body_bytes_sent"`
+	RequestTime          float64 `json:"request_time"`
+	UpstreamResponseTime string  `json:"upstream_response_time"`
+	UpstreamCacheStatus  string  `json:"upstream_cache_status"`
+	UpstreamAddr         string  `json:"upstream_addr"`
+	Referer              string  `json:"referer"`
+	UserAgent            string  `json:"user_agent"`
+	AcceptLanguage       string  `json:"accept_language"`
+	Scheme               string  `json:"scheme"`
+	ServerAddr           string  `json:"server_addr"`
+	TimeISO8601          string  `json:"time_iso8601"`
+	Msec                 string  `json:"msec"`
+	Timestamp            time.Time
 }
 
 func parseLogLine(line string) (logEntry, error) {
-	line = strings.TrimRight(line, "\n")
-	parts := strings.SplitN(line, "\t", 9)
-	if len(parts) < 4 {
-		return logEntry{}, errors.New("malformed log line")
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return logEntry{}, errors.New("empty log line")
 	}
-	entry := logEntry{
-		BotKey: strings.TrimSpace(parts[1]),
-		Host:   normalizeDomain(parts[3]),
+	var entry logEntry
+	if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		return logEntry{}, err
 	}
-	if ts, err := time.Parse(time.RFC3339, strings.TrimSpace(parts[2])); err == nil {
-		entry.Timestamp = ts.UTC()
-		return entry, nil
+	entry.Host = normalizeDomain(entry.Host)
+	if entry.TimeISO8601 != "" {
+		if ts, err := time.Parse(time.RFC3339, entry.TimeISO8601); err == nil {
+			entry.Timestamp = ts.UTC()
+		}
 	}
-	if secs, err := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64); err == nil {
-		intPart := int64(secs)
-		nano := int64((secs - float64(intPart)) * 1_000_000_000)
-		entry.Timestamp = time.Unix(intPart, nano).UTC()
-		return entry, nil
+	if entry.Timestamp.IsZero() && entry.Msec != "" {
+		if secs, err := strconv.ParseFloat(entry.Msec, 64); err == nil {
+			intPart := int64(secs)
+			nano := int64((secs - float64(intPart)) * 1_000_000_000)
+			entry.Timestamp = time.Unix(intPart, nano).UTC()
+		}
 	}
-	entry.Timestamp = time.Now().UTC()
+	if entry.Timestamp.IsZero() {
+		entry.Timestamp = time.Now().UTC()
+	}
 	return entry, nil
 }
 

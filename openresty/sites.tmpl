@@ -4,11 +4,14 @@ server {
 
     access_log /var/log/nginx/{{ .Domain }}.access.log combined;
     {{- if and .SearchBotLoggingEnabled .SearchBotLogFile }}
-    access_log {{ .SearchBotLogFile }} searchbot if=$edge_searchbot_enabled;
+    access_log {{ .SearchBotLogFile }} searchbot if=$edge_searchbot_verified;
     {{- end }}
     error_log  /var/log/nginx/{{ .Domain }}.error.log warn;
 
     set $edge_cache_version {{ .CacheVersion }};
+    {{- if .SearchBotLoggingEnabled }}
+    set $edge_searchbot_verified 0;
+    {{- end }}
 
     {{- if .ServerHeader }}
     more_clear_headers Server;
@@ -41,6 +44,12 @@ server {
     location / {
         limit_req zone=edge_req_per_ip burst={{ .LimitReqBurstIP }}{{ if .LimitReqNoDelay }} nodelay{{ end }};
         limit_req zone=edge_req_per_host burst={{ .LimitReqBurstHost }};
+        {{- if .SearchBotLoggingEnabled }}
+        access_by_lua_block {
+            local searchbot = require("searchbot")
+            searchbot.verify()
+        }
+        {{- end }}
         {{- if .PlaceholderEnabled }}
         default_type text/html;
         add_header Cache-Control "no-store";
@@ -86,11 +95,14 @@ server {
 
     access_log /var/log/nginx/{{ .Domain }}.access.log combined;
     {{- if and .SearchBotLoggingEnabled .SearchBotLogFile }}
-    access_log {{ .SearchBotLogFile }} searchbot if=$edge_searchbot_enabled;
+    access_log {{ .SearchBotLogFile }} searchbot if=$edge_searchbot_verified;
     {{- end }}
     error_log  /var/log/nginx/{{ .Domain }}.error.log warn;
 
     set $edge_cache_version {{ .CacheVersion }};
+    {{- if .SearchBotLoggingEnabled }}
+    set $edge_searchbot_verified 0;
+    {{- end }}
 
     limit_conn edge_conn_per_ip {{ .LimitConnPerIP }};
 
@@ -119,6 +131,12 @@ server {
     location / {
         limit_req zone=edge_req_per_ip burst={{ .LimitReqBurstIP }}{{ if .LimitReqNoDelay }} nodelay{{ end }};
         limit_req zone=edge_req_per_host burst={{ .LimitReqBurstHost }};
+        {{- if .SearchBotLoggingEnabled }}
+        access_by_lua_block {
+            local searchbot = require("searchbot")
+            searchbot.verify()
+        }
+        {{- end }}
         {{- if .PlaceholderEnabled }}
         default_type text/html;
         add_header Cache-Control "no-store";

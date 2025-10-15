@@ -659,8 +659,8 @@ func (g *OpenRestyGenerator) Render() error {
 				continue
 			}
 			searchBotTemplateBots = append(searchBotTemplateBots, map[string]string{
-				"Key":     key,
-				"Regex":   regex,
+				"Key":   key,
+				"Regex": regex,
 			})
 		}
 	}
@@ -860,12 +860,12 @@ func (g *OpenRestyGenerator) Render() error {
 			"CachePath":               edgeCacheCfg.Path,
 			"ServerHeader":            serverHeader,
 			"CacheVersion":            cacheVersion,
-		"CacheTTLMain":            cacheTTLMain,
-		"CacheTTLNotFound":        cacheTTLNotFound,
-		"CacheTTLError":           cacheTTLError,
-		"SearchBotLoggingEnabled": searchBotCfg.Enabled,
-		"SearchBotLogFile":        searchBotCfg.LogFile,
-	}
+			"CacheTTLMain":            cacheTTLMain,
+			"CacheTTLNotFound":        cacheTTLNotFound,
+			"CacheTTLError":           cacheTTLError,
+			"SearchBotLoggingEnabled": searchBotCfg.Enabled,
+			"SearchBotLogFile":        searchBotCfg.LogFile,
+		}
 		buf := bytes.Buffer{}
 		if err := tmpl.Execute(&buf, data); err != nil {
 			return err
@@ -910,6 +910,7 @@ func (g *OpenRestyGenerator) Render() error {
 			"Enabled": searchBotCfg.Enabled,
 			"LogDir":  searchBotCfg.LogDir,
 			"LogFile": searchBotCfg.LogFile,
+			"GeoFile": searchBotCfg.GeoFile,
 			"Bots":    searchBotTemplateBots,
 		},
 	}
