@@ -6,7 +6,7 @@ import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import Switch from '../components/ui/Switch';
 import PageHeader from '../components/PageHeader';
-import { Extension } from '../types';
+import { Extension, SearchBotMetrics } from '../types';
 import { extensionsApi } from '../api/client';
 import './AdminExtensions.css';
 
@@ -14,9 +14,21 @@ const EXTENSION_ICONS: Record<string, string> = {
   edge_cache: '🗄️',
   random_server_headers: '🎲',
   placeholder_pages: '🪧',
+  searchbot_logs: '🤖',
 };
 
 const getExtensionIcon = (key: string) => EXTENSION_ICONS[key] ?? '🧩';
+
+const formatBytes = (bytes?: number): string => {
+  if (!bytes || Number.isNaN(bytes) || bytes <= 0) {
+    return '0 B';
+  }
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / Math.pow(1024, exponent);
+  const digits = value >= 10 ? 0 : 1;
+  return `${value.toFixed(digits)} ${units[exponent]}`;
+};
 
 const formatUpdated = (value?: string) => {
   if (!value) return 'never';
@@ -170,6 +182,51 @@ function renderExtensionMeta(ext: Extension) {
         </ul>
       );
     }
+    case 'searchbot_logs': {
+      const metrics = (ext.metrics ?? {}) as SearchBotMetrics;
+      const nodes = Array.isArray(metrics.nodes) ? metrics.nodes : [];
+      return (
+        <div className="extension-meta searchbot-meta">
+          <div className="searchbot-meta-summary">
+            <span>
+              <strong>Log directory:</strong> {metrics.log_dir ?? '—'}
+            </span>
+            {typeof metrics.file_limit_bytes === 'number' && (
+              <span>
+                <strong>File limit:</strong> {formatBytes(metrics.file_limit_bytes)}
+              </span>
+            )}
+          </div>
+          <ul className="searchbot-meta-list">
+            {nodes.length === 0 ? (
+              <li className="searchbot-meta-empty">No log usage reported yet.</li>
+            ) : (
+              nodes.map((node) => (
+                <li key={node.node_id} className="searchbot-meta-item">
+                  <div className="searchbot-meta-row">
+                    <span className="searchbot-meta-node">
+                      {node.node_name || node.node_id}
+                    </span>
+                    <span className="searchbot-meta-size">
+                      {formatBytes(node.total_bytes)}
+                    </span>
+                  </div>
+                  {Array.isArray(node.bots) && node.bots.length > 0 && (
+                    <div className="searchbot-meta-bots">
+                      {node.bots.map((bot) => (
+                        <span key={bot.key}>
+                          {bot.label}: {formatBytes(bot.bytes)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
+      );
+    }
     default:
       return null;
   }
@@ -226,6 +283,7 @@ function SystemExtensions() {
       try {
         const response = await extensionsApi.action(key, action);
         toast.success(response.status || 'Action completed');
+        await loadExtensions();
       } catch (err: any) {
         console.error('Extension action failed', err);
         toast.error(err?.response?.data?.error || 'Action failed');

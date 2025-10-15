@@ -17,6 +17,8 @@ import {
   ReassignAllEdgesResponse,
   Extension,
   DomainWhoisOverridePayload,
+  SearchBotDomainStats,
+  SearchBotNodeUsage,
 } from "../types";
 
 const resolveApiBase = (): string => {
@@ -167,6 +169,24 @@ export const domains = {
   delete: async (domain: string): Promise<void> => {
     await client.delete(`/domains/${domain}`);
   },
+
+  searchbots: {
+    stats: async (
+      domain: string,
+      refresh = false,
+    ): Promise<SearchBotDomainStats> => {
+      const base = `/domains/${encodeURIComponent(domain)}/searchbots/stats`;
+      const path = refresh ? `${base}?refresh=1` : base;
+      const res = await client.get<SearchBotDomainStats>(path);
+      return res.data;
+    },
+
+    export: async (domain: string, bot: string): Promise<Blob> => {
+      const path = `/domains/${encodeURIComponent(domain)}/searchbots/logs/${encodeURIComponent(bot)}`;
+      const res = await client.get(path, { responseType: "blob" });
+      return res.data as Blob;
+    },
+  },
 };
 
 export const users = {
@@ -235,6 +255,13 @@ export const extensionsApi = {
     const res = await client.post<{ status: string }>(
       `/admin/extensions/${key}/actions/${action}`,
       {},
+    );
+    return res.data;
+  },
+
+  searchBotUsage: async (): Promise<SearchBotNodeUsage[]> => {
+    const res = await client.get<SearchBotNodeUsage[]>(
+      "/admin/searchbots/usage",
     );
     return res.data;
   },

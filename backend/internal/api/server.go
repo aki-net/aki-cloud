@@ -26,6 +26,7 @@ import (
 	"aki-cloud/backend/internal/infra"
 	"aki-cloud/backend/internal/models"
 	"aki-cloud/backend/internal/orchestrator"
+	"aki-cloud/backend/internal/searchbot"
 	"aki-cloud/backend/internal/store"
 	syncsvc "aki-cloud/backend/internal/sync"
 	"aki-cloud/backend/internal/whois"
@@ -51,6 +52,7 @@ type Server struct {
 	Infra           *infra.Controller
 	Extensions      *extensions.Service
 	Whois           *whois.Service
+	SearchBot       *searchbot.Service
 	edgeReconcileMu sync.Mutex
 }
 
@@ -271,6 +273,7 @@ type extensionDTO struct {
 	Actions     []extensionActionDTO   `json:"actions,omitempty"`
 	UpdatedAt   string                 `json:"updated_at,omitempty"`
 	UpdatedBy   string                 `json:"updated_by,omitempty"`
+	Metrics     map[string]interface{} `json:"metrics,omitempty"`
 }
 
 type updateExtensionPayload struct {
@@ -412,6 +415,13 @@ func (s *Server) Routes() http.Handler {
 		r.Post("/push", s.handleSyncPush)
 	})
 
+	r.Route("/api/v1/internal/searchbot", func(r chi.Router) {
+		r.Get("/usage", s.handleInternalSearchBotUsage)
+		r.Get("/domains/{domain}/stats", s.handleInternalSearchBotStats)
+		r.Get("/domains/{domain}/logs/{bot}", s.handleInternalSearchBotExport)
+		r.Post("/logs/clear", s.handleInternalSearchBotClear)
+	})
+
 	tokenAuth := s.Auth.TokenAuth()
 
 	r.Group(func(r chi.Router) {
@@ -427,6 +437,8 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/domains/{domain}/cache/purge", s.authorizeUser(s.handlePurgeDomainCache))
 			r.Post("/domains/{domain}/whois/refresh", s.authorizeUser(s.handleRefreshDomainWhois))
 			r.Put("/domains/{domain}/whois", s.authorizeUser(s.handleOverrideDomainWhois))
+			r.Get("/domains/{domain}/searchbots/stats", s.authorizeUser(s.handleDomainSearchBotStats))
+			r.Get("/domains/{domain}/searchbots/logs/{bot}", s.authorizeUser(s.handleDomainSearchBotExport))
 			r.Post("/domains/{domain}/edge/reassign", func(w http.ResponseWriter, req *http.Request) {
 				s.requireAdmin(http.HandlerFunc(s.handleReassignDomainEdge)).ServeHTTP(w, req)
 			})
@@ -460,6 +472,7 @@ func (s *Server) Routes() http.Handler {
 				r.Get("/extensions", s.handleListExtensions)
 				r.Put("/extensions/{key}", s.handleUpdateExtension)
 				r.Post("/extensions/{key}/actions/{action}", s.handleExtensionAction)
+				r.Get("/searchbots/usage", s.handleAdminSearchBotUsage)
 
 				r.Post("/ops/rebuild", s.handleRebuild)
 			})
@@ -1653,7 +1666,15 @@ func (s *Server) handleListExtensions(w http.ResponseWriter, r *http.Request) {
 	}
 	response := make([]extensionDTO, 0, len(exts))
 	for _, ext := range exts {
-		response = append(response, extensionToDTO(ext))
+		dto := extensionToDTO(ext)
+		if ext.Definition.Key == models.ExtensionSearchBotLogs {
+			if metrics, err := s.searchBotMetrics(r.Context()); err != nil {
+				log.Printf("extensions: searchbot metrics failed: %v", err)
+			} else if metrics != nil {
+				dto.Metrics = metrics
+			}
+		}
+		response = append(response, dto)
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -1683,9 +1704,20 @@ func (s *Server) handleUpdateExtension(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if key == models.ExtensionSearchBotLogs {
+		s.RefreshSearchBotConfig()
+	}
 	s.triggerSyncBroadcast()
 	go s.Orchestrator.Trigger(r.Context())
-	writeJSON(w, http.StatusOK, extensionToDTO(ext))
+	dto := extensionToDTO(ext)
+	if ext.Definition.Key == models.ExtensionSearchBotLogs {
+		if metrics, err := s.searchBotMetrics(r.Context()); err != nil {
+			log.Printf("extensions: searchbot metrics failed: %v", err)
+		} else if metrics != nil {
+			dto.Metrics = metrics
+		}
+	}
+	writeJSON(w, http.StatusOK, dto)
 }
 
 func (s *Server) handleExtensionAction(w http.ResponseWriter, r *http.Request) {
@@ -1725,8 +1757,47 @@ func (s *Server) handleExtensionAction(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusAccepted, map[string]string{"status": "purge_queued"})
 			return
 		}
+	case models.ExtensionSearchBotLogs:
+		if action == "clear_logs" {
+			if err := s.clearSearchBotLogs(r.Context()); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]string{"status": "cleared"})
+			return
+		}
 	}
 	writeError(w, http.StatusNotImplemented, "action handler not implemented")
+}
+
+// RefreshSearchBotConfig synchronises the runtime search bot logger configuration.
+func (s *Server) RefreshSearchBotConfig() {
+	if s.SearchBot == nil || s.Extensions == nil {
+		return
+	}
+	cfg, err := s.Extensions.SearchBotConfig()
+	if err != nil {
+		log.Printf("searchbot: unable to resolve runtime config: %v", err)
+		return
+	}
+	sbCfg := searchbot.Config{
+		Enabled:        cfg.Enabled,
+		LogDir:         cfg.LogDir,
+		FileLimitBytes: cfg.FileLimitBytes,
+		CacheTTL:       cfg.CacheTTL,
+	}
+	for _, bot := range cfg.Bots {
+		sbCfg.Bots = append(sbCfg.Bots, searchbot.BotDefinition{
+			Key:     bot.Key,
+			Label:   bot.Label,
+			Icon:    bot.Icon,
+			Regex:   bot.Regex,
+			Matches: append([]string(nil), bot.Matches...),
+		})
+	}
+	if err := s.SearchBot.UpdateConfig(sbCfg); err != nil {
+		log.Printf("searchbot: failed to apply runtime config: %v", err)
+	}
 }
 
 func extensionToDTO(ext extensions.Extension) extensionDTO {
@@ -1756,6 +1827,495 @@ func extensionToDTO(ext extensions.Extension) extensionDTO {
 		dto.Actions = actions
 	}
 	return dto
+}
+
+func (s *Server) handleDomainSearchBotStats(w http.ResponseWriter, r *http.Request) {
+	if s.SearchBot == nil {
+		writeError(w, http.StatusNotImplemented, "search bot logging unavailable")
+		return
+	}
+	domain := strings.TrimSpace(strings.ToLower(chi.URLParam(r, "domain")))
+	if domain == "" {
+		writeError(w, http.StatusBadRequest, "domain required")
+		return
+	}
+	record, err := s.Store.GetDomain(domain)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			writeError(w, http.StatusNotFound, "domain not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	user := userFromContext(r.Context())
+	if !userOwnsDomain(user, *record) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	force := isTruthy(r.URL.Query().Get("refresh"))
+	stats, err := s.domainSearchBotStats(r.Context(), *record, force)
+	if err != nil {
+		if errors.Is(err, searchbot.ErrDisabled) {
+			writeError(w, http.StatusNotFound, "search bot logging disabled")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
+func (s *Server) handleDomainSearchBotExport(w http.ResponseWriter, r *http.Request) {
+	if s.SearchBot == nil {
+		writeError(w, http.StatusNotImplemented, "search bot logging unavailable")
+		return
+	}
+	rawDomain := strings.TrimSpace(strings.ToLower(chi.URLParam(r, "domain")))
+	if rawDomain == "" {
+		writeError(w, http.StatusBadRequest, "domain required")
+		return
+	}
+	rawBot := strings.TrimSpace(strings.ToLower(chi.URLParam(r, "bot")))
+	if rawBot == "" {
+		writeError(w, http.StatusBadRequest, "bot required")
+		return
+	}
+	record, err := s.Store.GetDomain(rawDomain)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			writeError(w, http.StatusNotFound, "domain not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	user := userFromContext(r.Context())
+	if !userOwnsDomain(user, *record) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	nodeID := strings.TrimSpace(record.Edge.AssignedNodeID)
+	filename := fmt.Sprintf("%s-%s.log", record.Domain, rawBot)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if nodeID != "" && nodeID != s.Config.NodeID {
+		node, err := s.findNodeByID(nodeID)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, fmt.Sprintf("resolve node: %v", err))
+			return
+		}
+		if err := s.proxyRemoteSearchBotExport(r.Context(), w, node, record.Domain, rawBot); err != nil {
+			if errors.Is(err, searchbot.ErrDisabled) {
+				writeError(w, http.StatusNotFound, "search bot logging disabled on target node")
+				return
+			}
+			writeError(w, http.StatusBadGateway, err.Error())
+		}
+		return
+	}
+	if _, err := s.SearchBot.ExportLogs(record.Domain, rawBot, w); err != nil {
+		if errors.Is(err, searchbot.ErrBotNotFound) {
+			writeError(w, http.StatusNotFound, "bot not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+}
+
+func (s *Server) handleAdminSearchBotUsage(w http.ResponseWriter, r *http.Request) {
+	if s.SearchBot == nil {
+		writeJSON(w, http.StatusOK, []searchbot.NodeUsage{})
+		return
+	}
+	cfg := s.SearchBot.Config()
+	if !cfg.Enabled {
+		writeJSON(w, http.StatusOK, []searchbot.NodeUsage{})
+		return
+	}
+	usages, err := s.collectSearchBotUsage(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, usages)
+}
+
+func (s *Server) handleInternalSearchBotUsage(w http.ResponseWriter, r *http.Request) {
+	if s.Sync == nil || !s.Sync.ValidatePeerRequest(r) {
+		writeError(w, http.StatusUnauthorized, "invalid peer secret")
+		return
+	}
+	if s.SearchBot == nil {
+		writeError(w, http.StatusNotImplemented, "search bot logging unavailable")
+		return
+	}
+	usage, err := s.SearchBot.LocalUsage()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	usage.NodeID = s.Config.NodeID
+	usage.NodeName = s.Config.NodeName
+	writeJSON(w, http.StatusOK, usage)
+}
+
+func (s *Server) handleInternalSearchBotStats(w http.ResponseWriter, r *http.Request) {
+	if s.Sync == nil || !s.Sync.ValidatePeerRequest(r) {
+		writeError(w, http.StatusUnauthorized, "invalid peer secret")
+		return
+	}
+	if s.SearchBot == nil {
+		writeError(w, http.StatusNotImplemented, "search bot logging unavailable")
+		return
+	}
+	domain := strings.TrimSpace(strings.ToLower(chi.URLParam(r, "domain")))
+	if domain == "" {
+		writeError(w, http.StatusBadRequest, "domain required")
+		return
+	}
+	force := isTruthy(r.URL.Query().Get("refresh"))
+	stats, err := s.SearchBot.DomainStats(domain, force)
+	if err != nil {
+		if errors.Is(err, searchbot.ErrDisabled) {
+			writeError(w, http.StatusNotFound, "search bot logging disabled")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
+func (s *Server) handleInternalSearchBotExport(w http.ResponseWriter, r *http.Request) {
+	if s.Sync == nil || !s.Sync.ValidatePeerRequest(r) {
+		writeError(w, http.StatusUnauthorized, "invalid peer secret")
+		return
+	}
+	if s.SearchBot == nil {
+		writeError(w, http.StatusNotImplemented, "search bot logging unavailable")
+		return
+	}
+	domain := strings.TrimSpace(strings.ToLower(chi.URLParam(r, "domain")))
+	if domain == "" {
+		writeError(w, http.StatusBadRequest, "domain required")
+		return
+	}
+	bot := strings.TrimSpace(strings.ToLower(chi.URLParam(r, "bot")))
+	if bot == "" {
+		writeError(w, http.StatusBadRequest, "bot required")
+		return
+	}
+	filename := fmt.Sprintf("%s-%s.log", domain, bot)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if _, err := s.SearchBot.ExportLogs(domain, bot, w); err != nil {
+		if errors.Is(err, searchbot.ErrBotNotFound) {
+			writeError(w, http.StatusNotFound, "bot not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+}
+
+func (s *Server) handleInternalSearchBotClear(w http.ResponseWriter, r *http.Request) {
+	if s.Sync == nil || !s.Sync.ValidatePeerRequest(r) {
+		writeError(w, http.StatusUnauthorized, "invalid peer secret")
+		return
+	}
+	if s.SearchBot == nil {
+		writeError(w, http.StatusNotImplemented, "search bot logging unavailable")
+		return
+	}
+	if err := s.SearchBot.ClearLogs(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "cleared"})
+}
+
+func (s *Server) domainSearchBotStats(ctx context.Context, record models.DomainRecord, force bool) (searchbot.DomainStats, error) {
+	if s.SearchBot == nil {
+		return searchbot.DomainStats{}, searchbot.ErrDisabled
+	}
+	cfg := s.SearchBot.Config()
+	if !cfg.Enabled {
+		return searchbot.DomainStats{}, searchbot.ErrDisabled
+	}
+	domain := strings.TrimSpace(record.Domain)
+	if domain == "" {
+		return searchbot.DomainStats{}, errors.New("domain required")
+	}
+	nodeID := strings.TrimSpace(record.Edge.AssignedNodeID)
+	if nodeID == "" || nodeID == s.Config.NodeID {
+		return s.SearchBot.DomainStats(domain, force)
+	}
+	node, err := s.findNodeByID(nodeID)
+	if err != nil {
+		return searchbot.DomainStats{}, err
+	}
+	return s.fetchRemoteDomainStats(ctx, node, domain, force)
+}
+
+func (s *Server) searchBotMetrics(ctx context.Context) (map[string]interface{}, error) {
+	if s.SearchBot == nil {
+		return nil, nil
+	}
+	cfg := s.SearchBot.Config()
+	metrics := map[string]interface{}{
+		"enabled": cfg.Enabled,
+	}
+	if !cfg.Enabled {
+		return metrics, nil
+	}
+	usage, err := s.collectSearchBotUsage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	metrics["log_dir"] = cfg.LogDir
+	metrics["file_limit_bytes"] = cfg.FileLimitBytes
+	metrics["cache_ttl_seconds"] = int64(cfg.CacheTTL / time.Second)
+	metrics["nodes"] = usage
+	return metrics, nil
+}
+
+func (s *Server) collectSearchBotUsage(ctx context.Context) ([]searchbot.NodeUsage, error) {
+	localUsage, err := s.SearchBot.LocalUsage()
+	if err != nil {
+		return nil, err
+	}
+	localUsage.NodeID = s.Config.NodeID
+	localUsage.NodeName = s.Config.NodeName
+	usages := []searchbot.NodeUsage{localUsage}
+	nodes, err := s.Store.GetNodes()
+	if err != nil {
+		return usages, err
+	}
+	for _, node := range nodes {
+		if node.ID == "" || node.ID == s.Config.NodeID || node.IsDeleted() {
+			continue
+		}
+		endpoint := strings.TrimSpace(node.APIEndpoint)
+		if endpoint == "" {
+			continue
+		}
+		usage, err := s.fetchRemoteSearchBotUsage(ctx, node)
+		if err != nil {
+			log.Printf("searchbot: fetch usage from node %s failed: %v", node.ID, err)
+			continue
+		}
+		if usage.NodeName == "" {
+			usage.NodeName = node.Name
+		}
+		usages = append(usages, usage)
+	}
+	sort.SliceStable(usages, func(i, j int) bool {
+		if usages[i].NodeName == usages[j].NodeName {
+			return usages[i].NodeID < usages[j].NodeID
+		}
+		return usages[i].NodeName < usages[j].NodeName
+	})
+	return usages, nil
+}
+
+func (s *Server) clearSearchBotLogs(ctx context.Context) error {
+	if s.SearchBot == nil {
+		return errors.New("search bot logging unavailable")
+	}
+	if err := s.SearchBot.ClearLogs(); err != nil {
+		return err
+	}
+	nodes, err := s.Store.GetNodes()
+	if err != nil {
+		return err
+	}
+	errs := make([]string, 0)
+	for _, node := range nodes {
+		if node.ID == "" || node.ID == s.Config.NodeID || node.IsDeleted() {
+			continue
+		}
+		endpoint := strings.TrimSpace(node.APIEndpoint)
+		if endpoint == "" {
+			continue
+		}
+		if err := s.sendRemoteSearchBotClear(ctx, node); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", node.Name, err))
+		}
+	}
+	if len(errs) > 0 {
+		return errors.New(strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func (s *Server) fetchRemoteDomainStats(ctx context.Context, node models.Node, domain string, force bool) (searchbot.DomainStats, error) {
+	if s.Sync == nil {
+		return searchbot.DomainStats{}, errors.New("sync service unavailable")
+	}
+	endpoint := strings.TrimSuffix(strings.TrimSpace(node.APIEndpoint), "/")
+	if endpoint == "" {
+		return searchbot.DomainStats{}, fmt.Errorf("node %s lacks api endpoint", node.ID)
+	}
+	target := fmt.Sprintf("%s/api/v1/internal/searchbot/domains/%s/stats", endpoint, url.PathEscape(domain))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return searchbot.DomainStats{}, err
+	}
+	if force {
+		q := req.URL.Query()
+		q.Set("refresh", "1")
+		req.URL.RawQuery = q.Encode()
+	}
+	req.Header.Set("Authorization", s.Sync.AuthHeader())
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return searchbot.DomainStats{}, err
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var stats searchbot.DomainStats
+		if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
+			return searchbot.DomainStats{}, err
+		}
+		return stats, nil
+	case http.StatusNotFound:
+		return searchbot.DomainStats{}, searchbot.ErrDisabled
+	default:
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return searchbot.DomainStats{}, fmt.Errorf("remote status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+}
+
+func (s *Server) fetchRemoteSearchBotUsage(ctx context.Context, node models.Node) (searchbot.NodeUsage, error) {
+	if s.Sync == nil {
+		return searchbot.NodeUsage{}, errors.New("sync service unavailable")
+	}
+	endpoint := strings.TrimSuffix(strings.TrimSpace(node.APIEndpoint), "/")
+	if endpoint == "" {
+		return searchbot.NodeUsage{}, fmt.Errorf("node %s lacks api endpoint", node.ID)
+	}
+	target := fmt.Sprintf("%s/api/v1/internal/searchbot/usage", endpoint)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return searchbot.NodeUsage{}, err
+	}
+	req.Header.Set("Authorization", s.Sync.AuthHeader())
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return searchbot.NodeUsage{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return searchbot.NodeUsage{}, fmt.Errorf("remote status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var usage searchbot.NodeUsage
+	if err := json.NewDecoder(resp.Body).Decode(&usage); err != nil {
+		return searchbot.NodeUsage{}, err
+	}
+	if usage.NodeID == "" {
+		usage.NodeID = node.ID
+	}
+	if usage.NodeName == "" {
+		usage.NodeName = node.Name
+	}
+	return usage, nil
+}
+
+func (s *Server) proxyRemoteSearchBotExport(ctx context.Context, w http.ResponseWriter, node models.Node, domain, bot string) error {
+	if s.Sync == nil {
+		return errors.New("sync service unavailable")
+	}
+	endpoint := strings.TrimSuffix(strings.TrimSpace(node.APIEndpoint), "/")
+	if endpoint == "" {
+		return fmt.Errorf("node %s lacks api endpoint", node.ID)
+	}
+	target := fmt.Sprintf("%s/api/v1/internal/searchbot/domains/%s/logs/%s", endpoint, url.PathEscape(domain), url.PathEscape(bot))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", s.Sync.AuthHeader())
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return searchbot.ErrDisabled
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("remote status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		w.Header().Set("Content-Disposition", cd)
+	}
+	if cc := resp.Header.Get("Cache-Control"); cc != "" {
+		w.Header().Set("Cache-Control", cc)
+	}
+	_, err = io.Copy(w, resp.Body)
+	return err
+}
+
+func (s *Server) sendRemoteSearchBotClear(ctx context.Context, node models.Node) error {
+	if s.Sync == nil {
+		return errors.New("sync service unavailable")
+	}
+	endpoint := strings.TrimSuffix(strings.TrimSpace(node.APIEndpoint), "/")
+	if endpoint == "" {
+		return fmt.Errorf("node %s lacks api endpoint", node.ID)
+	}
+	target := fmt.Sprintf("%s/api/v1/internal/searchbot/logs/clear", endpoint)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, http.NoBody)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", s.Sync.AuthHeader())
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("remote status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
+func (s *Server) findNodeByID(id string) (models.Node, error) {
+	nodes, err := s.Store.GetNodes()
+	if err != nil {
+		return models.Node{}, err
+	}
+	for _, node := range nodes {
+		if node.ID == id {
+			return node, nil
+		}
+	}
+	return models.Node{}, store.ErrNotFound
+}
+
+func isTruthy(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func cloneConfig(src map[string]interface{}) map[string]interface{} {

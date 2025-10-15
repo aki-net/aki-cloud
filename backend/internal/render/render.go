@@ -621,6 +621,7 @@ func (g *OpenRestyGenerator) Render() error {
 
 	edgeCacheCfg := extensions.EdgeCacheRuntimeConfig{}
 	placeholderCfg := extensions.PlaceholderRuntimeConfig{}
+	searchBotCfg := extensions.SearchBotRuntimeConfig{}
 	if g.Extensions != nil {
 		cfg, err := g.Extensions.EdgeCacheConfig()
 		if err != nil {
@@ -632,6 +633,11 @@ func (g *OpenRestyGenerator) Render() error {
 			return err
 		}
 		placeholderCfg = pcfg
+		sbCfg, err := g.Extensions.SearchBotConfig()
+		if err != nil {
+			return err
+		}
+		searchBotCfg = sbCfg
 	}
 	if edgeCacheCfg.Enabled {
 		cachePath := strings.TrimSpace(edgeCacheCfg.Path)
@@ -643,6 +649,23 @@ func (g *OpenRestyGenerator) Render() error {
 	}
 	cacheUseStaleGlobal := strings.Join(edgeCacheCfg.UseStale, " ")
 	cacheBypassCookies := edgeCacheCfg.BypassCookies
+
+	searchBotTemplateBots := make([]map[string]string, 0, len(searchBotCfg.Bots))
+	if searchBotCfg.Enabled {
+		for _, bot := range searchBotCfg.Bots {
+			key := strings.TrimSpace(bot.Key)
+			regex := strings.TrimSpace(bot.Regex)
+			if key == "" || regex == "" {
+				continue
+			}
+			logPath := filepath.Join(searchBotCfg.LogDir, fmt.Sprintf("%s.log", key))
+			searchBotTemplateBots = append(searchBotTemplateBots, map[string]string{
+				"Key":     key,
+				"Regex":   regex,
+				"LogPath": logPath,
+			})
+		}
+	}
 
 	edgeUsage := make(map[string]bool)
 	for _, domain := range domains {
@@ -821,27 +844,28 @@ func (g *OpenRestyGenerator) Render() error {
 				"url":  placeholderCfg.SupportURL,
 				"text": placeholderCfg.SupportText,
 			},
-			"PlaceholderFooter":  placeholderCfg.Footer,
-			"PlaceholderRoot":    placeholderDir,
-			"PlaceholderFile":    placeholderFileName,
-			"LimitConnPerIP":     limitConnPerIP,
-			"LimitReqPerIP":      limitReqPerIP,
-			"LimitReqBurstIP":    limitReqPerIPBurst,
-			"LimitReqPerHost":    limitReqPerHost,
-			"LimitReqBurstHost":  limitReqPerHostBurst,
-			"LimitReqNoDelay":    limitReqNoDelay,
-			"CacheEnabled":       cacheActive,
-			"CacheZone":          edgeCacheCfg.ZoneName,
-			"CacheAddStatus":     edgeCacheCfg.AddStatusHeader,
-			"CacheUseStale":      cacheUseStale,
-			"CacheMinUses":       edgeCacheCfg.MinUses,
-			"CacheBypassCookies": edgeCacheCfg.BypassCookies,
-			"CachePath":          edgeCacheCfg.Path,
-			"ServerHeader":       serverHeader,
-			"CacheVersion":       cacheVersion,
-			"CacheTTLMain":       cacheTTLMain,
-			"CacheTTLNotFound":   cacheTTLNotFound,
-			"CacheTTLError":      cacheTTLError,
+			"PlaceholderFooter":       placeholderCfg.Footer,
+			"PlaceholderRoot":         placeholderDir,
+			"PlaceholderFile":         placeholderFileName,
+			"LimitConnPerIP":          limitConnPerIP,
+			"LimitReqPerIP":           limitReqPerIP,
+			"LimitReqBurstIP":         limitReqPerIPBurst,
+			"LimitReqPerHost":         limitReqPerHost,
+			"LimitReqBurstHost":       limitReqPerHostBurst,
+			"LimitReqNoDelay":         limitReqNoDelay,
+			"CacheEnabled":            cacheActive,
+			"CacheZone":               edgeCacheCfg.ZoneName,
+			"CacheAddStatus":          edgeCacheCfg.AddStatusHeader,
+			"CacheUseStale":           cacheUseStale,
+			"CacheMinUses":            edgeCacheCfg.MinUses,
+			"CacheBypassCookies":      edgeCacheCfg.BypassCookies,
+			"CachePath":               edgeCacheCfg.Path,
+			"ServerHeader":            serverHeader,
+			"CacheVersion":            cacheVersion,
+			"CacheTTLMain":            cacheTTLMain,
+			"CacheTTLNotFound":        cacheTTLNotFound,
+			"CacheTTLError":           cacheTTLError,
+			"SearchBotLoggingEnabled": searchBotCfg.Enabled,
 		}
 		buf := bytes.Buffer{}
 		if err := tmpl.Execute(&buf, data); err != nil {
@@ -883,6 +907,11 @@ func (g *OpenRestyGenerator) Render() error {
 		"CacheUseStale":      cacheUseStaleGlobal,
 		"CacheMinUses":       edgeCacheCfg.MinUses,
 		"CacheBypassCookies": cacheBypassCookies,
+		"SearchBotLogging": map[string]interface{}{
+			"Enabled": searchBotCfg.Enabled,
+			"LogDir":  searchBotCfg.LogDir,
+			"Bots":    searchBotTemplateBots,
+		},
 	}
 	buf := bytes.Buffer{}
 	if err := nginxTemplate.Execute(&buf, nginxData); err != nil {

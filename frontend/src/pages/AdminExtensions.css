@@ -147,6 +147,72 @@
   font-weight: 600;
 }
 
+.searchbot-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.searchbot-meta-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.searchbot-meta-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.searchbot-meta-item {
+  background: var(--color-bg-tertiary);
+  border-radius: 6px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.searchbot-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.searchbot-meta-node {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchbot-meta-size {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.searchbot-meta-bots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.searchbot-meta-empty {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
 .extension-footer {
   display: flex;
   align-items: center;

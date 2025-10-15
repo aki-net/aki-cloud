@@ -20,6 +20,7 @@ const (
 	ExtensionRandomServerNames = "random_server_headers"
 	ExtensionPlaceholderPages  = "placeholder_pages"
 	ExtensionVanityNameServers = "vanity_nameservers"
+	ExtensionSearchBotLogs     = "searchbot_logs"
 )
 
 // ExtensionState persists runtime configuration for an extension.

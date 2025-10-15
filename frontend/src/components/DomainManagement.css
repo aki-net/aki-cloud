@@ -165,6 +165,106 @@
   display: flex;
   gap: 6px;
   justify-content: center;
+  align-items: center;
+}
+
+.searchbot-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.searchbot-bot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.searchbot-counts {
+  display: grid;
+  grid-auto-flow: column;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.searchbot-counts:hover:not(:disabled) {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-accent);
+  color: var(--color-text-primary);
+}
+
+.searchbot-counts--loading {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.searchbot-count {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 36px;
+  gap: 2px;
+}
+
+.searchbot-count strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.searchbot-count-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+}
+
+.searchbot-delta {
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.searchbot-delta--positive {
+  color: var(--color-success);
+}
+
+.searchbot-delta--negative {
+  color: var(--color-danger);
+}
+
+.searchbot-export {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.searchbot-export:hover:not(:disabled) {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  background: var(--color-bg-tertiary);
+}
+
+.searchbot-export:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .action-btn {

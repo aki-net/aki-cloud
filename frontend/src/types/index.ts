@@ -60,6 +60,29 @@ export interface DomainWhois {
   last_error?: string;
 }
 
+export interface SearchBotPeriodStats {
+  current: number;
+  previous: number;
+  delta: number;
+}
+
+export interface SearchBotBotStats {
+  key: string;
+  label: string;
+  icon?: string;
+  today: SearchBotPeriodStats;
+  month: SearchBotPeriodStats;
+  year: SearchBotPeriodStats;
+  total: number;
+}
+
+export interface SearchBotDomainStats {
+  domain: string;
+  generated_at: string;
+  expires_at: string;
+  bots: SearchBotBotStats[];
+}
+
 export interface DomainNameserverEntry {
   name: string;
   ipv4?: string;
@@ -77,6 +100,31 @@ export interface ReassignAllEdgesResponse {
   skipped: number;
   failed: number;
   errors?: string[];
+}
+
+export interface SearchBotUsagePerBot {
+  key: string;
+  label: string;
+  icon?: string;
+  bytes: number;
+  path: string;
+}
+
+export interface SearchBotNodeUsage {
+  node_id: string;
+  node_name?: string;
+  log_dir: string;
+  total_bytes: number;
+  bots: SearchBotUsagePerBot[];
+  updated_at: string;
+}
+
+export interface SearchBotMetrics {
+  enabled: boolean;
+  log_dir?: string;
+  file_limit_bytes?: number;
+  cache_ttl_seconds?: number;
+  nodes?: SearchBotNodeUsage[];
 }
 
 export interface DomainEdgePayload {
@@ -223,6 +271,7 @@ export interface Extension {
   actions?: ExtensionAction[];
   updated_at?: string;
   updated_by?: string;
+  metrics?: Record<string, unknown> | SearchBotMetrics;
 }
 
 export interface DomainOverview {

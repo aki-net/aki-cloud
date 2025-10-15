@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
 import { domains as domainsApi, infra, admin } from "../api/client";
 import {
   Domain,
@@ -9,6 +15,7 @@ import {
   DomainNameserverEntry,
   DomainNameserverSet,
   DomainWhois,
+  SearchBotDomainStats,
 } from "../types";
 import Table from "./ui/Table";
 import Button from "./ui/Button";
@@ -21,6 +28,16 @@ import toast from "react-hot-toast";
 import { format, formatDistanceToNow, differenceInCalendarDays } from "date-fns";
 import { useAuth } from "../contexts/AuthContext";
 import "./DomainManagement.css";
+
+const SEARCHBOT_PERIODS: Array<{
+  key: "today" | "month" | "year";
+  short: string;
+  label: string;
+}> = [
+  { key: "today", short: "T", label: "Today" },
+  { key: "month", short: "M", label: "This month" },
+  { key: "year", short: "Y", label: "This year" },
+];
 
 interface Props {
   isAdmin?: boolean;
@@ -67,6 +84,30 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   const [refreshingWhois, setRefreshingWhois] = useState<Set<string>>(
     new Set(),
   );
+  const [searchBotAvailable, setSearchBotAvailable] = useState<boolean | null>(
+    null,
+  );
+  const [searchBotStats, setSearchBotStats] = useState<
+    Record<string, SearchBotDomainStats>
+  >({});
+  const [searchBotRefreshing, setSearchBotRefreshing] = useState<
+    Record<string, boolean>
+  >({});
+  const [searchBotPrimed, setSearchBotPrimed] = useState(false);
+  const [searchBotExporting, setSearchBotExporting] = useState<string | null>(
+    null,
+  );
+  const sampleSearchBots = useMemo(() => {
+    const entries = Object.values(searchBotStats);
+    if (entries.length === 0) {
+      return [] as Array<{ key: string; label: string; icon?: string }>;
+    }
+    return entries[0].bots.map((bot) => ({
+      key: bot.key,
+      label: bot.label,
+      icon: bot.icon,
+    }));
+  }, [searchBotStats]);
 
   const editInputRef = useRef<HTMLInputElement>(null);
   const loadDataRef = useRef<() => Promise<void>>();
@@ -146,6 +187,29 @@ export default function DomainManagement({ isAdmin = false }: Props) {
           setLabelFilter("all");
         }
       }
+
+      const domainNames = new Set<string>();
+      domainData.forEach((item) => domainNames.add(item.domain));
+      overviewData.forEach((item) => domainNames.add(item.domain));
+      const namesArray = Array.from(domainNames);
+      if (!searchBotPrimed) {
+        if (namesArray.length === 0) {
+          setSearchBotPrimed(true);
+        } else {
+          await primeSearchBotStats(namesArray);
+        }
+      } else if (namesArray.length > 0) {
+        const missing = namesArray.filter(
+          (name) => !searchBotStats[name.toLowerCase()],
+        );
+        if (missing.length > 0) {
+          await Promise.allSettled(
+            missing.map((name) =>
+              fetchSearchBotStatsForDomain(name, { silent: true }),
+            ),
+          );
+        }
+      }
     } catch (error) {
       // Only show error toast on initial load or user-triggered refresh
       if (showLoader) {
@@ -195,6 +259,103 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       toast.error("Failed to copy");
     }
   };
+
+  const setSearchBotRefreshingFlag = useCallback((domainKey: string, value: boolean) => {
+    setSearchBotRefreshing((prev) => {
+      if (prev[domainKey] === value) {
+        return prev;
+      }
+      return { ...prev, [domainKey]: value };
+    });
+  }, []);
+
+  const fetchSearchBotStatsForDomain = useCallback(
+    async (
+      domain: string,
+      options?: { refresh?: boolean; silent?: boolean },
+    ) => {
+      if (searchBotAvailable === false) {
+        return;
+      }
+      const refresh = options?.refresh ?? false;
+      const silent = options?.silent ?? false;
+      const key = domain.toLowerCase();
+      if (!silent) {
+        setSearchBotRefreshingFlag(key, true);
+      }
+      try {
+        const data = await domainsApi.searchbots.stats(domain, refresh);
+        setSearchBotStats((prev) => ({ ...prev, [key]: data }));
+        if (searchBotAvailable !== true) {
+          setSearchBotAvailable(true);
+        }
+      } catch (error: any) {
+        const status = error?.response?.status;
+        if (status === 404) {
+          setSearchBotAvailable(false);
+          setSearchBotStats({});
+          setSearchBotRefreshing({});
+          setSearchBotPrimed(true);
+          if (!silent) {
+            toast.error("Crawler logging extension is disabled");
+          }
+        } else if (!silent) {
+          toast.error(`Failed to load crawler stats for ${domain}`);
+        }
+      } finally {
+        if (!silent) {
+          setSearchBotRefreshingFlag(key, false);
+        }
+      }
+    },
+    [searchBotAvailable, setSearchBotRefreshingFlag],
+  );
+
+  const primeSearchBotStats = useCallback(
+    async (domainList: string[]) => {
+      if (searchBotAvailable === false || domainList.length === 0) {
+        return;
+      }
+      await Promise.allSettled(
+        domainList.map((domain) => fetchSearchBotStatsForDomain(domain, { silent: true })),
+      );
+      setSearchBotPrimed(true);
+    },
+    [fetchSearchBotStatsForDomain, searchBotAvailable],
+  );
+
+  const handleRefreshSearchBotStats = useCallback(
+    async (domain: string) => {
+      await fetchSearchBotStatsForDomain(domain, { refresh: true });
+    },
+    [fetchSearchBotStatsForDomain],
+  );
+
+  const handleExportSearchBotLogs = useCallback(
+    async (domain: string, bot: string) => {
+      const key = `${domain}|${bot}`;
+      try {
+        setSearchBotExporting(key);
+        const blob = await domainsApi.searchbots.export(domain, bot);
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${domain}-${bot}.log`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+        toast.success(`Exported ${bot.toUpperCase()} logs for ${domain}`);
+      } catch (error: any) {
+        const message =
+          error?.response?.data?.error || `Failed to export logs for ${domain}`;
+        toast.error(message);
+      } finally {
+        setSearchBotExporting(null);
+      }
+    },
+    [],
+  );
 
   const renderNameserverCategory = (
     label: string,
@@ -804,9 +965,121 @@ const resolveWhois = (
 
   const renderDomainActions = (record: Domain | DomainOverview) => {
     const domainName = record.domain;
+    const domainKey = domainName.toLowerCase();
     const isPurging = purgingDomain === domainName;
+    const stats = searchBotStats[domainKey];
+    const hasStats = Boolean(stats);
+    const fallbackBots = sampleSearchBots.map((bot) => ({
+      key: bot.key,
+      label: bot.label,
+      icon: bot.icon,
+      today: { current: 0, previous: 0, delta: 0 },
+      month: { current: 0, previous: 0, delta: 0 },
+      year: { current: 0, previous: 0, delta: 0 },
+      total: 0,
+    }));
+    const botsToRender = stats?.bots ?? fallbackBots;
+    const showSearchBots =
+      searchBotAvailable !== false && botsToRender.length > 0;
+    const isRefreshingBots = !!searchBotRefreshing[domainKey];
+    const generatedAt = stats?.generated_at
+      ? new Date(stats.generated_at).toLocaleString()
+      : undefined;
+
+    const formatCount = (value: number) =>
+      value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+
     return (
       <div className="domain-actions">
+        {showSearchBots && (
+          <div className="searchbot-actions">
+            {botsToRender.map((bot) => {
+              const exportKey = `${domainName}|${bot.key}`;
+              const exporting = searchBotExporting === exportKey;
+              const canExport = hasStats && !exporting;
+              return (
+                <div className="searchbot-bot" key={bot.key}>
+                  <button
+                    type="button"
+                    className={`searchbot-counts${
+                      isRefreshingBots ? " searchbot-counts--loading" : ""
+                    }`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (!isRefreshingBots) {
+                        handleRefreshSearchBotStats(domainName);
+                      }
+                    }}
+                    disabled={isRefreshingBots}
+                    title={
+                      hasStats && generatedAt
+                        ? `Updated ${generatedAt}. Click to refresh.`
+                        : "Click to refresh crawler stats"
+                    }
+                  >
+                    {SEARCHBOT_PERIODS.map((period) => {
+                      const periodStats = bot[period.key];
+                      const delta =
+                        hasStats && periodStats.delta !== 0
+                          ? periodStats.delta
+                          : null;
+                      const displayValue = hasStats
+                        ? formatCount(periodStats.current)
+                        : "—";
+                      return (
+                        <span className="searchbot-count" key={period.key}>
+                          <span className="searchbot-count-label">
+                            {period.short}
+                          </span>
+                          <strong>{displayValue}</strong>
+                          {delta !== null && (
+                            <span
+                              className={`searchbot-delta ${
+                                delta > 0
+                                  ? "searchbot-delta--positive"
+                                  : "searchbot-delta--negative"
+                              }`}
+                            >
+                              {delta > 0 ? `+${delta}` : delta}
+                            </span>
+                          )}
+                        </span>
+                      );
+                    })}
+                  </button>
+                  <button
+                    type="button"
+                    className="searchbot-export"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (canExport) {
+                        handleExportSearchBotLogs(domainName, bot.key);
+                      }
+                    }}
+                    disabled={!canExport}
+                    title={`Export ${bot.label} logs`}
+                  >
+                    {exporting ? (
+                      <svg
+                        className="action-spinner"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <path d="M21 12a9 9 0 11-6.219-8.56"/>
+                      </svg>
+                    ) : (
+                      <span>{bot.icon ?? bot.key.slice(0, 1).toUpperCase()}</span>
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
         <button
           className="action-btn"
           type="button"
@@ -815,7 +1088,15 @@ const resolveWhois = (
           title="Purge cache"
         >
           {isPurging ? (
-            <svg className="action-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg
+              className="action-spinner"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
               <path d="M21 12a9 9 0 11-6.219-8.56"/>
             </svg>
           ) : (

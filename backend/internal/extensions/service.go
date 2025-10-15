@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -277,6 +278,52 @@ func New(st *store.Store, nodeID string) *Service {
 				"footer":       "aki.cloud edge platform",
 			},
 		},
+		models.ExtensionSearchBotLogs: {
+			Key:            models.ExtensionSearchBotLogs,
+			Name:           "Search Bot Analytics",
+			Description:    "Capture crawler visits, surface counters, and export search bot access logs per domain.",
+			Category:       "Analytics",
+			Scope:          models.ExtensionScopeGlobal,
+			DefaultEnabled: false,
+			DefaultConfig: map[string]interface{}{
+				"log_dir":           "/data/searchbot/logs",
+				"file_limit_mb":     1024,
+				"cache_ttl_minutes": 60,
+				"bots": []interface{}{
+					map[string]interface{}{
+						"key":     "googlebot",
+						"label":   "Googlebot",
+						"icon":    "G",
+						"matches": []interface{}{"googlebot"},
+					},
+					map[string]interface{}{
+						"key":     "bingbot",
+						"label":   "Bingbot",
+						"icon":    "B",
+						"matches": []interface{}{"bingbot"},
+					},
+					map[string]interface{}{
+						"key":     "yandexbot",
+						"label":   "YandexBot",
+						"icon":    "Y",
+						"matches": []interface{}{"yandex"},
+					},
+					map[string]interface{}{
+						"key":     "baiduspider",
+						"label":   "Baidu Spider",
+						"icon":    "Bd",
+						"matches": []interface{}{"baiduspider"},
+					},
+				},
+			},
+			Actions: []Action{
+				{
+					Key:         "clear_logs",
+					Label:       "Clear Logs",
+					Description: "Truncate search bot logs on all edge nodes.",
+				},
+			},
+		},
 	}
 	return &Service{
 		store:       st,
@@ -379,6 +426,47 @@ func (s *Service) EdgeCacheConfig() (EdgeCacheRuntimeConfig, error) {
 		ErrorTTL:        intValue(cfg, "error_ttl", 60),
 		TTLJitterPct:    intValue(cfg, "ttl_jitter_percent", 15),
 	}, nil
+}
+
+// SearchBotConfig returns runtime parameters for search bot logging.
+func (s *Service) SearchBotConfig() (SearchBotRuntimeConfig, error) {
+	out := SearchBotRuntimeConfig{}
+	ext, err := s.GetGlobal(models.ExtensionSearchBotLogs)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return out, nil
+		}
+		return out, err
+	}
+	cfg := ext.State.Config
+	if cfg == nil {
+		cfg = make(map[string]interface{})
+	}
+	logDir := strings.TrimSpace(stringValue(cfg, "log_dir", "/data/searchbot/logs"))
+	if logDir == "" {
+		logDir = "/data/searchbot/logs"
+	}
+	limitMB := intValue(cfg, "file_limit_mb", 1024)
+	if limitMB <= 0 {
+		limitMB = 1024
+	}
+	cacheMinutes := intValue(cfg, "cache_ttl_minutes", 60)
+	if cacheMinutes <= 0 {
+		cacheMinutes = 60
+	}
+	bots := parseSearchBotDefinitions(cfg["bots"])
+	fileLimit := int64(limitMB) * 1024 * 1024
+	if fileLimit < 10*1024*1024 {
+		fileLimit = 10 * 1024 * 1024
+	}
+	out = SearchBotRuntimeConfig{
+		Enabled:        ext.State.Enabled,
+		LogDir:         logDir,
+		FileLimitBytes: fileLimit,
+		CacheTTL:       time.Duration(cacheMinutes) * time.Minute,
+		Bots:           bots,
+	}
+	return out, nil
 }
 
 // PlaceholderConfig returns runtime settings for placeholder pages.
@@ -525,6 +613,24 @@ type EdgeCacheRuntimeConfig struct {
 	TTLJitterPct    int
 }
 
+// SearchBotDefinition describes a search crawler signature we want to capture.
+type SearchBotDefinition struct {
+	Key     string
+	Label   string
+	Icon    string
+	Matches []string
+	Regex   string
+}
+
+// SearchBotRuntimeConfig captures runtime settings for crawler logging.
+type SearchBotRuntimeConfig struct {
+	Enabled        bool
+	LogDir         string
+	FileLimitBytes int64
+	CacheTTL       time.Duration
+	Bots           []SearchBotDefinition
+}
+
 // PlaceholderRuntimeConfig describes placeholder copy shown when no origin IP is set.
 type PlaceholderRuntimeConfig struct {
 	Enabled     bool
@@ -534,6 +640,188 @@ type PlaceholderRuntimeConfig struct {
 	SupportURL  string
 	SupportText string
 	Footer      string
+}
+
+func parseSearchBotDefinitions(value interface{}) []SearchBotDefinition {
+	if value == nil {
+		return defaultSearchBotDefinitions()
+	}
+	defs := make([]SearchBotDefinition, 0, 4)
+	switch raw := value.(type) {
+	case []interface{}:
+		for _, item := range raw {
+			if def, ok := parseSearchBotDefinition(item); ok {
+				defs = append(defs, def)
+			}
+		}
+	case []map[string]interface{}:
+		for _, item := range raw {
+			if def, ok := parseSearchBotDefinition(item); ok {
+				defs = append(defs, def)
+			}
+		}
+	default:
+		return defaultSearchBotDefinitions()
+	}
+	if len(defs) == 0 {
+		return defaultSearchBotDefinitions()
+	}
+	sort.SliceStable(defs, func(i, j int) bool {
+		if defs[i].Key == defs[j].Key {
+			return defs[i].Label < defs[j].Label
+		}
+		return defs[i].Key < defs[j].Key
+	})
+	return defs
+}
+
+func parseSearchBotDefinition(item interface{}) (SearchBotDefinition, bool) {
+	m, ok := item.(map[string]interface{})
+	if !ok {
+		return SearchBotDefinition{}, false
+	}
+	key := sanitizeSearchBotKey(anyToString(m["key"]))
+	if key == "" {
+		return SearchBotDefinition{}, false
+	}
+	label := strings.TrimSpace(anyToString(m["label"]))
+	if label == "" {
+		label = defaultLabelForKey(key)
+	}
+	icon := strings.TrimSpace(anyToString(m["icon"]))
+	matches := normalizeStringSlice(m["matches"])
+	if len(matches) == 0 {
+		matches = []string{key}
+	}
+	regexes := make([]string, 0, len(matches))
+	for _, match := range matches {
+		match = strings.TrimSpace(match)
+		if match == "" {
+			continue
+		}
+		regexes = append(regexes, regexp.QuoteMeta(match))
+	}
+	if len(regexes) == 0 {
+		regexes = append(regexes, regexp.QuoteMeta(key))
+	}
+	return SearchBotDefinition{
+		Key:     key,
+		Label:   label,
+		Icon:    icon,
+		Matches: matches,
+		Regex:   strings.Join(regexes, "|"),
+	}, true
+}
+
+func defaultSearchBotDefinitions() []SearchBotDefinition {
+	return []SearchBotDefinition{
+		{
+			Key:     "googlebot",
+			Label:   "Googlebot",
+			Icon:    "G",
+			Matches: []string{"googlebot"},
+			Regex:   regexp.QuoteMeta("googlebot"),
+		},
+		{
+			Key:     "bingbot",
+			Label:   "Bingbot",
+			Icon:    "B",
+			Matches: []string{"bingbot"},
+			Regex:   regexp.QuoteMeta("bingbot"),
+		},
+		{
+			Key:     "yandexbot",
+			Label:   "YandexBot",
+			Icon:    "Y",
+			Matches: []string{"yandex"},
+			Regex:   regexp.QuoteMeta("yandex"),
+		},
+		{
+			Key:     "baiduspider",
+			Label:   "Baidu Spider",
+			Icon:    "Bd",
+			Matches: []string{"baiduspider"},
+			Regex:   regexp.QuoteMeta("baiduspider"),
+		},
+	}
+}
+
+func sanitizeSearchBotKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return ""
+	}
+	builder := strings.Builder{}
+	builder.Grow(len(value))
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			builder.WriteRune(r)
+		case r >= '0' && r <= '9':
+			builder.WriteRune(r)
+		case r == '-' || r == '_':
+			builder.WriteRune(r)
+		}
+	}
+	return strings.Trim(builder.String(), "-_")
+}
+
+func anyToString(value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case fmt.Stringer:
+		return v.String()
+	case []byte:
+		return string(v)
+	case float64:
+		return fmt.Sprintf("%.0f", v)
+	case int, int32, int64:
+		return fmt.Sprintf("%v", v)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+func normalizeStringSlice(value interface{}) []string {
+	switch v := value.(type) {
+	case []string:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			out = append(out, item)
+		}
+		return out
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			str := strings.TrimSpace(anyToString(item))
+			if str == "" || strings.EqualFold(str, "<nil>") {
+				continue
+			}
+			out = append(out, str)
+		}
+		return out
+	default:
+		str := strings.TrimSpace(anyToString(value))
+		if str == "" || strings.EqualFold(str, "<nil>") {
+			return nil
+		}
+		return []string{str}
+	}
+}
+
+func defaultLabelForKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	if len(key) == 1 {
+		return strings.ToUpper(key)
+	}
+	return strings.ToUpper(key[:1]) + key[1:]
 }
 
 func resolveState(def Definition, stored models.ExtensionState, exists bool) models.ExtensionState {

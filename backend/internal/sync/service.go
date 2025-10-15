@@ -509,6 +509,11 @@ func (s *Service) authHeader() string {
 	return fmt.Sprintf("Bearer %s", hex.EncodeToString(s.secret))
 }
 
+// AuthHeader returns the Authorization header value used for cluster peer requests.
+func (s *Service) AuthHeader() string {
+	return s.authHeader()
+}
+
 // ValidatePeerRequest ensures the cluster shared secret matches.
 func (s *Service) ValidatePeerRequest(r *http.Request) bool {
 	authz := r.Header.Get("Authorization")

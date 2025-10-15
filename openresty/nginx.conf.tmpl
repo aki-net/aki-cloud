@@ -109,5 +109,28 @@ http {
         ''      close;
     }
 
+    {{- if .SearchBotLogging.Enabled }}
+    log_format searchbot '$msec\t$edge_searchbot_key\t$time_iso8601\t$host\t$request_method\t$request_uri\t$status\t$body_bytes_sent\t$http_user_agent';
+
+    map $http_user_agent $edge_searchbot_key {
+        default "";
+        {{- range .SearchBotLogging.Bots }}
+        ~*{{ .Regex }} {{ .Key }};
+        {{- end }}
+    }
+
+    map $edge_searchbot_key $edge_searchbot_log {
+        default "";
+        {{- range .SearchBotLogging.Bots }}
+        {{ .Key }} {{ .LogPath }};
+        {{- end }}
+    }
+
+    map $edge_searchbot_log $edge_searchbot_log_enabled {
+        default 1;
+        "" 0;
+    }
+    {{- end }}
+
     include {{ .SitesDir }}/*.conf;
 }

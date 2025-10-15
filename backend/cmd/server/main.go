@@ -17,6 +17,7 @@ import (
 	"aki-cloud/backend/internal/health"
 	"aki-cloud/backend/internal/infra"
 	"aki-cloud/backend/internal/orchestrator"
+	"aki-cloud/backend/internal/searchbot"
 	"aki-cloud/backend/internal/ssl"
 	"aki-cloud/backend/internal/store"
 	syncsvc "aki-cloud/backend/internal/sync"
@@ -46,6 +47,31 @@ func main() {
 	infraCtl := infra.New(st, cfg.DataDir)
 	extSvc := extensions.New(st, cfg.NodeID)
 	whoisSvc := whois.New(15 * time.Second)
+	searchBotSvc := searchbot.New(cfg.NodeID)
+	if extSvc != nil {
+		if extCfg, err := extSvc.SearchBotConfig(); err != nil {
+			log.Printf("searchbot: failed to load runtime config: %v", err)
+		} else {
+			sbCfg := searchbot.Config{
+				Enabled:        extCfg.Enabled,
+				LogDir:         extCfg.LogDir,
+				FileLimitBytes: extCfg.FileLimitBytes,
+				CacheTTL:       extCfg.CacheTTL,
+			}
+			for _, bot := range extCfg.Bots {
+				sbCfg.Bots = append(sbCfg.Bots, searchbot.BotDefinition{
+					Key:     bot.Key,
+					Label:   bot.Label,
+					Icon:    bot.Icon,
+					Regex:   bot.Regex,
+					Matches: append([]string(nil), bot.Matches...),
+				})
+			}
+			if err := searchBotSvc.UpdateConfig(sbCfg); err != nil {
+				log.Printf("searchbot: failed to apply runtime config: %v", err)
+			}
+		}
+	}
 
 	healthMonitor := health.New(st, infraCtl, orch, cfg.NodeID, cfg.HealthInterval, cfg.HealthDialTimeout, cfg.HealthFailureThreshold, cfg.HealthFailureDecay)
 	slSvc := ssl.New(cfg, st, orch)
@@ -59,10 +85,14 @@ func main() {
 		Infra:        infraCtl,
 		Extensions:   extSvc,
 		Whois:        whoisSvc,
+		SearchBot:    searchBotSvc,
 	}
+
+	server.RefreshSearchBotConfig()
 
 	syncSvc.SetChangeHandler(func() {
 		server.SyncLocalNodeCapabilities(context.Background())
+		server.RefreshSearchBotConfig()
 		server.TriggerDomainReconcile("sync-change")
 		orch.Trigger(context.Background())
 	})
