@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	htmltmpl "html/template"
+	"io"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -583,15 +584,14 @@ func (g *OpenRestyGenerator) Render() error {
 	if err := os.MkdirAll(placeholderDir, 0o755); err != nil {
 		return err
 	}
-	if entries, err := os.ReadDir(placeholderDir); err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-			if strings.HasSuffix(entry.Name(), ".html") {
-				_ = os.Remove(filepath.Join(placeholderDir, entry.Name()))
-			}
+	placeholderSourceDir := filepath.Join(filepath.Dir(g.SitesTmpl), "placeholders")
+	if !filepath.IsAbs(placeholderSourceDir) {
+		if abs, err := filepath.Abs(placeholderSourceDir); err == nil {
+			placeholderSourceDir = abs
 		}
+	}
+	if err := syncPlaceholders(placeholderSourceDir, placeholderDir); err != nil {
+		return err
 	}
 
 	nsList, err := g.Infra.ActiveNameServers()
@@ -665,6 +665,28 @@ func (g *OpenRestyGenerator) Render() error {
 		}
 	}
 
+	if err := ensurePlaceholderDefault(placeholderDir, "delegated.html", placeholderCfg); err != nil {
+		return err
+	}
+
+	wafSourceDir := filepath.Join(filepath.Dir(g.SitesTmpl), "waf-placeholders")
+	if !filepath.IsAbs(wafSourceDir) {
+		if abs, err := filepath.Abs(wafSourceDir); err == nil {
+			wafSourceDir = abs
+		}
+	}
+
+	wafPlaceholderDir := filepath.Join(g.DataDir, "openresty", "waf-placeholders")
+	if err := os.MkdirAll(wafPlaceholderDir, 0o755); err != nil {
+		return fmt.Errorf("create waf placeholder dir %s: %w", wafPlaceholderDir, err)
+	}
+	if err := syncWAFPlaceholders(wafSourceDir, wafPlaceholderDir); err != nil {
+		return err
+	}
+	if err := ensureWAFPlaceholder(wafPlaceholderDir, "block.html", placeholderCfg); err != nil {
+		return err
+	}
+
 	edgeUsage := make(map[string]bool)
 	for _, domain := range domains {
 		if !domain.Proxied {
@@ -723,13 +745,14 @@ func (g *OpenRestyGenerator) Render() error {
 			continue
 		}
 		placeholderFileName := fmt.Sprintf("%s.html", baseName)
+		placeholderPath := filepath.Join(placeholderDir, placeholderFileName)
 		if placeholderActive {
-			html := renderPlaceholderHTML(domain.Domain, placeholderCfg)
-			if err := os.WriteFile(filepath.Join(placeholderDir, placeholderFileName), []byte(html), 0o644); err != nil {
-				return err
+			if _, err := os.Stat(placeholderPath); os.IsNotExist(err) {
+				html := renderPlaceholderHTML(domain.Domain, placeholderCfg)
+				if err := os.WriteFile(placeholderPath, []byte(html), 0o644); err != nil {
+					return err
+				}
 			}
-		} else {
-			_ = os.Remove(filepath.Join(placeholderDir, placeholderFileName))
 		}
 
 		originScheme := "http"
@@ -811,6 +834,7 @@ func (g *OpenRestyGenerator) Render() error {
 			cacheTTLNotFound = formatTTLSeconds(jitterSeconds(notFoundTTLSeconds, edgeCacheCfg.TTLJitterPct/2, domain.Domain))
 			cacheTTLError = formatTTLSeconds(jitterSeconds(errorTTLSeconds, edgeCacheCfg.TTLJitterPct/2, domain.Domain))
 		}
+		wafDomainFile := fmt.Sprintf("%s.html", sanitizeFileName(domain.Domain))
 		data := map[string]interface{}{
 			"Domain":              domain.Domain,
 			"EdgeIP":              assignedIP,
@@ -842,31 +866,35 @@ func (g *OpenRestyGenerator) Render() error {
 				"url":  placeholderCfg.SupportURL,
 				"text": placeholderCfg.SupportText,
 			},
-			"PlaceholderFooter":       placeholderCfg.Footer,
-			"PlaceholderRoot":         placeholderDir,
-			"PlaceholderFile":         placeholderFileName,
-			"LimitConnPerIP":          limitConnPerIP,
-			"LimitReqPerIP":           limitReqPerIP,
-			"LimitReqBurstIP":         limitReqPerIPBurst,
-			"LimitReqPerHost":         limitReqPerHost,
-			"LimitReqBurstHost":       limitReqPerHostBurst,
-			"LimitReqNoDelay":         limitReqNoDelay,
-			"CacheEnabled":            cacheActive,
-			"CacheZone":               edgeCacheCfg.ZoneName,
-			"CacheAddStatus":          edgeCacheCfg.AddStatusHeader,
-			"CacheUseStale":           cacheUseStale,
-			"CacheMinUses":            edgeCacheCfg.MinUses,
-			"CacheBypassCookies":      edgeCacheCfg.BypassCookies,
-			"CachePath":               edgeCacheCfg.Path,
-			"ServerHeader":            serverHeader,
-			"CacheVersion":            cacheVersion,
-			"CacheTTLMain":            cacheTTLMain,
-			"CacheTTLNotFound":        cacheTTLNotFound,
-			"CacheTTLError":           cacheTTLError,
-			"SearchBotLoggingEnabled": searchBotCfg.Enabled,
-			"SearchBotLogFile":        searchBotCfg.LogFile,
-			"WAFEnabled":              domain.WAF.IsActive(),
-			"WAFGooglebotOnly":        domain.WAF.IsActive() && domain.WAF.HasPreset(models.WAFPresetAllowGooglebotOnly),
+			"PlaceholderFooter":        placeholderCfg.Footer,
+			"PlaceholderRoot":          placeholderDir,
+			"PlaceholderFile":          placeholderFileName,
+			"PlaceholderDefaultFile":   "delegated.html",
+			"WAFPlaceholderRoot":       wafPlaceholderDir,
+			"WAFPlaceholderFile":       "block.html",
+			"WAFPlaceholderDomainFile": wafDomainFile,
+			"LimitConnPerIP":           limitConnPerIP,
+			"LimitReqPerIP":            limitReqPerIP,
+			"LimitReqBurstIP":          limitReqPerIPBurst,
+			"LimitReqPerHost":          limitReqPerHost,
+			"LimitReqBurstHost":        limitReqPerHostBurst,
+			"LimitReqNoDelay":          limitReqNoDelay,
+			"CacheEnabled":             cacheActive,
+			"CacheZone":                edgeCacheCfg.ZoneName,
+			"CacheAddStatus":           edgeCacheCfg.AddStatusHeader,
+			"CacheUseStale":            cacheUseStale,
+			"CacheMinUses":             edgeCacheCfg.MinUses,
+			"CacheBypassCookies":       edgeCacheCfg.BypassCookies,
+			"CachePath":                edgeCacheCfg.Path,
+			"ServerHeader":             serverHeader,
+			"CacheVersion":             cacheVersion,
+			"CacheTTLMain":             cacheTTLMain,
+			"CacheTTLNotFound":         cacheTTLNotFound,
+			"CacheTTLError":            cacheTTLError,
+			"SearchBotLoggingEnabled":  searchBotCfg.Enabled,
+			"SearchBotLogFile":         searchBotCfg.LogFile,
+			"WAFEnabled":               domain.WAF.IsActive(),
+			"WAFGooglebotOnly":         domain.WAF.IsActive() && domain.WAF.HasPreset(models.WAFPresetAllowGooglebotOnly),
 		}
 		buf := bytes.Buffer{}
 		if err := tmpl.Execute(&buf, data); err != nil {
@@ -1023,6 +1051,165 @@ func renderPlaceholderHTML(domain string, cfg extensions.PlaceholderRuntimeConfi
 		b.WriteString("<div class=\"footer\">")
 		b.WriteString(htmltmpl.HTMLEscapeString(footer))
 		b.WriteString("</div>\n")
+	}
+	b.WriteString("</div>\n</body>\n</html>")
+	return b.String()
+}
+
+func ensureWAFPlaceholder(dir, file string, cfg extensions.PlaceholderRuntimeConfig) error {
+	path := filepath.Join(dir, file)
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("stat waf placeholder: %w", err)
+	}
+	content := renderWAFPlaceholderHTML(cfg)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("write waf placeholder: %w", err)
+	}
+	return nil
+}
+
+func ensurePlaceholderDefault(dir, file string, cfg extensions.PlaceholderRuntimeConfig) error {
+	path := filepath.Join(dir, file)
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("stat placeholder default: %w", err)
+	}
+	html := renderPlaceholderHTML("", cfg)
+	if err := os.WriteFile(path, []byte(html), 0o644); err != nil {
+		return fmt.Errorf("write placeholder default: %w", err)
+	}
+	return nil
+}
+
+func syncPlaceholders(srcDir, dstDir string) error {
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read placeholder dir: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if !strings.HasSuffix(entry.Name(), ".html") {
+			continue
+		}
+		srcPath := filepath.Join(srcDir, entry.Name())
+		dstPath := filepath.Join(dstDir, entry.Name())
+		if err := copyFile(srcPath, dstPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func syncWAFPlaceholders(srcDir, dstDir string) error {
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read waf placeholder dir: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		srcPath := filepath.Join(srcDir, entry.Name())
+		dstPath := filepath.Join(dstDir, entry.Name())
+		if err := copyFile(srcPath, dstPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyFile(src, dst string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", src, err)
+	}
+	defer srcFile.Close()
+
+	tmpPath := dst + ".tmp"
+	dstFile, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", tmpPath, err)
+	}
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		dstFile.Close()
+		return fmt.Errorf("copy %s to %s: %w", src, dst, err)
+	}
+	if err := dstFile.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", tmpPath, err)
+	}
+	if err := os.Rename(tmpPath, dst); err != nil {
+		return fmt.Errorf("rename %s to %s: %w", tmpPath, dst, err)
+	}
+	return nil
+}
+
+func renderWAFPlaceholderHTML(cfg extensions.PlaceholderRuntimeConfig) string {
+	title := strings.TrimSpace(cfg.Title)
+	if title == "" {
+		title = "Access restricted"
+	}
+	subtitle := strings.TrimSpace(cfg.Subtitle)
+	if subtitle == "" {
+		subtitle = "Only verified Googlebot traffic is allowed to reach this site."
+	}
+	message := strings.TrimSpace(cfg.Message)
+	if message == "" {
+		message = "Your request has been blocked by the aki.cloud Web Application Firewall preset."
+	}
+	supportURL := strings.TrimSpace(cfg.SupportURL)
+	supportText := strings.TrimSpace(cfg.SupportText)
+	if supportURL != "" && supportText == "" {
+		supportText = supportURL
+	}
+	footer := strings.TrimSpace(cfg.Footer)
+	if footer == "" {
+		footer = "Secured by aki.cloud"
+	}
+
+	b := strings.Builder{}
+	b.WriteString("<!doctype html>\n")
+	b.WriteString("<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>")
+	b.WriteString(htmltmpl.HTMLEscapeString(title))
+	b.WriteString("</title>\n<style>\n")
+	b.WriteString("body{margin:0;font-family:'Inter',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:radial-gradient(circle at 20% 20%,rgba(71,97,215,0.25),transparent 55%),#050816;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:32px;}\n")
+	b.WriteString(".card{max-width:520px;width:100%;background:rgba(12,20,43,0.82);border:1px solid rgba(148,163,184,0.16);border-radius:22px;padding:44px;box-shadow:0 30px 90px rgba(5,8,22,0.55);backdrop-filter:blur(14px);}\n")
+	b.WriteString(".badge{display:inline-flex;align-items:center;gap:8px;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;padding:6px 12px;border-radius:999px;background:rgba(239,68,68,0.12);color:#fca5a5;border:1px solid rgba(248,113,113,0.35);margin-bottom:22px;}\n")
+	b.WriteString("h1{margin:0 0 16px;font-size:30px;line-height:1.2;}\n")
+	b.WriteString("p{margin:0 0 22px;font-size:16px;line-height:1.65;color:rgba(226,232,240,0.82);}\n")
+	b.WriteString(".support{font-size:14px;color:rgba(148,163,184,0.78);}\n")
+	b.WriteString(".support a{color:#60a5fa;text-decoration:none;font-weight:600;}\n")
+	b.WriteString("footer{margin-top:32px;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(148,163,184,0.6);}\n")
+	b.WriteString("</style>\n</head>\n<body>\n<div class=\"card\">\n<span class=\"badge\">Web Application Firewall</span>\n<h1>")
+	b.WriteString(htmltmpl.HTMLEscapeString(title))
+	b.WriteString("</h1>\n")
+	b.WriteString("<p>")
+	b.WriteString(htmltmpl.HTMLEscapeString(subtitle))
+	b.WriteString("</p>\n")
+	b.WriteString("<p>")
+	b.WriteString(htmltmpl.HTMLEscapeString(message))
+	b.WriteString("</p>\n")
+	if supportURL != "" {
+		b.WriteString("<p class=\"support\">For assistance visit <a href=\"")
+		b.WriteString(htmltmpl.HTMLEscapeString(supportURL))
+		b.WriteString("\" target=\"_blank\" rel=\"noopener noreferrer\">")
+		b.WriteString(htmltmpl.HTMLEscapeString(supportText))
+		b.WriteString("</a>.</p>\n")
+	}
+	if footer != "" {
+		b.WriteString("<footer>")
+		b.WriteString(htmltmpl.HTMLEscapeString(footer))
+		b.WriteString("</footer>\n")
 	}
 	b.WriteString("</div>\n</body>\n</html>")
 	return b.String()
