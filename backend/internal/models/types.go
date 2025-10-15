@@ -50,6 +50,7 @@ type DomainRecord struct {
 	TLS          DomainTLS    `json:"tls,omitempty"`
 	Edge         DomainEdge   `json:"edge,omitempty"`
 	Whois        DomainWhois  `json:"whois,omitempty"`
+	WAF          DomainWAF    `json:"waf,omitempty"`
 	Version      ClockVersion `json:"version"`
 }
 
@@ -71,6 +72,10 @@ func (d *DomainRecord) Validate() error {
 		d.TTL = 60
 	}
 	d.EnsureCacheVersion()
+	d.WAF.Normalize()
+	if err := d.WAF.Validate(); err != nil {
+		return err
+	}
 	if err := d.TLS.Validate(); err != nil {
 		return err
 	}
@@ -96,6 +101,7 @@ func (d *DomainRecord) EnsureTLSDefaults() {
 	d.Edge.Normalize()
 	d.EnsureCacheVersion()
 	d.Whois.Normalize()
+	d.WAF.Normalize()
 }
 
 // EnsureEdgeDefaults applies default values to edge settings.
@@ -103,6 +109,7 @@ func (d *DomainRecord) EnsureEdgeDefaults() {
 	d.Edge.Normalize()
 	d.EnsureCacheVersion()
 	d.Whois.Normalize()
+	d.WAF.Normalize()
 }
 
 // EnsureCacheVersion initialises cache version if unset.
@@ -112,6 +119,7 @@ func (d *DomainRecord) EnsureCacheVersion() {
 	}
 	sort.Strings(d.VanityNS)
 	d.Whois.Normalize()
+	d.WAF.Normalize()
 }
 
 // MatchesOwner reports whether the record belongs to the provided owner id or email.
@@ -168,6 +176,7 @@ func (d *DomainRecord) MarkDeleted(ts time.Time) {
 	d.TLS.OriginPullSecret = nil
 	d.UpdatedAt = ts
 	d.Whois = DomainWhois{}
+	d.WAF = DomainWAF{}
 }
 
 // Sanitize redacts sensitive TLS material before returning records via API.

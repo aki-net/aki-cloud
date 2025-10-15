@@ -5,7 +5,7 @@ import React, {
   useCallback,
   useMemo,
 } from "react";
-import { domains as domainsApi, infra, admin } from "../api/client";
+import { domains as domainsApi, infra, admin, waf as wafApi } from "../api/client";
 import {
   Domain,
   CreateDomainPayload,
@@ -16,6 +16,7 @@ import {
   DomainNameserverSet,
   DomainWhois,
   SearchBotDomainStats,
+  WAFDefinition,
 } from "../types";
 import Table from "./ui/Table";
 import Button from "./ui/Button";
@@ -49,6 +50,8 @@ const SEARCHBOT_ALL_BOTS = [
 const SEARCHBOT_PRIMARY_KEYS = ["googlebot"];
 
 const PASSIVE_SEARCHBOT_REFRESH_MS = 60 * 60 * 1000;
+
+const GOOGLEBOT_WAF_PRESET = "allow_googlebot_only";
 
 interface Props {
   isAdmin?: boolean;
@@ -108,6 +111,8 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   const [searchBotExporting, setSearchBotExporting] = useState<string | null>(
     null,
   );
+  const [wafDefinitions, setWafDefinitions] = useState<WAFDefinition[]>([]);
+  const [wafUpdatingDomains, setWafUpdatingDomains] = useState<Set<string>>(new Set());
   const searchBotLastPassiveRef = useRef<number>(0);
   const [searchBotMenuDomain, setSearchBotMenuDomain] = useState<string | null>(
     null,
@@ -135,6 +140,37 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   useEffect(() => {
     loadDataRef.current = loadData;
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchDefinitions = async () => {
+      try {
+        const defs = await wafApi.definitions();
+        if (!cancelled) {
+          setWafDefinitions(defs);
+        }
+      } catch {
+        if (!cancelled) {
+          setWafDefinitions([]);
+        }
+      }
+    };
+
+    fetchDefinitions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const googlebotPresetDefinition = useMemo(
+    () =>
+      wafDefinitions.find(
+        (definition) => definition.key === GOOGLEBOT_WAF_PRESET,
+      ),
+    [wafDefinitions],
+  );
 
   useEffect(() => {
     if (!searchBotMenuDomain) {
@@ -258,6 +294,19 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     }
   };
 
+  const markWafUpdating = useCallback((domain: string, active: boolean) => {
+    setWafUpdatingDomains((prev) => {
+      const next = new Set(prev);
+      const key = domain.toLowerCase();
+      if (active) {
+        next.add(key);
+      } else {
+        next.delete(key);
+      }
+      return next;
+    });
+  }, []);
+
   const modeLabel = (mode?: string | null) => {
     if (!mode) return "";
     switch (mode) {
@@ -306,6 +355,17 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       return { ...prev, [domainKey]: value };
     });
   }, []);
+
+  const isGooglebotOnlyEnabled = (record: Domain | DomainOverview): boolean => {
+    const waf = record.waf;
+    if (!waf || !waf.enabled) {
+      return false;
+    }
+    if (!Array.isArray(waf.presets)) {
+      return false;
+    }
+    return waf.presets.includes(GOOGLEBOT_WAF_PRESET);
+  };
 
   const fetchSearchBotStatsForDomain = useCallback(
     async (
@@ -992,6 +1052,67 @@ const resolveWhois = (
     }
   };
 
+  const handleToggleGooglebotOnly = async (
+    domain: Domain | DomainOverview,
+    nextState: boolean,
+  ) => {
+    const domainName = domain.domain;
+    const domainKey = domainName.toLowerCase();
+    const presetsSource = domain.waf?.presets ?? [];
+    const currentPresets = Array.isArray(presetsSource)
+      ? [...presetsSource]
+      : [];
+    let nextPresets: string[];
+    if (nextState) {
+      nextPresets = Array.from(
+        new Set([...currentPresets, GOOGLEBOT_WAF_PRESET]),
+      );
+    } else {
+      nextPresets = currentPresets.filter(
+        (preset) => preset !== GOOGLEBOT_WAF_PRESET,
+      );
+    }
+    const currentEnabled = domain.waf?.enabled ?? false;
+    const nextEnabled = nextState
+      ? true
+      : nextPresets.length > 0 && currentEnabled;
+
+    markWafUpdating(domainKey, true);
+    try {
+      const updated = await domainsApi.update(domainName, {
+        waf: {
+          enabled: nextEnabled,
+          presets: nextPresets,
+        },
+      });
+
+      setDomains((prev) =>
+        prev.map((item) => (item.domain === domainName ? updated : item)),
+      );
+
+      setAllDomains((prev) =>
+        prev.map((item) =>
+          item.domain === domainName ? { ...item, waf: updated.waf } : item,
+        ),
+      );
+
+      toast.success(
+        nextState
+          ? `Googlebot-only access enabled for ${domainName}`
+          : `Googlebot-only access disabled for ${domainName}`,
+      );
+
+      loadData(false);
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.error ||
+        `Failed to update WAF for ${domainName}`;
+      toast.error(message);
+    } finally {
+      markWafUpdating(domainKey, false);
+    }
+  };
+
   const handlePurgeCache = async (domainName: string) => {
     try {
       setPurgingDomain(domainName);
@@ -1036,12 +1157,59 @@ const resolveWhois = (
       ? new Date(stats.generated_at).toLocaleString()
       : undefined;
     const isMenuOpen = searchBotMenuDomain === domainName;
-
+    const googlebotEnabled = isGooglebotOnlyEnabled(record);
+    const wafBusy = wafUpdatingDomains.has(domainKey);
+    const canUseWAF = record.proxied;
+    const wafTitle = canUseWAF
+      ? googlebotPresetDefinition?.description ??
+        "Only verified Googlebot traffic is allowed when enabled"
+      : "Enable proxying to enforce edge WAF presets";
     const formatCount = (value: number) =>
       value.toLocaleString(undefined, { maximumFractionDigits: 0 });
 
     return (
       <div className="domain-actions">
+        <button
+          type="button"
+          className={`waf-toggle-btn${googlebotEnabled ? " waf-toggle-btn--active" : ""}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (wafBusy || !canUseWAF) {
+              return;
+            }
+            handleToggleGooglebotOnly(record, !googlebotEnabled);
+          }}
+          title={wafTitle}
+          disabled={wafBusy || !canUseWAF}
+          aria-pressed={googlebotEnabled}
+        >
+          {wafBusy ? (
+            <svg
+              className="action-spinner"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M21 12a9 9 0 11-6.219-8.56" />
+            </svg>
+          ) : (
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M12 3l8 3v6c0 4.97-3.582 9.646-8 11-4.418-1.354-8-6.03-8-11V6l8-3z" />
+              <path d="M12 8v6" />
+              <path d="M9 11h6" />
+            </svg>
+          )}
+        </button>
         {showSearchBots && (
           <div className="searchbot-actions">
             {primaryBots.map(({ definition, stats: botStats }) => {
@@ -1920,18 +2088,18 @@ const resolveWhois = (
             All Domains
             <span className="tab-count">{allDomains.length}</span>
           </button>
-          <button
-            className={`filter-tab ${viewMode === "orphaned" ? "active" : ""}`}
-            onClick={() => {
-              setViewMode("orphaned");
-              setSelectedDomains(new Set());
-            }}
-          >
-            Orphaned
-            <span className="tab-count">{orphanedCount}</span>
-          </button>
-        </div>
-      )}
+      <button
+        className={`filter-tab ${viewMode === "orphaned" ? "active" : ""}`}
+        onClick={() => {
+          setViewMode("orphaned");
+          setSelectedDomains(new Set());
+        }}
+      >
+        Orphaned
+        <span className="tab-count">{orphanedCount}</span>
+      </button>
+    </div>
+  )}
 
       <Card className="domains-card" padding="none">
         <Table

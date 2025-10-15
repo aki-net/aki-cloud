@@ -6,8 +6,8 @@ import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import Switch from '../components/ui/Switch';
 import PageHeader from '../components/PageHeader';
-import { Extension, SearchBotMetrics } from '../types';
-import { extensionsApi } from '../api/client';
+import { Extension, SearchBotMetrics, WAFDefinition } from '../types';
+import { extensionsApi, waf as wafApi } from '../api/client';
 import './AdminExtensions.css';
 
 const EXTENSION_ICONS: Record<string, string> = {
@@ -405,6 +405,36 @@ function SecurityCenter() {
     http3Support: false,
     zeroTrust: false,
   });
+  const [wafDefinitions, setWafDefinitions] = useState<WAFDefinition[]>([]);
+  const [wafLoading, setWafLoading] = useState(true);
+  const [wafError, setWafError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setWafLoading(true);
+      setWafError(null);
+      try {
+        const defs = await wafApi.definitions();
+        if (!cancelled) {
+          setWafDefinitions(defs);
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          console.error('Failed to load WAF definitions', err);
+          setWafError('Failed to load WAF presets');
+        }
+      } finally {
+        if (!cancelled) {
+          setWafLoading(false);
+        }
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className="security-center">
@@ -471,6 +501,38 @@ function SecurityCenter() {
             />
           </div>
         </div>
+      </Card>
+
+      <Card
+        className="waf-card"
+        title="Web Application Firewall"
+        description="Built-in presets that can be enforced globally or per domain."
+        variant="bordered"
+      >
+        {wafLoading ? (
+          <p className="waf-presets-empty">Loading presets…</p>
+        ) : wafError ? (
+          <p className="waf-presets-empty">{wafError}</p>
+        ) : wafDefinitions.length === 0 ? (
+          <p className="waf-presets-empty">No presets available yet.</p>
+        ) : (
+          <>
+            <ul className="waf-presets-list">
+              {wafDefinitions.map((definition) => (
+                <li key={definition.key} className="waf-preset-item">
+                  <div className="waf-preset-head">
+                    <span className="waf-preset-name">{definition.name}</span>
+                    <span className="waf-preset-category">{definition.category}</span>
+                  </div>
+                  <p className="waf-preset-description">{definition.description}</p>
+                </li>
+              ))}
+            </ul>
+            <p className="waf-presets-hint">
+              Toggle presets per domain from the Domains list to restrict access (e.g. allow only verified Googlebot traffic).
+            </p>
+          </>
+        )}
       </Card>
 
       <Card title="Threat Intelligence" className="threat-card">

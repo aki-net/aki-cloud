@@ -131,6 +131,24 @@ export interface DomainEdgePayload {
   labels?: string[];
 }
 
+export interface DomainWAF {
+  enabled: boolean;
+  presets: string[];
+}
+
+export interface DomainWAFPayload {
+  enabled?: boolean;
+  presets?: string[];
+}
+
+export interface WAFDefinition {
+  key: string;
+  name: string;
+  category: string;
+  type: string;
+  description: string;
+}
+
 export interface Domain {
   domain: string;
   owner: string;
@@ -145,6 +163,7 @@ export interface Domain {
   vanity_ns?: string[];
   nameservers?: DomainNameserverSet;
   whois?: DomainWhois;
+  waf?: DomainWAF;
 }
 
 export interface DomainTLSPayload {
@@ -160,6 +179,7 @@ export interface CreateDomainPayload {
   ttl?: number;
   tls?: DomainTLSPayload;
   edge?: DomainEdgePayload;
+  waf?: DomainWAFPayload;
 }
 
 export interface UpdateDomainPayload {
@@ -169,6 +189,7 @@ export interface UpdateDomainPayload {
   owner?: string;
   tls?: DomainTLSPayload;
   edge?: DomainEdgePayload;
+  waf?: DomainWAFPayload;
 }
 
 export interface DomainWhoisOverridePayload {
@@ -184,6 +205,7 @@ export interface BulkDomainPayload {
   ttl?: number;
   tls?: DomainTLSPayload;
   edge?: DomainEdgePayload;
+  waf?: DomainWAFPayload;
 }
 
 export interface BulkUpdateDomainPayload {
@@ -194,6 +216,7 @@ export interface BulkUpdateDomainPayload {
   tls?: DomainTLSPayload;
   owner?: string;
   edge?: DomainEdgePayload;
+  waf?: DomainWAFPayload;
 }
 
 export type BulkDomainStatus = 'created' | 'updated' | 'skipped' | 'failed';
@@ -297,6 +320,7 @@ export interface DomainOverview {
   edge_assigned_at?: string;
   nameservers?: DomainNameserverSet;
   whois?: DomainWhois;
+  waf?: DomainWAF;
 }
 
 export interface NameServerStatus {

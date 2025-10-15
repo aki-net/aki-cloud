@@ -19,6 +19,7 @@ import {
   DomainWhoisOverridePayload,
   SearchBotDomainStats,
   SearchBotNodeUsage,
+  WAFDefinition,
 } from "../types";
 
 const resolveApiBase = (): string => {
@@ -186,6 +187,13 @@ export const domains = {
       const res = await client.get(path, { responseType: "blob" });
       return res.data as Blob;
     },
+  },
+};
+
+export const waf = {
+  definitions: async (): Promise<WAFDefinition[]> => {
+    const res = await client.get<WAFDefinition[]>("/waf/definitions");
+    return res.data;
   },
 };
 

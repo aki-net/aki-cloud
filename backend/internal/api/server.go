@@ -29,6 +29,7 @@ import (
 	"aki-cloud/backend/internal/searchbot"
 	"aki-cloud/backend/internal/store"
 	syncsvc "aki-cloud/backend/internal/sync"
+	"aki-cloud/backend/internal/waf"
 	"aki-cloud/backend/internal/whois"
 
 	"github.com/araddon/dateparse"
@@ -89,6 +90,7 @@ type domainOverview struct {
 	EdgeUpdated  *time.Time               `json:"edge_assigned_at,omitempty"`
 	Nameservers  *domainNameServerSet     `json:"nameservers,omitempty"`
 	Whois        *models.DomainWhois      `json:"whois,omitempty"`
+	WAF          models.DomainWAF         `json:"waf,omitempty"`
 }
 
 type nsCheckRequest struct {
@@ -115,6 +117,11 @@ type domainEdgePayload struct {
 	Labels []string `json:"labels,omitempty"`
 }
 
+type domainWAFPayload struct {
+	Enabled *bool     `json:"enabled,omitempty"`
+	Presets *[]string `json:"presets,omitempty"`
+}
+
 type domainWhoisManualPayload struct {
 	ExpiresAt string `json:"expires_at"`
 	RawInput  string `json:"raw_input,omitempty"`
@@ -128,6 +135,7 @@ type createDomainPayload struct {
 	TTL      *int               `json:"ttl,omitempty"`
 	TLS      *domainTLSPayload  `json:"tls,omitempty"`
 	Edge     *domainEdgePayload `json:"edge,omitempty"`
+	WAF      *domainWAFPayload  `json:"waf,omitempty"`
 }
 
 const (
@@ -148,6 +156,7 @@ type bulkDomainPayload struct {
 	TTL      *int               `json:"ttl,omitempty"`
 	TLS      *domainTLSPayload  `json:"tls,omitempty"`
 	Edge     *domainEdgePayload `json:"edge,omitempty"`
+	WAF      *domainWAFPayload  `json:"waf,omitempty"`
 }
 
 type nameServerEntryDTO struct {
@@ -232,6 +241,10 @@ func (s *Server) composeNameserverSet(domain string, nsList []infra.NameServer, 
 	return nsSet, anycastNames
 }
 
+func (s *Server) handleListWAFDefinitions(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, waf.Definitions())
+}
+
 type bulkUpdateDomainPayload struct {
 	Domains  []string           `json:"domains"`
 	OriginIP *string            `json:"origin_ip,omitempty"`
@@ -240,6 +253,7 @@ type bulkUpdateDomainPayload struct {
 	TLS      *domainTLSPayload  `json:"tls,omitempty"`
 	Owner    *string            `json:"owner,omitempty"`
 	Edge     *domainEdgePayload `json:"edge,omitempty"`
+	WAF      *domainWAFPayload  `json:"waf,omitempty"`
 }
 
 type bulkDomainResult struct {
@@ -361,6 +375,7 @@ type updateDomainPayload struct {
 	TLS      *domainTLSPayload  `json:"tls,omitempty"`
 	Owner    *string            `json:"owner,omitempty"`
 	Edge     *domainEdgePayload `json:"edge,omitempty"`
+	WAF      *domainWAFPayload  `json:"waf,omitempty"`
 }
 
 // Routes constructs the HTTP router.
@@ -451,6 +466,7 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/infra/edges", func(w http.ResponseWriter, req *http.Request) {
 				s.requireAdmin(http.HandlerFunc(s.handleInfraEdges)).ServeHTTP(w, req)
 			})
+			r.Get("/waf/definitions", s.authorizeUser(s.handleListWAFDefinitions))
 
 			// admin subroutes
 			r.Route("/admin", func(r chi.Router) {
@@ -860,7 +876,32 @@ func (s *Server) attachOwnerMetadata(domain *models.DomainRecord) {
 	}
 }
 
-func (s *Server) prepareDomainRecord(user userContext, domain string, owner string, origin string, proxied *bool, ttl *int, tlsPayload *domainTLSPayload, edgePayload *domainEdgePayload) (models.DomainRecord, error) {
+func applyDomainWAFPayload(rec *models.DomainRecord, payload *domainWAFPayload) error {
+	if rec == nil || payload == nil {
+		return nil
+	}
+	if payload.Enabled != nil {
+		rec.WAF.Enabled = *payload.Enabled
+		if !rec.WAF.Enabled && payload.Presets == nil {
+			rec.WAF.Presets = nil
+		}
+	}
+	if payload.Presets != nil {
+		values := make([]models.DomainWAFPreset, 0, len(*payload.Presets))
+		for _, preset := range *payload.Presets {
+			key := models.DomainWAFPreset(strings.TrimSpace(strings.ToLower(preset)))
+			if key == "" {
+				continue
+			}
+			values = append(values, key)
+		}
+		rec.WAF.Presets = values
+	}
+	rec.WAF.Normalize()
+	return rec.WAF.Validate()
+}
+
+func (s *Server) prepareDomainRecord(user userContext, domain string, owner string, origin string, proxied *bool, ttl *int, tlsPayload *domainTLSPayload, edgePayload *domainEdgePayload, wafPayload *domainWAFPayload) (models.DomainRecord, error) {
 	record := models.DomainRecord{
 		Domain:       strings.ToLower(strings.TrimSpace(domain)),
 		Owner:        strings.TrimSpace(owner),
@@ -923,6 +964,9 @@ func (s *Server) prepareDomainRecord(user userContext, domain string, owner stri
 		record.Edge.Labels = append([]string{}, edgePayload.Labels...)
 	}
 	record.Edge.Normalize()
+	if err := applyDomainWAFPayload(&record, wafPayload); err != nil {
+		return models.DomainRecord{}, err
+	}
 	if err := ensureTLSProxyCompatibility(&record); err != nil {
 		return models.DomainRecord{}, err
 	}
@@ -965,7 +1009,7 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "domain required")
 		return
 	}
-	record, err := s.prepareDomainRecord(user, payload.Domain, payload.Owner, origin, payload.Proxied, payload.TTL, payload.TLS, payload.Edge)
+	record, err := s.prepareDomainRecord(user, payload.Domain, payload.Owner, origin, payload.Proxied, payload.TTL, payload.TLS, payload.Edge, payload.WAF)
 	if err != nil {
 		if errors.Is(err, errForbiddenDomainOwner) {
 			writeError(w, http.StatusForbidden, err.Error())
@@ -1061,7 +1105,7 @@ func (s *Server) handleBulkCreateDomains(w http.ResponseWriter, r *http.Request)
 	}
 	success := 0
 	for _, domain := range normalized {
-		record, err := s.prepareDomainRecord(user, domain, payload.Owner, origin, payload.Proxied, payload.TTL, payload.TLS, payload.Edge)
+		record, err := s.prepareDomainRecord(user, domain, payload.Owner, origin, payload.Proxied, payload.TTL, payload.TLS, payload.Edge, payload.WAF)
 		if err != nil {
 			failed++
 			errMsg := err.Error()
@@ -1258,6 +1302,13 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 			existing.Edge.Labels = append([]string{}, payload.Edge.Labels...)
 			existing.Edge.Normalize()
 		}
+		if payload.WAF != nil {
+			if err := applyDomainWAFPayload(existing, payload.WAF); err != nil {
+				failed++
+				results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: err.Error()})
+				continue
+			}
+		}
 		if existing.Proxied {
 			// Use mutex to prevent concurrent edge assignments
 			s.edgeReconcileMu.Lock()
@@ -1415,6 +1466,12 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		}
 		updated.Edge.Labels = append([]string{}, payload.Edge.Labels...)
 		updated.Edge.Normalize()
+	}
+	if payload.WAF != nil {
+		if err := applyDomainWAFPayload(&updated, payload.WAF); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	if updated.Proxied {
 		s.edgeReconcileMu.Lock()
@@ -2969,6 +3026,7 @@ func (s *Server) handleDomainsOverview(w http.ResponseWriter, r *http.Request) {
 			copy.Normalize()
 			entry.Whois = &copy
 		}
+		entry.WAF = domain.WAF
 		overview = append(overview, entry)
 	}
 	sort.Slice(overview, func(i, j int) bool {

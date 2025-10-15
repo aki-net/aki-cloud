@@ -865,6 +865,8 @@ func (g *OpenRestyGenerator) Render() error {
 			"CacheTTLError":           cacheTTLError,
 			"SearchBotLoggingEnabled": searchBotCfg.Enabled,
 			"SearchBotLogFile":        searchBotCfg.LogFile,
+			"WAFEnabled":              domain.WAF.IsActive(),
+			"WAFGooglebotOnly":        domain.WAF.IsActive() && domain.WAF.HasPreset(models.WAFPresetAllowGooglebotOnly),
 		}
 		buf := bytes.Buffer{}
 		if err := tmpl.Execute(&buf, data); err != nil {
