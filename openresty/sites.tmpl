@@ -44,19 +44,19 @@ server {
     location / {
         limit_req zone=edge_req_per_ip burst={{ .LimitReqBurstIP }}{{ if .LimitReqNoDelay }} nodelay{{ end }};
         limit_req zone=edge_req_per_host burst={{ .LimitReqBurstHost }};
-        {{- if .WAFEnabled }}
+        {{- if or .WAFEnabled .SearchBotLoggingEnabled }}
         access_by_lua_block {
+            {{- if .WAFEnabled }}
             local waf = require("waf")
             waf.evaluate({
                 domain = "{{ .Domain }}",
                 googlebot_only = {{ if .WAFGooglebotOnly }}true{{ else }}false{{ end }},
             })
-        }
-        {{- end }}
-        {{- if .SearchBotLoggingEnabled }}
-        access_by_lua_block {
+            {{- end }}
+            {{- if .SearchBotLoggingEnabled }}
             local searchbot = require("searchbot")
             searchbot.verify()
+            {{- end }}
         }
         {{- end }}
         {{- if .PlaceholderEnabled }}
@@ -140,19 +140,19 @@ server {
     location / {
         limit_req zone=edge_req_per_ip burst={{ .LimitReqBurstIP }}{{ if .LimitReqNoDelay }} nodelay{{ end }};
         limit_req zone=edge_req_per_host burst={{ .LimitReqBurstHost }};
-        {{- if .WAFEnabled }}
+        {{- if or .WAFEnabled .SearchBotLoggingEnabled }}
         access_by_lua_block {
+            {{- if .WAFEnabled }}
             local waf = require("waf")
             waf.evaluate({
                 domain = "{{ .Domain }}",
                 googlebot_only = {{ if .WAFGooglebotOnly }}true{{ else }}false{{ end }},
             })
-        }
-        {{- end }}
-        {{- if .SearchBotLoggingEnabled }}
-        access_by_lua_block {
+            {{- end }}
+            {{- if .SearchBotLoggingEnabled }}
             local searchbot = require("searchbot")
             searchbot.verify()
+            {{- end }}
         }
         {{- end }}
         {{- if .PlaceholderEnabled }}
