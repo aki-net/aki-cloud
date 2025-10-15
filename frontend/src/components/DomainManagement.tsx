@@ -39,7 +39,15 @@ const SEARCHBOT_PERIODS: Array<{
   { key: "year", short: "Y", label: "This year" },
 ];
 
-const SEARCHBOT_HIDDEN_KEYS = new Set(["bingbot", "yandexbot", "baiduspider"]);
+const SEARCHBOT_ALL_BOTS = [
+  { key: "googlebot", label: "Googlebot", icon: "G" },
+  { key: "bingbot", label: "Bingbot", icon: "B" },
+  { key: "yandexbot", label: "YandexBot", icon: "Y" },
+  { key: "baiduspider", label: "Baidu Spider", icon: "Bd" },
+];
+
+const SEARCHBOT_PRIMARY_KEYS = ["googlebot"];
+
 const PASSIVE_SEARCHBOT_REFRESH_MS = 60 * 60 * 1000;
 
 interface Props {
@@ -101,20 +109,10 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     null,
   );
   const searchBotLastPassiveRef = useRef<number>(0);
-  const sampleSearchBots = useMemo(() => {
-    const entries = Object.values(searchBotStats);
-    if (entries.length === 0) {
-      return [] as Array<{ key: string; label: string; icon?: string }>;
-    }
-    return entries[0].bots
-      .filter((bot) => !SEARCHBOT_HIDDEN_KEYS.has(bot.key))
-      .map((bot) => ({
-        key: bot.key,
-        label: bot.label,
-        icon: bot.icon,
-      }));
-  }, [searchBotStats]);
-
+  const [searchBotMenuDomain, setSearchBotMenuDomain] = useState<string | null>(
+    null,
+  );
+  const searchBotMenuRef = useRef<HTMLDivElement | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const loadDataRef = useRef<() => Promise<void>>();
   const [refreshInterval, setRefreshInterval] = useState<number | null>(null);
@@ -137,6 +135,32 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   useEffect(() => {
     loadDataRef.current = loadData;
   }, []);
+
+  useEffect(() => {
+    if (!searchBotMenuDomain) {
+      return;
+    }
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (
+        searchBotMenuRef.current &&
+        target &&
+        !searchBotMenuRef.current.contains(target)
+      ) {
+        setSearchBotMenuDomain(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+    };
+  }, [searchBotMenuDomain]);
+
+  useEffect(() => {
+    if (!searchBotMenuDomain) {
+      searchBotMenuRef.current = null;
+    }
+  }, [searchBotMenuDomain]);
 
   useEffect(() => {
     setExpandedNameservers(null);
@@ -197,6 +221,9 @@ export default function DomainManagement({ isAdmin = false }: Props) {
       const domainNames = new Set<string>();
       domainData.forEach((item) => domainNames.add(item.domain));
       overviewData.forEach((item) => domainNames.add(item.domain));
+      if (searchBotMenuDomain && !domainNames.has(searchBotMenuDomain)) {
+        setSearchBotMenuDomain(null);
+      }
       const namesArray = Array.from(domainNames);
       const now = Date.now();
       const shouldPassiveRefresh =
@@ -986,24 +1013,29 @@ const resolveWhois = (
     const isPurging = purgingDomain === domainName;
     const stats = searchBotStats[domainKey];
     const hasStats = Boolean(stats);
-    const fallbackBots = sampleSearchBots.map((bot) => ({
-      key: bot.key,
-      label: bot.label,
-      icon: bot.icon,
-      today: { current: 0, previous: 0, delta: 0 },
-      month: { current: 0, previous: 0, delta: 0 },
-      year: { current: 0, previous: 0, delta: 0 },
-      total: 0,
-    }));
-    const botsToRender = (stats?.bots ?? fallbackBots).filter(
-      (bot) => !SEARCHBOT_HIDDEN_KEYS.has(bot.key),
+    const botEntries = SEARCHBOT_ALL_BOTS.map((bot) => {
+      const source = stats?.bots?.find((item) => item.key === bot.key);
+      const fallback: SearchBotBotStats = source ?? {
+        key: bot.key,
+        label: bot.label,
+        icon: bot.icon,
+        today: { current: 0, previous: 0, delta: 0 },
+        month: { current: 0, previous: 0, delta: 0 },
+        year: { current: 0, previous: 0, delta: 0 },
+        total: 0,
+      };
+      return { definition: bot, stats: fallback };
+    });
+    const primaryBots = botEntries.filter(({ definition }) =>
+      SEARCHBOT_PRIMARY_KEYS.includes(definition.key),
     );
     const showSearchBots =
-      searchBotAvailable !== false && botsToRender.length > 0;
+      searchBotAvailable !== false && primaryBots.length > 0;
     const isRefreshingBots = !!searchBotRefreshing[domainKey];
     const generatedAt = stats?.generated_at
       ? new Date(stats.generated_at).toLocaleString()
       : undefined;
+    const isMenuOpen = searchBotMenuDomain === domainName;
 
     const formatCount = (value: number) =>
       value.toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -1012,12 +1044,12 @@ const resolveWhois = (
       <div className="domain-actions">
         {showSearchBots && (
           <div className="searchbot-actions">
-            {botsToRender.map((bot) => {
-              const exportKey = `${domainName}|${bot.key}`;
+            {primaryBots.map(({ definition, stats: botStats }) => {
+              const exportKey = `${domainName}|${definition.key}`;
               const exporting = searchBotExporting === exportKey;
               const canExport = hasStats && !exporting;
               return (
-                <div className="searchbot-bot" key={bot.key}>
+                <div className="searchbot-bot" key={definition.key}>
                   <button
                     type="button"
                     className={`searchbot-counts${
@@ -1037,7 +1069,7 @@ const resolveWhois = (
                     }
                   >
                     {SEARCHBOT_PERIODS.map((period) => {
-                      const periodStats = bot[period.key];
+                      const periodStats = botStats[period.key];
                       const delta =
                         hasStats && periodStats.delta !== 0
                           ? periodStats.delta
@@ -1072,11 +1104,11 @@ const resolveWhois = (
                     onClick={(event) => {
                       event.stopPropagation();
                       if (canExport) {
-                        handleExportSearchBotLogs(domainName, bot.key);
+                        handleExportSearchBotLogs(domainName, definition.key);
                       }
                     }}
                     disabled={!canExport}
-                    title={`Export ${bot.label} logs`}
+                    title={`Export ${definition.label} logs`}
                   >
                     {exporting ? (
                       <svg
@@ -1091,12 +1123,101 @@ const resolveWhois = (
                         <path d="M21 12a9 9 0 11-6.219-8.56"/>
                       </svg>
                     ) : (
-                      <span>{bot.icon ?? bot.key.slice(0, 1).toUpperCase()}</span>
+                      <span>
+                        {definition.icon ??
+                          definition.key.slice(0, 1).toUpperCase()}
+                      </span>
                     )}
                   </button>
                 </div>
               );
             })}
+            <div className="searchbot-menu-container">
+              <button
+                type="button"
+                className="searchbot-menu-trigger"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setSearchBotMenuDomain((prev) =>
+                    prev === domainName ? null : domainName,
+                  );
+                }}
+                title="View crawler details"
+              >
+                ⋯
+              </button>
+              {isMenuOpen && (
+                <div className="searchbot-menu" ref={searchBotMenuRef}>
+                  <div className="searchbot-menu-list">
+                    {botEntries.map(({ definition, stats: botStats }) => {
+                      const exportKey = `${domainName}|${definition.key}`;
+                      const exporting = searchBotExporting === exportKey;
+                      const canExport = hasStats && !exporting;
+                      return (
+                        <div className="searchbot-menu-item" key={definition.key}>
+                          <div className="searchbot-menu-item-info">
+                            <div className="searchbot-menu-item-head">
+                              <span className="searchbot-menu-item-icon">
+                                {definition.icon ??
+                                  definition.key.slice(0, 1).toUpperCase()}
+                              </span>
+                              <span className="searchbot-menu-item-label">
+                                {botStats.label}
+                              </span>
+                            </div>
+                            <div className="searchbot-menu-metrics">
+                              {SEARCHBOT_PERIODS.map((period) => (
+                                <span key={period.key}>
+                                  {period.label}:{" "}
+                                  {formatCount(botStats[period.key].current)}
+                                </span>
+                              ))}
+                              <span>Total: {formatCount(botStats.total)}</span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="searchbot-menu-export"
+                            title={`Export ${definition.label} logs`}
+                            disabled={!canExport}
+                            onClick={async (event) => {
+                              event.stopPropagation();
+                              if (!canExport) {
+                                return;
+                              }
+                              await handleExportSearchBotLogs(
+                                domainName,
+                                definition.key,
+                              );
+                              setSearchBotMenuDomain(null);
+                            }}
+                          >
+                            {exporting ? (
+                              <svg
+                                className="action-spinner"
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                              >
+                                <path d="M21 12a9 9 0 11-6.219-8.56" />
+                              </svg>
+                            ) : (
+                              <span>
+                                {definition.icon ??
+                                  definition.key.slice(0, 1).toUpperCase()}
+                              </span>
+                            )}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
         <button
