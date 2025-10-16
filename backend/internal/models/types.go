@@ -35,23 +35,102 @@ func MergeClock(local ClockVersion, remote ClockVersion) ClockVersion {
 	return local
 }
 
+// DomainRole represents high-level domain behaviour (primary, alias, redirect).
+type DomainRole string
+
+const (
+	DomainRolePrimary  DomainRole = "primary"
+	DomainRoleAlias    DomainRole = "alias"
+	DomainRoleRedirect DomainRole = "redirect"
+)
+
+// Valid reports whether the role is recognised.
+func (r DomainRole) Valid() bool {
+	switch r {
+	case DomainRolePrimary, DomainRoleAlias, DomainRoleRedirect:
+		return true
+	default:
+		return false
+	}
+}
+
+// DomainAlias declares an alias relation to a primary domain.
+type DomainAlias struct {
+	Target string `json:"target"`
+}
+
+// DomainRedirectRule describes a redirect instruction for a domain or path.
+type DomainRedirectRule struct {
+	ID            string `json:"id"`
+	Source        string `json:"source"`
+	Target        string `json:"target"`
+	StatusCode    int    `json:"status_code"`
+	PreservePath  bool   `json:"preserve_path"`
+	PreserveQuery bool   `json:"preserve_query"`
+}
+
+// Normalize trims and standardises rule metadata.
+func (r *DomainRedirectRule) Normalize() {
+	if r == nil {
+		return
+	}
+	r.ID = strings.TrimSpace(r.ID)
+	source := strings.TrimSpace(r.Source)
+	if source != "" {
+		if !strings.HasPrefix(source, "/") {
+			source = "/" + strings.TrimLeft(source, "/")
+		}
+	}
+	r.Source = source
+	r.Target = strings.TrimSpace(r.Target)
+	if r.StatusCode == 0 {
+		r.StatusCode = 301
+	}
+}
+
+// IsDomainRule reports whether the rule applies to the entire domain.
+func (r DomainRedirectRule) IsDomainRule() bool {
+	return strings.TrimSpace(r.Source) == ""
+}
+
+// IsPathRule reports whether the rule applies to a specific path.
+func (r DomainRedirectRule) IsPathRule() bool {
+	return strings.HasPrefix(strings.TrimSpace(r.Source), "/")
+}
+
+func normalizeDomainRole(role DomainRole) (DomainRole, bool) {
+	switch strings.ToLower(strings.TrimSpace(string(role))) {
+	case "", "primary":
+		return DomainRolePrimary, true
+	case "alias":
+		return DomainRoleAlias, true
+	case "redirect":
+		return DomainRoleRedirect, true
+	default:
+		return DomainRole(""), false
+	}
+}
+
 // DomainRecord represents an apex A record for a managed zone.
 type DomainRecord struct {
-	Domain       string       `json:"domain"`
-	Owner        string       `json:"owner"`
-	OwnerEmail   string       `json:"owner_email,omitempty"`
-	OriginIP     string       `json:"origin_ip"`
-	Proxied      bool         `json:"proxied"`
-	TTL          int          `json:"ttl"`
-	CacheVersion int64        `json:"cache_version,omitempty"`
-	VanityNS     []string     `json:"vanity_ns,omitempty"`
-	UpdatedAt    time.Time    `json:"updated_at"`
-	DeletedAt    time.Time    `json:"deleted_at,omitempty"`
-	TLS          DomainTLS    `json:"tls,omitempty"`
-	Edge         DomainEdge   `json:"edge,omitempty"`
-	Whois        DomainWhois  `json:"whois,omitempty"`
-	WAF          DomainWAF    `json:"waf,omitempty"`
-	Version      ClockVersion `json:"version"`
+	Domain        string               `json:"domain"`
+	Owner         string               `json:"owner"`
+	OwnerEmail    string               `json:"owner_email,omitempty"`
+	OriginIP      string               `json:"origin_ip"`
+	Proxied       bool                 `json:"proxied"`
+	TTL           int                  `json:"ttl"`
+	CacheVersion  int64                `json:"cache_version,omitempty"`
+	VanityNS      []string             `json:"vanity_ns,omitempty"`
+	UpdatedAt     time.Time            `json:"updated_at"`
+	DeletedAt     time.Time            `json:"deleted_at,omitempty"`
+	TLS           DomainTLS            `json:"tls,omitempty"`
+	Edge          DomainEdge           `json:"edge,omitempty"`
+	Whois         DomainWhois          `json:"whois,omitempty"`
+	WAF           DomainWAF            `json:"waf,omitempty"`
+	Version       ClockVersion         `json:"version"`
+	Role          DomainRole           `json:"role,omitempty"`
+	Alias         *DomainAlias         `json:"alias,omitempty"`
+	RedirectRules []DomainRedirectRule `json:"redirect_rules,omitempty"`
 }
 
 // Validate performs minimal sanity checks.
@@ -70,6 +149,64 @@ func (d *DomainRecord) Validate() error {
 	d.OriginIP = origin
 	if d.TTL <= 0 {
 		d.TTL = 60
+	}
+	d.NormalizeLinks()
+	if strings.TrimSpace(string(d.Role)) == "" {
+		d.Role = DomainRolePrimary
+	}
+	if !d.Role.Valid() {
+		return ErrValidation("invalid domain role")
+	}
+	switch d.Role {
+	case DomainRoleAlias:
+		if d.Alias == nil || d.Alias.Target == "" {
+			return ErrValidation("alias target must be provided")
+		}
+		if d.Alias.Target == d.Domain {
+			return ErrValidation("alias target must differ from domain")
+		}
+	case DomainRoleRedirect:
+		if len(d.RedirectRules) == 0 {
+			return ErrValidation("redirect domains require a domain redirect rule")
+		}
+	default:
+		d.Alias = nil
+	}
+	if d.Role == DomainRoleAlias {
+		d.RedirectRules = nil
+	} else if len(d.RedirectRules) > 0 {
+		domainRuleCount := 0
+		for i := range d.RedirectRules {
+			rule := &d.RedirectRules[i]
+			rule.Normalize()
+			if rule.ID == "" {
+				return ErrValidation("redirect rule id required")
+			}
+			if rule.Target == "" {
+				return ErrValidation("redirect rule target must be provided")
+			}
+			if !validRedirectStatus(rule.StatusCode) {
+				return ErrValidation("invalid redirect status code")
+			}
+			if rule.IsDomainRule() {
+				domainRuleCount++
+			} else if !rule.IsPathRule() {
+				return ErrValidation("redirect rule source must be empty or start with '/'")
+			}
+		}
+		if domainRuleCount > 1 {
+			return ErrValidation("only one domain redirect rule supported")
+		}
+		if d.Role == DomainRoleRedirect {
+			if domainRuleCount != 1 {
+				return ErrValidation("redirect domains require a domain redirect rule")
+			}
+			if len(d.RedirectRules) != domainRuleCount {
+				return ErrValidation("redirect domains cannot define path redirect rules")
+			}
+		}
+	} else {
+		d.RedirectRules = nil
 	}
 	d.EnsureCacheVersion()
 	d.WAF.Normalize()
@@ -120,6 +257,7 @@ func (d *DomainRecord) EnsureCacheVersion() {
 	sort.Strings(d.VanityNS)
 	d.Whois.Normalize()
 	d.WAF.Normalize()
+	d.NormalizeLinks()
 }
 
 // MatchesOwner reports whether the record belongs to the provided owner id or email.
@@ -177,6 +315,9 @@ func (d *DomainRecord) MarkDeleted(ts time.Time) {
 	d.UpdatedAt = ts
 	d.Whois = DomainWhois{}
 	d.WAF = DomainWAF{}
+	d.Role = DomainRolePrimary
+	d.Alias = nil
+	d.RedirectRules = nil
 }
 
 // Sanitize redacts sensitive TLS material before returning records via API.
@@ -194,7 +335,54 @@ func (d DomainRecord) Sanitize() DomainRecord {
 	d.TLS.LockID = ""
 	d.TLS.LockNodeID = ""
 	d.TLS.LockExpiresAt = time.Time{}
+	d.NormalizeLinks()
 	return d
+}
+
+// NormalizeLinks standardises role, alias, and redirect rule metadata.
+func (d *DomainRecord) NormalizeLinks() {
+	if d == nil {
+		return
+	}
+	if normalized, ok := normalizeDomainRole(d.Role); ok {
+		d.Role = normalized
+	} else {
+		d.Role = DomainRole(strings.ToLower(strings.TrimSpace(string(d.Role))))
+	}
+	if d.Role != DomainRoleAlias {
+		d.Alias = nil
+	} else if d.Alias != nil {
+		d.Alias.Target = strings.ToLower(strings.TrimSpace(d.Alias.Target))
+	}
+	if d.Role == DomainRoleAlias {
+		d.RedirectRules = nil
+		return
+	}
+	if len(d.RedirectRules) == 0 {
+		d.RedirectRules = nil
+		return
+	}
+	normalized := make([]DomainRedirectRule, 0, len(d.RedirectRules))
+	for _, rule := range d.RedirectRules {
+		rule.Normalize()
+		normalized = append(normalized, rule)
+	}
+	sort.SliceStable(normalized, func(i, j int) bool {
+		if normalized[i].Source == normalized[j].Source {
+			return normalized[i].ID < normalized[j].ID
+		}
+		return normalized[i].Source < normalized[j].Source
+	})
+	d.RedirectRules = normalized
+}
+
+func validRedirectStatus(code int) bool {
+	switch code {
+	case 301, 302, 307, 308:
+		return true
+	default:
+		return false
+	}
 }
 
 // DomainEdge captures edge assignment preferences and computed state.

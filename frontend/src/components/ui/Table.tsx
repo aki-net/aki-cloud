@@ -22,6 +22,7 @@ interface TableProps<T> {
   loading?: boolean;
   emptyMessage?: string;
   className?: string;
+  rowClassName?: (item: T, index: number) => string | undefined;
 }
 
 export default function Table<T>({
@@ -35,6 +36,7 @@ export default function Table<T>({
   loading = false,
   emptyMessage = 'No data available',
   className,
+  rowClassName,
 }: TableProps<T>) {
   const selectedSet = selectedRows ?? new Set<string>();
   const hasSelection = selectedRows !== undefined && onRowSelect !== undefined;
@@ -102,14 +104,15 @@ export default function Table<T>({
               </td>
             </tr>
           ) : (
-            data.map((item) => {
+            data.map((item, index) => {
               const key = keyExtractor(item);
               const isSelected = hasSelection && selectedSet.has(key);
-              
+              const extraRowClass = rowClassName?.(item, index);
+
               return (
                 <tr
                   key={key}
-                  className={clsx('table-row', {
+                  className={clsx('table-row', extraRowClass, {
                     'table-row-clickable': onRowClick,
                     'table-row-selected': isSelected,
                   })}

@@ -17,6 +17,8 @@ import {
   DomainWhois,
   SearchBotDomainStats,
   WAFDefinition,
+  DomainRedirectRule,
+  DomainRole,
 } from "../types";
 import Table from "./ui/Table";
 import Button from "./ui/Button";
@@ -68,6 +70,28 @@ interface EdgeModalData {
   node_id?: string;
 }
 
+type DomainLike = Domain | DomainOverview;
+
+interface DomainRowMeta {
+  position: 'parent' | 'alias' | 'redirect' | 'standalone';
+  parentDomain?: string;
+  familyId?: string;
+  familyIndex?: number;
+  aliasChildren: DomainWithMeta[];
+  redirectChildren: DomainWithMeta[];
+  domainRule: DomainRedirectRule | null;
+  pathRules: DomainRedirectRule[];
+  redirectTarget?: string;
+  redirectExternal?: boolean;
+}
+
+type DomainWithMeta = DomainLike & { __meta: DomainRowMeta };
+
+interface RoleModalState {
+  domain: DomainWithMeta;
+  mode: 'alias' | 'redirect' | 'primary';
+}
+
 export default function DomainManagement({ isAdmin = false }: Props) {
   const { user } = useAuth();
   const [domains, setDomains] = useState<Domain[]>([]);
@@ -113,6 +137,8 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   );
   const [wafDefinitions, setWafDefinitions] = useState<WAFDefinition[]>([]);
   const [wafUpdatingDomains, setWafUpdatingDomains] = useState<Set<string>>(new Set());
+  const [roleModalState, setRoleModalState] = useState<RoleModalState | null>(null);
+  const [redirectRulesModalDomain, setRedirectRulesModalDomain] = useState<DomainWithMeta | null>(null);
   const searchBotLastPassiveRef = useRef<number>(0);
   const [searchBotMenuDomain, setSearchBotMenuDomain] = useState<string | null>(
     null,
@@ -1790,6 +1816,237 @@ const resolveWhois = (
   };
 
   const filteredData = getFilteredData();
+  const referenceDomains = useMemo<DomainLike[]>(() => {
+    const combined = new Map<string, DomainLike>();
+    domains.forEach((record) => combined.set(record.domain, record));
+    allDomains.forEach((record) => combined.set(record.domain, record));
+    return Array.from(combined.values());
+  }, [domains, allDomains]);
+
+  const tableData = useMemo(() => {
+    return buildDomainRows(filteredData as DomainLike[]);
+  }, [filteredData]);
+
+  const primaryDomainOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const entries: string[] = [];
+    referenceDomains.forEach((record) => {
+      const role = record.role ?? "primary";
+      if (role === "primary" && !seen.has(record.domain)) {
+        seen.add(record.domain);
+        entries.push(record.domain);
+      }
+    });
+    return entries.sort((a, b) => a.localeCompare(b));
+  }, [referenceDomains]);
+
+  const openRoleModal = (row: DomainWithMeta, mode: 'alias' | 'redirect' | 'primary') => {
+    setRoleModalState({ domain: row, mode });
+  };
+
+  const handleOpenRedirectRulesModal = (row: DomainWithMeta) => {
+    setRedirectRulesModalDomain(row);
+  };
+
+  const handleRemoveAlias = async (row: DomainWithMeta) => {
+    try {
+      await domainsApi.update(row.domain, {
+        role: 'primary',
+        alias: null,
+        redirect_rules: [],
+      });
+      toast.success(`${row.domain} converted to primary`);
+      await loadData();
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Failed to remove alias');
+    }
+  };
+
+  const handleRemoveRedirect = async (row: DomainWithMeta) => {
+    try {
+      await domainsApi.update(row.domain, {
+        role: 'primary',
+        alias: null,
+        redirect_rules: [],
+      });
+      toast.success(`${row.domain} converted to primary`);
+      await loadData();
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Failed to remove redirect');
+    }
+  };
+
+  const formatRedirectTarget = (target?: string, external?: boolean) => {
+    if (!target) {
+      return '—';
+    }
+    if (external || target.includes('://')) {
+      return `${target} (external)`;
+    }
+    return target;
+  };
+
+  const renderDomainCell = (row: DomainWithMeta) => {
+    const meta = row.__meta;
+    const ownerMissing = (row as DomainOverview).owner_exists === false;
+    const isAlias = meta.position === 'alias';
+    const isRedirect = meta.position === 'redirect';
+    const isParent = meta.position === 'parent';
+    const domainRule = meta.domainRule;
+    const pathRules = meta.pathRules ?? [];
+    const pathRulesInactive = Boolean(domainRule) && isParent;
+
+    const handleAction = (event: React.MouseEvent, callback: () => void) => {
+      event.stopPropagation();
+      callback();
+    };
+
+    const aliasChips = isParent && meta.aliasChildren.length > 0 && (
+      <div className="domain-chip-group">
+        {meta.aliasChildren.map((child) => (
+          <span key={`alias-${child.domain}`} className="domain-chip domain-chip-alias">
+            <span className="domain-chip-icon">＋</span>
+            <span className="domain-chip-label">{child.domain}</span>
+            <span className="domain-chip-actions">
+              <button
+                type="button"
+                onClick={(e) => handleAction(e, () => openRoleModal(child, 'alias'))}
+                title="Edit alias"
+              >
+                ✎
+              </button>
+              <button
+                type="button"
+                onClick={(e) => handleAction(e, () => handleRemoveAlias(child))}
+                title="Remove alias"
+              >
+                ✕
+              </button>
+            </span>
+          </span>
+        ))}
+      </div>
+    );
+
+    const redirectChips = isParent && meta.redirectChildren.length > 0 && (
+      <div className="domain-chip-group">
+        {meta.redirectChildren.map((child) => (
+          <span key={`redirect-${child.domain}`} className="domain-chip domain-chip-redirect">
+            <span className="domain-chip-icon">↷</span>
+            <span className="domain-chip-label">{child.domain}</span>
+            <span className="domain-chip-secondary">
+              {formatRedirectTarget(child.__meta.redirectTarget, child.__meta.redirectExternal)}
+            </span>
+            <span className="domain-chip-actions">
+              <button
+                type="button"
+                onClick={(e) => handleAction(e, () => openRoleModal(child, 'redirect'))}
+                title="Edit redirect"
+              >
+                ✎
+              </button>
+              <button
+                type="button"
+                onClick={(e) => handleAction(e, () => handleRemoveRedirect(child))}
+                title="Remove redirect"
+              >
+                ✕
+              </button>
+            </span>
+          </span>
+        ))}
+      </div>
+    );
+
+    let subtitle: React.ReactNode = null;
+    if (isParent) {
+      subtitle = <span className="domain-label domain-label-parent">Parent</span>;
+    } else if (isAlias) {
+      subtitle = (
+        <span className="domain-label">
+          Alias of <strong>{meta.parentDomain ?? 'unknown'}</strong>
+        </span>
+      );
+    } else if (isRedirect) {
+      subtitle = (
+        <span className="domain-label">
+          Redirects to{' '}
+            <strong>{formatRedirectTarget(meta.redirectTarget, meta.redirectExternal)}</strong>
+        </span>
+      );
+    }
+
+    return (
+      <div className={`domain-cell domain-cell-${meta.position}`}>
+        <div className="domain-header">
+          <div className="domain-title">
+            <span className="domain-name mono">{row.domain}</span>
+            {ownerMissing && (
+              <Badge variant="warning" size="sm">
+                Orphaned
+              </Badge>
+            )}
+          </div>
+          <div className="domain-inline-actions">
+            <button
+              type="button"
+              className="domain-inline-button"
+              onClick={(e) => handleAction(e, () => openRoleModal(row, 'alias'))}
+              title="Configure alias"
+            >
+              ＋
+            </button>
+            <button
+              type="button"
+              className="domain-inline-button"
+              onClick={(e) => handleAction(e, () => openRoleModal(row, 'redirect'))}
+              title="Configure redirect"
+            >
+              ↷
+            </button>
+            {!isAlias && (
+              <button
+                type="button"
+                className="domain-inline-button"
+                onClick={(e) => handleAction(e, () => handleOpenRedirectRulesModal(row))}
+                title="Manage redirect rules"
+              >
+                ☰
+              </button>
+            )}
+          </div>
+        </div>
+        {subtitle && <div className="domain-subtitle">{subtitle}</div>}
+        {domainRule && isParent && (
+          <div className="domain-redirect-summary">
+            <span className="domain-redirect-icon">↷</span>
+            <div className="domain-redirect-text">
+              Whole-domain redirect to{' '}
+              <strong>{formatRedirectTarget(domainRule.target, domainRule.target?.includes('://'))}</strong>
+              <span className="domain-redirect-flags">
+                {domainRule.preserve_path && <span className="domain-redirect-flag">keep path</span>}
+                {!domainRule.preserve_query && <span className="domain-redirect-flag">drop query</span>}
+              </span>
+            </div>
+          </div>
+        )}
+        {aliasChips}
+        {redirectChips}
+        {pathRules.length > 0 && (
+          <div className={`path-redirect-list${pathRulesInactive ? ' inactive' : ''}`}>
+            {pathRules.map((rule) => (
+              <div key={`${rule.id || rule.source}`} className="path-redirect-item">
+                <span className="path-redirect-arrow">⇢</span>
+                <code className="path-redirect-source">{rule.source}</code>
+                <span className="path-redirect-target">→ {rule.target}</span>
+                {pathRulesInactive && <span className="path-redirect-badge">inactive</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
   const orphanedCount = allDomains.filter((d) => !d.owner_exists).length;
   const selectionEnabled =
     viewMode === "my" ||
@@ -1802,16 +2059,7 @@ const resolveWhois = (
   columns.push({
     key: "domain",
     header: "Domain",
-    accessor: (d: any) => (
-      <div className="domain-cell">
-        <span className="domain-name mono">{d.domain}</span>
-        {d.owner_exists === false && (
-          <Badge variant="warning" size="sm">
-            Orphaned
-          </Badge>
-        )}
-      </div>
-    ),
+    accessor: (row: DomainWithMeta) => renderDomainCell(row),
   });
 
   columns.push({
@@ -2104,8 +2352,8 @@ const resolveWhois = (
       <Card className="domains-card" padding="none">
         <Table
           columns={columns}
-          data={filteredData as any}
-          keyExtractor={(d: any) => d.domain}
+          data={tableData}
+          keyExtractor={(d: DomainWithMeta) => d.domain}
           selectedRows={selectionEnabled ? selectedDomains : undefined}
           onRowSelect={
             selectionEnabled
@@ -2125,12 +2373,17 @@ const resolveWhois = (
               ? (selected) => {
                   if (selected) {
                     setSelectedDomains(
-                      new Set(filteredData.map((d: any) => d.domain)),
+                      new Set(tableData.map((d) => d.domain)),
                     );
                   } else {
                     setSelectedDomains(new Set());
                   }
                 }
+              : undefined
+          }
+          rowClassName={(row) =>
+            row.__meta.familyIndex !== undefined
+              ? `table-row-family-${row.__meta.familyIndex % 6}`
               : undefined
           }
           loading={loading}
@@ -2180,8 +2433,215 @@ const resolveWhois = (
           onReassign={() => handleReassignEdge(edgeModalData)}
         />
       )}
+      {roleModalState && (
+        <DomainRoleModal
+          domain={roleModalState.domain}
+          mode={roleModalState.mode}
+          primaryOptions={primaryDomainOptions}
+          onClose={() => setRoleModalState(null)}
+          onSaved={() => {
+            setRoleModalState(null);
+            loadData();
+          }}
+        />
+      )}
+      {redirectRulesModalDomain && (
+        <RedirectRulesModal
+          domain={redirectRulesModalDomain}
+          onClose={() => setRedirectRulesModalDomain(null)}
+          onSaved={() => {
+            setRedirectRulesModalDomain(null);
+            loadData();
+          }}
+        />
+      )}
     </div>
   );
+}
+
+function splitRedirectRules(record: DomainLike): {
+  domainRule: DomainRedirectRule | null;
+  pathRules: DomainRedirectRule[];
+} {
+  const rules = record.redirect_rules ?? [];
+  let domainRule: DomainRedirectRule | null = null;
+  const pathRules: DomainRedirectRule[] = [];
+  rules.forEach((rule) => {
+    const source = rule.source?.trim() ?? "";
+    if (source === "") {
+      domainRule = rule;
+      return;
+    }
+    if (source.startsWith("/")) {
+      pathRules.push(rule);
+    }
+  });
+  return { domainRule, pathRules };
+}
+
+function computeExpiryTimestamp(record: DomainLike): number {
+  const expiresAt = record.whois?.expires_at;
+  if (!expiresAt) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const ts = Date.parse(expiresAt);
+  if (Number.isNaN(ts)) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return ts;
+}
+
+function compareByExpiry(a: DomainLike, b: DomainLike): number {
+  const tsA = computeExpiryTimestamp(a);
+  const tsB = computeExpiryTimestamp(b);
+  if (tsA === tsB) {
+    return a.domain.localeCompare(b.domain);
+  }
+  if (tsA === Number.POSITIVE_INFINITY) {
+    return 1;
+  }
+  if (tsB === Number.POSITIVE_INFINITY) {
+    return -1;
+  }
+  return tsA - tsB;
+}
+
+function buildDomainRows(records: DomainLike[]): DomainWithMeta[] {
+  const clones: DomainWithMeta[] = records.map((record) => {
+    const cloned = { ...(record as any) } as DomainLike;
+    const { domainRule, pathRules } = splitRedirectRules(cloned);
+    const meta: DomainRowMeta = {
+      position: 'standalone',
+      aliasChildren: [],
+      redirectChildren: [],
+      domainRule,
+      pathRules: [...pathRules],
+      parentDomain: undefined,
+      familyId: undefined,
+      familyIndex: undefined,
+      redirectTarget: domainRule?.target,
+      redirectExternal: false,
+    };
+    return { ...(cloned as any), __meta: meta } as DomainWithMeta;
+  });
+
+  const recordMap = new Map<string, DomainWithMeta>();
+  clones.forEach((record) => {
+    recordMap.set(record.domain, record);
+  });
+
+  const families = new Map<string, { parent?: DomainWithMeta; aliases: DomainWithMeta[]; redirects: DomainWithMeta[] }>();
+
+  clones.forEach((record) => {
+    const role: DomainRole = record.role ?? 'primary';
+    const meta = record.__meta;
+    if (role === 'alias' && record.alias?.target) {
+      const target = record.alias.target;
+      const parent = recordMap.get(target);
+      meta.position = 'alias';
+      meta.parentDomain = target;
+      if (parent) {
+        let family = families.get(parent.domain);
+        if (!family) {
+          family = { parent, aliases: [], redirects: [] };
+          families.set(parent.domain, family);
+        } else if (!family.parent) {
+          family.parent = parent;
+        }
+        family.aliases.push(record);
+        parent.__meta.aliasChildren.push(record);
+      } else {
+        families.set(record.domain, { parent: record, aliases: [], redirects: [] });
+      }
+    } else if (role === 'redirect') {
+      const { domainRule } = splitRedirectRules(record);
+      const target = domainRule?.target?.trim() ?? '';
+      const normalized = target.toLowerCase();
+      meta.position = 'redirect';
+      meta.redirectTarget = target;
+      const parent = normalized ? recordMap.get(normalized) : undefined;
+      const isInternal = !!parent && (parent.role ?? 'primary') === 'primary';
+      meta.redirectExternal = !isInternal && !!target && target.includes('://');
+      if (isInternal && parent) {
+        meta.parentDomain = parent.domain;
+        let family = families.get(parent.domain);
+        if (!family) {
+          family = { parent, aliases: [], redirects: [] };
+          families.set(parent.domain, family);
+        } else if (!family.parent) {
+          family.parent = parent;
+        }
+        family.redirects.push(record);
+        parent.__meta.redirectChildren.push(record);
+      } else {
+        families.set(record.domain, { parent: record, aliases: [], redirects: [] });
+      }
+    } else {
+      meta.position = 'parent';
+      let family = families.get(record.domain);
+      if (!family) {
+        family = { parent: record, aliases: [], redirects: [] };
+        families.set(record.domain, family);
+      } else if (!family.parent) {
+        family.parent = record;
+      }
+    }
+  });
+
+  families.forEach((family) => {
+    if (family.parent) {
+      family.parent.__meta.aliasChildren = family.aliases;
+      family.parent.__meta.redirectChildren = family.redirects;
+      family.parent.__meta.position = family.parent.__meta.position === 'standalone' ? 'parent' : family.parent.__meta.position;
+    }
+  });
+
+  const familyList = Array.from(families.values());
+  familyList.sort((a, b) => {
+    const aMembers = [a.parent, ...a.aliases, ...a.redirects].filter(Boolean) as DomainLike[];
+    const bMembers = [b.parent, ...b.aliases, ...b.redirects].filter(Boolean) as DomainLike[];
+    const aExpiry = aMembers.length > 0 ? Math.min(...aMembers.map(computeExpiryTimestamp)) : Number.POSITIVE_INFINITY;
+    const bExpiry = bMembers.length > 0 ? Math.min(...bMembers.map(computeExpiryTimestamp)) : Number.POSITIVE_INFINITY;
+    if (aExpiry === bExpiry) {
+      const aName = a.parent?.domain ?? a.aliases[0]?.domain ?? a.redirects[0]?.domain ?? '';
+      const bName = b.parent?.domain ?? b.aliases[0]?.domain ?? b.redirects[0]?.domain ?? '';
+      return aName.localeCompare(bName);
+    }
+    if (aExpiry === Number.POSITIVE_INFINITY) {
+      return 1;
+    }
+    if (bExpiry === Number.POSITIVE_INFINITY) {
+      return -1;
+    }
+    return aExpiry - bExpiry;
+  });
+
+  const rows: DomainWithMeta[] = [];
+  familyList.forEach((family, index) => {
+    const familyIndex = index % 6;
+    const pushRecord = (record?: DomainWithMeta) => {
+      if (!record) {
+        return;
+      }
+      record.__meta.familyIndex = familyIndex;
+      record.__meta.familyId = family.parent?.domain ?? record.domain;
+      rows.push(record);
+    };
+    const parent = family.parent;
+    if (parent) {
+      pushRecord(parent);
+      const sortedAliases = family.aliases.slice().sort((a, b) => compareByExpiry(a, b));
+      sortedAliases.forEach((alias) => pushRecord(alias));
+      const sortedRedirects = family.redirects.slice().sort((a, b) => compareByExpiry(a, b));
+      sortedRedirects.forEach((redirect) => pushRecord(redirect));
+    } else {
+      const standaloneMembers = [...family.aliases, ...family.redirects];
+      const sortedMembers = standaloneMembers.slice().sort((a, b) => compareByExpiry(a, b));
+      sortedMembers.forEach((member) => pushRecord(member));
+    }
+  });
+
+  return rows;
 }
 
 function AddDomainModal({
@@ -2457,6 +2917,530 @@ function AddDomainModal({
               Add {bulkMode ? "Domains" : "Domain"}
             </Button>
           </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+interface DomainRoleModalProps {
+  domain: DomainWithMeta;
+  mode: 'alias' | 'redirect' | 'primary';
+  onClose: () => void;
+  onSaved: () => void;
+  primaryOptions: string[];
+}
+
+function DomainRoleModal({ domain, mode, onClose, onSaved, primaryOptions }: DomainRoleModalProps) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  const [isMouseDown, setIsMouseDown] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const availablePrimarySet = new Set<string>();
+  primaryOptions.forEach((option) => {
+    if (option !== domain.domain) {
+      availablePrimarySet.add(option);
+    }
+  });
+  if (domain.alias?.target) {
+    availablePrimarySet.add(domain.alias.target);
+  }
+  const availablePrimaries = Array.from(availablePrimarySet);
+
+  const initialAliasTarget = domain.alias?.target ?? availablePrimaries[0] ?? '';
+  const [aliasTarget, setAliasTarget] = useState(initialAliasTarget);
+
+  const existingDomainRule = domain.__meta.domainRule;
+  const [redirectTarget, setRedirectTarget] = useState(existingDomainRule?.target ?? '');
+  const [redirectStatus, setRedirectStatus] = useState(existingDomainRule?.status_code ?? 301);
+  const [redirectPreservePath, setRedirectPreservePath] = useState(existingDomainRule?.preserve_path ?? false);
+  const [redirectPreserveQuery, setRedirectPreserveQuery] = useState(
+    existingDomainRule ? existingDomainRule.preserve_query : true,
+  );
+
+  const handleMouseDown = (event: React.MouseEvent) => {
+    if (!modalRef.current?.contains(event.target as Node)) {
+      setIsMouseDown(true);
+    }
+  };
+
+  const handleMouseUp = (event: React.MouseEvent) => {
+    if (isMouseDown && !modalRef.current?.contains(event.target as Node)) {
+      onClose();
+    }
+    setIsMouseDown(false);
+  };
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setLoading(true);
+    try {
+      if (mode === 'alias') {
+        if (!aliasTarget) {
+          toast.error('Select a primary domain to alias');
+          setLoading(false);
+          return;
+        }
+        await domainsApi.update(domain.domain, {
+          role: 'alias',
+          alias: { target: aliasTarget },
+          redirect_rules: [],
+        });
+        toast.success(`${domain.domain} now aliases ${aliasTarget}`);
+      } else if (mode === 'redirect') {
+        const target = redirectTarget.trim();
+        if (!target) {
+          toast.error('Redirect target is required');
+          setLoading(false);
+          return;
+        }
+        const rule: DomainRedirectRule = {
+          id: existingDomainRule?.id ?? '',
+          source: '',
+          target,
+          status_code: redirectStatus,
+          preserve_path: redirectPreservePath,
+          preserve_query: redirectPreserveQuery,
+        };
+        await domainsApi.update(domain.domain, {
+          role: 'redirect',
+          redirect_rules: [rule],
+        });
+        toast.success(`${domain.domain} now redirects to ${target}`);
+      } else {
+        const pathRules = domain.__meta.pathRules ?? [];
+        await domainsApi.update(domain.domain, {
+          role: 'primary',
+          alias: null,
+          redirect_rules: pathRules,
+        });
+        toast.success(`${domain.domain} converted to primary`);
+      }
+      onSaved();
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Failed to update domain role');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onMouseDown={handleMouseDown} onMouseUp={handleMouseUp}>
+      <div className="modal" ref={modalRef}>
+        <header className="modal-header">
+          <h2>
+            {mode === 'alias' && `Alias ${domain.domain}`}
+            {mode === 'redirect' && `Redirect ${domain.domain}`}
+            {mode === 'primary' && `Set ${domain.domain} to primary`}
+          </h2>
+          <button type="button" className="modal-close" onClick={onClose}>
+            ×
+          </button>
+        </header>
+        <form className="modal-content" onSubmit={handleSubmit}>
+          {mode === 'alias' && (
+            <div className="form-field">
+              <label>Primary target</label>
+              {availablePrimaries.length === 0 ? (
+                <p className="form-hint">No primary domains available</p>
+              ) : (
+                <select
+                  value={aliasTarget}
+                  onChange={(e) => setAliasTarget(e.target.value)}
+                  required
+                >
+                  <option value="" disabled>
+                    Select primary domain
+                  </option>
+                  {availablePrimaries.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+          {mode === 'redirect' && (
+            <>
+              <div className="form-field">
+                <label>Redirect target</label>
+                <input
+                  value={redirectTarget}
+                  onChange={(e) => setRedirectTarget(e.target.value)}
+                  placeholder="https://example.com"
+                  required
+                />
+              </div>
+              <div className="form-field-inline">
+                <label>Status code</label>
+                <select
+                  value={redirectStatus}
+                  onChange={(e) => setRedirectStatus(Number(e.target.value))}
+                >
+                  <option value={301}>301 (Moved Permanently)</option>
+                  <option value={302}>302 (Found)</option>
+                  <option value={307}>307 (Temporary Redirect)</option>
+                  <option value={308}>308 (Permanent Redirect)</option>
+                </select>
+              </div>
+              <div className="form-field-checkboxes">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={redirectPreservePath}
+                    onChange={(e) => setRedirectPreservePath(e.target.checked)}
+                  />
+                  Preserve path
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={redirectPreserveQuery}
+                    onChange={(e) => setRedirectPreserveQuery(e.target.checked)}
+                  />
+                  Preserve query string
+                </label>
+              </div>
+            </>
+          )}
+          {mode === 'primary' && (
+            <p className="form-hint">
+              This will convert the domain back to a standard configuration. Existing alias or redirect settings will be removed.
+            </p>
+          )}
+          <footer className="modal-footer">
+            <Button type="button" variant="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" loading={loading} disabled={mode === 'alias' && availablePrimaries.length === 0}>
+              Save
+            </Button>
+          </footer>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+interface RedirectRulesModalProps {
+  domain: DomainWithMeta;
+  onClose: () => void;
+  onSaved: () => void;
+}
+
+function RedirectRulesModal({ domain, onClose, onSaved }: RedirectRulesModalProps) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  const [isMouseDown, setIsMouseDown] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const forceDomainRedirect = domain.role === 'redirect';
+  const initialDomainRule = domain.__meta.domainRule;
+  const [domainRedirectEnabled, setDomainRedirectEnabled] = useState(
+    forceDomainRedirect || Boolean(initialDomainRule),
+  );
+  const [domainRuleConfig, setDomainRuleConfig] = useState<DomainRedirectRule>({
+    id: initialDomainRule?.id ?? '',
+    source: '',
+    target: initialDomainRule?.target ?? '',
+    status_code: initialDomainRule?.status_code ?? 301,
+    preserve_path: initialDomainRule?.preserve_path ?? false,
+    preserve_query: initialDomainRule ? initialDomainRule.preserve_query : true,
+  });
+
+  const [pathRules, setPathRules] = useState<DomainRedirectRule[]>(
+    (domain.__meta.pathRules ?? []).map((rule) => ({ ...rule })),
+  );
+
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [formRule, setFormRule] = useState<DomainRedirectRule>({
+    id: '',
+    source: '',
+    target: '',
+    status_code: 301,
+    preserve_path: false,
+    preserve_query: true,
+  });
+
+  const resetForm = () => {
+    setFormRule({ id: '', source: '', target: '', status_code: 301, preserve_path: false, preserve_query: true });
+    setEditingIndex(null);
+  };
+
+  const handleMouseDown = (event: React.MouseEvent) => {
+    if (!modalRef.current?.contains(event.target as Node)) {
+      setIsMouseDown(true);
+    }
+  };
+
+  const handleMouseUp = (event: React.MouseEvent) => {
+    if (isMouseDown && !modalRef.current?.contains(event.target as Node)) {
+      onClose();
+    }
+    setIsMouseDown(false);
+  };
+
+  const handleEditRule = (index: number) => {
+    const rule = pathRules[index];
+    setEditingIndex(index);
+    setFormRule({ ...rule });
+  };
+
+  const handleDeleteRule = (index: number) => {
+    setPathRules((prev) => prev.filter((_, i) => i !== index));
+    if (editingIndex === index) {
+      resetForm();
+    }
+  };
+
+  const handleRuleSubmit = () => {
+    const source = formRule.source.trim();
+    const target = formRule.target.trim();
+    if (!source.startsWith('/')) {
+      toast.error('Source must start with /');
+      return;
+    }
+    if (!target) {
+      toast.error('Target is required');
+      return;
+    }
+    const normalized: DomainRedirectRule = {
+      ...formRule,
+      source,
+      target,
+    };
+    setPathRules((prev) => {
+      const next = prev.slice();
+      if (editingIndex !== null) {
+        next[editingIndex] = normalized;
+      } else {
+        next.push({ ...normalized, id: normalized.id ?? '' });
+      }
+      return next;
+    });
+    resetForm();
+  };
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setLoading(true);
+    try {
+      if ((forceDomainRedirect || domainRedirectEnabled) && !domainRuleConfig.target.trim()) {
+        toast.error('Whole-domain redirect target is required');
+        setLoading(false);
+        return;
+      }
+      const rules: DomainRedirectRule[] = [];
+      if (forceDomainRedirect || domainRedirectEnabled) {
+        rules.push({
+          id: domainRuleConfig.id ?? '',
+          source: '',
+          target: domainRuleConfig.target.trim(),
+          status_code: domainRuleConfig.status_code,
+          preserve_path: domainRuleConfig.preserve_path,
+          preserve_query: domainRuleConfig.preserve_query,
+        });
+      }
+      pathRules.forEach((rule) => {
+        rules.push({
+          id: rule.id ?? '',
+          source: rule.source,
+          target: rule.target,
+          status_code: rule.status_code,
+          preserve_path: rule.preserve_path,
+          preserve_query: rule.preserve_query,
+        });
+      });
+      await domainsApi.update(domain.domain, {
+        role: forceDomainRedirect ? 'redirect' : domainRedirectEnabled ? 'primary' : domain.role ?? 'primary',
+        redirect_rules: rules,
+      });
+      toast.success('Redirect rules updated');
+      onSaved();
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Failed to update redirect rules');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onMouseDown={handleMouseDown} onMouseUp={handleMouseUp}>
+      <div className="modal" ref={modalRef}>
+        <header className="modal-header">
+          <h2>Redirect rules for {domain.domain}</h2>
+          <button type="button" className="modal-close" onClick={onClose}>
+            ×
+          </button>
+        </header>
+        <form className="modal-content" onSubmit={handleSubmit}>
+          <section className="modal-section">
+            <div className="section-header">
+              <h3>Whole-domain redirect</h3>
+              {!forceDomainRedirect && (
+                <label className="switch-inline">
+                  <input
+                    type="checkbox"
+                    checked={domainRedirectEnabled}
+                    onChange={(e) => setDomainRedirectEnabled(e.target.checked)}
+                  />
+                  Enable
+                </label>
+              )}
+              {forceDomainRedirect && <span className="form-hint">Required for redirect domains</span>}
+            </div>
+            {(forceDomainRedirect || domainRedirectEnabled) && (
+              <div className="form-grid">
+                <label>
+                  Target
+                  <input
+                    value={domainRuleConfig.target}
+                    onChange={(e) =>
+                      setDomainRuleConfig((prev) => ({ ...prev, target: e.target.value }))
+                    }
+                    placeholder="https://example.com"
+                  />
+                </label>
+                <label>
+                  Status code
+                  <select
+                    value={domainRuleConfig.status_code}
+                    onChange={(e) =>
+                      setDomainRuleConfig((prev) => ({ ...prev, status_code: Number(e.target.value) }))
+                    }
+                  >
+                    <option value={301}>301</option>
+                    <option value={302}>302</option>
+                    <option value={307}>307</option>
+                    <option value={308}>308</option>
+                  </select>
+                </label>
+                <label className="checkbox-inline">
+                  <input
+                    type="checkbox"
+                    checked={domainRuleConfig.preserve_path}
+                    onChange={(e) =>
+                      setDomainRuleConfig((prev) => ({ ...prev, preserve_path: e.target.checked }))
+                    }
+                  />
+                  Preserve path
+                </label>
+                <label className="checkbox-inline">
+                  <input
+                    type="checkbox"
+                    checked={domainRuleConfig.preserve_query}
+                    onChange={(e) =>
+                      setDomainRuleConfig((prev) => ({ ...prev, preserve_query: e.target.checked }))
+                    }
+                  />
+                  Preserve query string
+                </label>
+              </div>
+            )}
+          </section>
+          <section className="modal-section">
+            <div className="section-header">
+              <h3>Path redirects</h3>
+              {domainRedirectEnabled && (
+                <span className="form-hint">Inactive while whole-domain redirect is enabled</span>
+              )}
+            </div>
+            {pathRules.length === 0 ? (
+              <p className="form-hint">No path redirects defined</p>
+            ) : (
+              <ul className="path-rule-list">
+                {pathRules.map((rule, index) => (
+                  <li key={`${rule.id || rule.source}`} className="path-rule-item">
+                    <div className="path-rule-info">
+                      <code>{rule.source}</code>
+                      <span>→ {rule.target}</span>
+                      <span className="path-rule-meta">
+                        {rule.status_code}
+                        {rule.preserve_path && <span className="path-rule-flag">path</span>}
+                        {!rule.preserve_query && <span className="path-rule-flag">no query</span>}
+                      </span>
+                    </div>
+                    <div className="path-rule-actions">
+                      <button type="button" onClick={() => handleEditRule(index)}>
+                        Edit
+                      </button>
+                      <button type="button" onClick={() => handleDeleteRule(index)}>
+                        Remove
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="path-rule-form">
+              <div className="form-grid">
+                <label>
+                  Source
+                  <input
+                    value={formRule.source}
+                    onChange={(e) => setFormRule((prev) => ({ ...prev, source: e.target.value }))}
+                    placeholder="/old-path"
+                    required
+                  />
+                </label>
+                <label>
+                  Target
+                  <input
+                    value={formRule.target}
+                    onChange={(e) => setFormRule((prev) => ({ ...prev, target: e.target.value }))}
+                    placeholder="https://example.com/new"
+                    required
+                  />
+                </label>
+                <label>
+                  Status
+                  <select
+                    value={formRule.status_code}
+                    onChange={(e) => setFormRule((prev) => ({ ...prev, status_code: Number(e.target.value) }))}
+                  >
+                    <option value={301}>301</option>
+                    <option value={302}>302</option>
+                    <option value={307}>307</option>
+                    <option value={308}>308</option>
+                  </select>
+                </label>
+                <label className="checkbox-inline">
+                  <input
+                    type="checkbox"
+                    checked={formRule.preserve_path}
+                    onChange={(e) => setFormRule((prev) => ({ ...prev, preserve_path: e.target.checked }))}
+                  />
+                  Preserve path
+                </label>
+                <label className="checkbox-inline">
+                  <input
+                    type="checkbox"
+                    checked={formRule.preserve_query}
+                    onChange={(e) => setFormRule((prev) => ({ ...prev, preserve_query: e.target.checked }))}
+                  />
+                  Preserve query
+                </label>
+              </div>
+              <div className="path-rule-form-actions">
+                {editingIndex !== null && (
+                  <button type="button" onClick={resetForm}>
+                    Cancel edit
+                  </button>
+                )}
+                <button type="button" onClick={handleRuleSubmit}>
+                  {editingIndex !== null ? 'Update rule' : 'Add rule'}
+                </button>
+              </div>
+            </div>
+          </section>
+          <footer className="modal-footer">
+            <Button type="button" variant="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" loading={loading}>
+              Save
+            </Button>
+          </footer>
         </form>
       </div>
     </div>

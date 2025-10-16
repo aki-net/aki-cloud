@@ -14,6 +14,21 @@ export interface LoginCredentials {
 export type EncryptionMode = 'off' | 'flexible' | 'full' | 'full_strict' | 'strict_origin_pull';
 export type CertificateStatus = 'none' | 'pending' | 'active' | 'errored' | 'awaiting_dns';
 
+export type DomainRole = 'primary' | 'alias' | 'redirect';
+
+export interface DomainAlias {
+  target: string;
+}
+
+export interface DomainRedirectRule {
+  id: string;
+  source: string;
+  target: string;
+  status_code: number;
+  preserve_path: boolean;
+  preserve_query: boolean;
+}
+
 export interface DomainTLSCertificate {
   cert_chain_pem?: string;
   issuer?: string;
@@ -158,6 +173,9 @@ export interface Domain {
   ttl: number;
   cache_version?: number;
   updated_at: string;
+  role: DomainRole;
+  alias?: DomainAlias;
+  redirect_rules?: DomainRedirectRule[];
   tls: DomainTLS;
   edge?: DomainEdge;
   vanity_ns?: string[];
@@ -180,6 +198,9 @@ export interface CreateDomainPayload {
   tls?: DomainTLSPayload;
   edge?: DomainEdgePayload;
   waf?: DomainWAFPayload;
+  role?: DomainRole;
+  alias?: DomainAlias;
+  redirect_rules?: DomainRedirectRule[];
 }
 
 export interface UpdateDomainPayload {
@@ -190,6 +211,9 @@ export interface UpdateDomainPayload {
   tls?: DomainTLSPayload;
   edge?: DomainEdgePayload;
   waf?: DomainWAFPayload;
+  role?: DomainRole;
+  alias?: DomainAlias | null;
+  redirect_rules?: DomainRedirectRule[];
 }
 
 export interface DomainWhoisOverridePayload {
@@ -206,6 +230,9 @@ export interface BulkDomainPayload {
   tls?: DomainTLSPayload;
   edge?: DomainEdgePayload;
   waf?: DomainWAFPayload;
+  role?: DomainRole;
+  alias?: DomainAlias;
+  redirect_rules?: DomainRedirectRule[];
 }
 
 export interface BulkUpdateDomainPayload {
@@ -217,6 +244,9 @@ export interface BulkUpdateDomainPayload {
   owner?: string;
   edge?: DomainEdgePayload;
   waf?: DomainWAFPayload;
+  role?: DomainRole;
+  alias?: DomainAlias | null;
+  redirect_rules?: DomainRedirectRule[];
 }
 
 export type BulkDomainStatus = 'created' | 'updated' | 'skipped' | 'failed';
@@ -307,6 +337,9 @@ export interface DomainOverview {
   ttl: number;
   cache_version?: number;
   updated_at: string;
+  role: DomainRole;
+  alias?: DomainAlias;
+  redirect_rules?: DomainRedirectRule[];
   tls_mode?: EncryptionMode;
   tls_status?: CertificateStatus;
   tls_use_recommended?: boolean;

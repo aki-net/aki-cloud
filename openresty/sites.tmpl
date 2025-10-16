@@ -40,6 +40,18 @@ server {
         proxy_set_header True-Client-IP $client_real_ip;
     }
 
+    {{- if .HasDomainRedirect }}
+    location / {
+        return {{ .DomainRedirect.Status }} {{ .DomainRedirect.Return }};
+    }
+    {{- else }}
+    {{- if .HasPathRedirects }}
+    {{- range .PathRedirects }}
+    location ^~ {{ .Source }} {
+        return {{ .Status }} {{ .Return }};
+    }
+    {{- end }}
+    {{- end }}
     {{- if .RedirectHTTP }}
     location / {
         return 301 https://$host$request_uri;
@@ -99,6 +111,7 @@ server {
         {{- end }}
     }
     {{- end }}
+    {{- end }}
 
     {{- if .WAFEnabled }}
     location @edge_waf_block {
@@ -155,6 +168,18 @@ server {
         proxy_set_header True-Client-IP $client_real_ip;
     }
 
+    {{- if .HasDomainRedirect }}
+    location / {
+        return {{ .DomainRedirect.Status }} {{ .DomainRedirect.Return }};
+    }
+    {{- else }}
+    {{- if .HasPathRedirects }}
+    {{- range .PathRedirects }}
+    location ^~ {{ .Source }} {
+        return {{ .Status }} {{ .Return }};
+    }
+    {{- end }}
+    {{- end }}
     location / {
         limit_req zone=edge_req_per_ip burst={{ .LimitReqBurstIP }}{{ if .LimitReqNoDelay }} nodelay{{ end }};
         limit_req zone=edge_req_per_host burst={{ .LimitReqBurstHost }};
@@ -221,6 +246,7 @@ server {
         {{- end }}
         {{- end }}
     }
+    {{- end }}
 
     {{- if .WAFEnabled }}
     location @edge_waf_block {

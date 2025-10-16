@@ -75,6 +75,29 @@ const (
 	challengeTypeDNS  = "dns-01"
 )
 
+type renderRedirect struct {
+	Source string
+	Status int
+	Return string
+}
+
+func buildRedirectReturn(rule models.DomainRedirectRule) string {
+	target := strings.TrimSpace(rule.Target)
+	if target == "" {
+		return ""
+	}
+	if rule.PreservePath && rule.PreserveQuery {
+		return target + "$request_uri"
+	}
+	if rule.PreservePath {
+		return target + "$uri"
+	}
+	if rule.PreserveQuery {
+		return target + "$is_args$args"
+	}
+	return target
+}
+
 // Render writes CoreDNS Corefile and zone files to data directory.
 func (g *CoreDNSGenerator) Render() error {
 	domains, err := g.Store.GetDomains()
@@ -496,6 +519,11 @@ func (g *OpenRestyGenerator) Render() error {
 	if err != nil {
 		return err
 	}
+	domainLookup := make(map[string]*models.DomainRecord, len(domains))
+	for i := range domains {
+		key := strings.ToLower(domains[i].Domain)
+		domainLookup[key] = &domains[i]
+	}
 	nodes, err := g.Store.GetNodes()
 	if err != nil {
 		return err
@@ -737,6 +765,20 @@ func (g *OpenRestyGenerator) Render() error {
 		}
 
 		originAddress := strings.TrimSpace(domain.OriginIP)
+		isAliasDomain := domain.Role == models.DomainRoleAlias && domain.Alias != nil
+		isRedirectDomain := domain.Role == models.DomainRoleRedirect
+		if isAliasDomain {
+			if primary, ok := domainLookup[strings.ToLower(domain.Alias.Target)]; ok && primary.Role == models.DomainRolePrimary {
+				if addr := strings.TrimSpace(primary.OriginIP); addr != "" {
+					originAddress = addr
+				}
+			} else {
+				fmt.Printf("OpenResty generator: alias %s target %s missing or not primary\n", domain.Domain, domain.Alias.Target)
+			}
+		}
+		if isRedirectDomain {
+			originAddress = ""
+		}
 		placeholderActive := false
 		if placeholderCfg.Enabled && originAddress == "" {
 			placeholderActive = true
@@ -834,6 +876,46 @@ func (g *OpenRestyGenerator) Render() error {
 			cacheTTLNotFound = formatTTLSeconds(jitterSeconds(notFoundTTLSeconds, edgeCacheCfg.TTLJitterPct/2, domain.Domain))
 			cacheTTLError = formatTTLSeconds(jitterSeconds(errorTTLSeconds, edgeCacheCfg.TTLJitterPct/2, domain.Domain))
 		}
+		var domainRule *models.DomainRedirectRule
+		pathRules := make([]models.DomainRedirectRule, 0)
+		if len(domain.RedirectRules) > 0 {
+			for _, rule := range domain.RedirectRules {
+				ruleCopy := rule
+				if ruleCopy.IsDomainRule() {
+					if domainRule == nil {
+						domainRule = &ruleCopy
+					}
+					continue
+				}
+				if ruleCopy.IsPathRule() {
+					pathRules = append(pathRules, ruleCopy)
+				}
+			}
+		}
+		hasDomainRedirect := domainRule != nil
+		if hasDomainRedirect || isRedirectDomain {
+			redirectHTTP = false
+		}
+		var domainRedirect renderRedirect
+		var domainRedirectPtr *renderRedirect
+		if hasDomainRedirect {
+			domainRedirect = renderRedirect{
+				Status: domainRule.StatusCode,
+				Return: buildRedirectReturn(*domainRule),
+			}
+			domainRedirectPtr = &domainRedirect
+		}
+		renderPathRedirects := make([]renderRedirect, 0)
+		if !hasDomainRedirect && len(pathRules) > 0 {
+			for _, rule := range pathRules {
+				renderPathRedirects = append(renderPathRedirects, renderRedirect{
+					Source: rule.Source,
+					Status: rule.StatusCode,
+					Return: buildRedirectReturn(rule),
+				})
+			}
+		}
+		hasPathRedirects := len(renderPathRedirects) > 0
 		wafDomainFile := fmt.Sprintf("%s.html", sanitizeFileName(domain.Domain))
 		data := map[string]interface{}{
 			"Domain":              domain.Domain,
@@ -895,6 +977,11 @@ func (g *OpenRestyGenerator) Render() error {
 			"SearchBotLogFile":         searchBotCfg.LogFile,
 			"WAFEnabled":               domain.WAF.IsActive(),
 			"WAFGooglebotOnly":         domain.WAF.IsActive() && domain.WAF.HasPreset(models.WAFPresetAllowGooglebotOnly),
+			"IsRedirectDomain":         isRedirectDomain,
+			"HasDomainRedirect":        hasDomainRedirect,
+			"DomainRedirect":           domainRedirectPtr,
+			"HasPathRedirects":         hasPathRedirects,
+			"PathRedirects":            renderPathRedirects,
 		}
 		buf := bytes.Buffer{}
 		if err := tmpl.Execute(&buf, data); err != nil {

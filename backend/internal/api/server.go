@@ -68,29 +68,32 @@ type loginAttemptDescriptor struct {
 }
 
 type domainOverview struct {
-	Domain       string                   `json:"domain"`
-	OwnerID      string                   `json:"owner_id"`
-	OwnerEmail   string                   `json:"owner_email,omitempty"`
-	OwnerExists  bool                     `json:"owner_exists"`
-	OriginIP     string                   `json:"origin_ip"`
-	Proxied      bool                     `json:"proxied"`
-	TTL          int                      `json:"ttl"`
-	CacheVersion int64                    `json:"cache_version,omitempty"`
-	UpdatedAt    time.Time                `json:"updated_at"`
-	TLSMode      models.EncryptionMode    `json:"tls_mode,omitempty"`
-	TLSStatus    models.CertificateStatus `json:"tls_status,omitempty"`
-	TLSUseRec    bool                     `json:"tls_use_recommended"`
-	TLSRecMode   models.EncryptionMode    `json:"tls_recommended_mode,omitempty"`
-	TLSExpires   *time.Time               `json:"tls_expires_at,omitempty"`
-	TLSError     string                   `json:"tls_last_error,omitempty"`
-	TLSRetryAt   *time.Time               `json:"tls_retry_after,omitempty"`
-	EdgeIP       string                   `json:"edge_ip,omitempty"`
-	EdgeNodeID   string                   `json:"edge_node_id,omitempty"`
-	EdgeLabels   []string                 `json:"edge_labels,omitempty"`
-	EdgeUpdated  *time.Time               `json:"edge_assigned_at,omitempty"`
-	Nameservers  *domainNameServerSet     `json:"nameservers,omitempty"`
-	Whois        *models.DomainWhois      `json:"whois,omitempty"`
-	WAF          models.DomainWAF         `json:"waf,omitempty"`
+	Domain        string                      `json:"domain"`
+	OwnerID       string                      `json:"owner_id"`
+	OwnerEmail    string                      `json:"owner_email,omitempty"`
+	OwnerExists   bool                        `json:"owner_exists"`
+	OriginIP      string                      `json:"origin_ip"`
+	Proxied       bool                        `json:"proxied"`
+	TTL           int                         `json:"ttl"`
+	CacheVersion  int64                       `json:"cache_version,omitempty"`
+	UpdatedAt     time.Time                   `json:"updated_at"`
+	Role          models.DomainRole           `json:"role"`
+	Alias         *models.DomainAlias         `json:"alias,omitempty"`
+	RedirectRules []models.DomainRedirectRule `json:"redirect_rules,omitempty"`
+	TLSMode       models.EncryptionMode       `json:"tls_mode,omitempty"`
+	TLSStatus     models.CertificateStatus    `json:"tls_status,omitempty"`
+	TLSUseRec     bool                        `json:"tls_use_recommended"`
+	TLSRecMode    models.EncryptionMode       `json:"tls_recommended_mode,omitempty"`
+	TLSExpires    *time.Time                  `json:"tls_expires_at,omitempty"`
+	TLSError      string                      `json:"tls_last_error,omitempty"`
+	TLSRetryAt    *time.Time                  `json:"tls_retry_after,omitempty"`
+	EdgeIP        string                      `json:"edge_ip,omitempty"`
+	EdgeNodeID    string                      `json:"edge_node_id,omitempty"`
+	EdgeLabels    []string                    `json:"edge_labels,omitempty"`
+	EdgeUpdated   *time.Time                  `json:"edge_assigned_at,omitempty"`
+	Nameservers   *domainNameServerSet        `json:"nameservers,omitempty"`
+	Whois         *models.DomainWhois         `json:"whois,omitempty"`
+	WAF           models.DomainWAF            `json:"waf,omitempty"`
 }
 
 type nsCheckRequest struct {
@@ -122,20 +125,36 @@ type domainWAFPayload struct {
 	Presets *[]string `json:"presets,omitempty"`
 }
 
+type domainAliasPayload struct {
+	Target string `json:"target"`
+}
+
+type domainRedirectRulePayload struct {
+	ID            string `json:"id,omitempty"`
+	Source        string `json:"source"`
+	Target        string `json:"target"`
+	StatusCode    *int   `json:"status_code,omitempty"`
+	PreservePath  *bool  `json:"preserve_path,omitempty"`
+	PreserveQuery *bool  `json:"preserve_query,omitempty"`
+}
+
 type domainWhoisManualPayload struct {
 	ExpiresAt string `json:"expires_at"`
 	RawInput  string `json:"raw_input,omitempty"`
 }
 
 type createDomainPayload struct {
-	Domain   string             `json:"domain"`
-	Owner    string             `json:"owner,omitempty"`
-	OriginIP *string            `json:"origin_ip"`
-	Proxied  *bool              `json:"proxied,omitempty"`
-	TTL      *int               `json:"ttl,omitempty"`
-	TLS      *domainTLSPayload  `json:"tls,omitempty"`
-	Edge     *domainEdgePayload `json:"edge,omitempty"`
-	WAF      *domainWAFPayload  `json:"waf,omitempty"`
+	Domain        string                      `json:"domain"`
+	Owner         string                      `json:"owner,omitempty"`
+	OriginIP      *string                     `json:"origin_ip"`
+	Proxied       *bool                       `json:"proxied,omitempty"`
+	TTL           *int                        `json:"ttl,omitempty"`
+	TLS           *domainTLSPayload           `json:"tls,omitempty"`
+	Edge          *domainEdgePayload          `json:"edge,omitempty"`
+	WAF           *domainWAFPayload           `json:"waf,omitempty"`
+	Role          string                      `json:"role,omitempty"`
+	Alias         *domainAliasPayload         `json:"alias,omitempty"`
+	RedirectRules []domainRedirectRulePayload `json:"redirect_rules,omitempty"`
 }
 
 const (
@@ -149,14 +168,17 @@ var (
 )
 
 type bulkDomainPayload struct {
-	Domains  []string           `json:"domains"`
-	Owner    string             `json:"owner,omitempty"`
-	OriginIP *string            `json:"origin_ip"`
-	Proxied  *bool              `json:"proxied,omitempty"`
-	TTL      *int               `json:"ttl,omitempty"`
-	TLS      *domainTLSPayload  `json:"tls,omitempty"`
-	Edge     *domainEdgePayload `json:"edge,omitempty"`
-	WAF      *domainWAFPayload  `json:"waf,omitempty"`
+	Domains       []string                    `json:"domains"`
+	Owner         string                      `json:"owner,omitempty"`
+	OriginIP      *string                     `json:"origin_ip"`
+	Proxied       *bool                       `json:"proxied,omitempty"`
+	TTL           *int                        `json:"ttl,omitempty"`
+	TLS           *domainTLSPayload           `json:"tls,omitempty"`
+	Edge          *domainEdgePayload          `json:"edge,omitempty"`
+	WAF           *domainWAFPayload           `json:"waf,omitempty"`
+	Role          string                      `json:"role,omitempty"`
+	Alias         *domainAliasPayload         `json:"alias,omitempty"`
+	RedirectRules []domainRedirectRulePayload `json:"redirect_rules,omitempty"`
 }
 
 type nameServerEntryDTO struct {
@@ -246,14 +268,17 @@ func (s *Server) handleListWAFDefinitions(w http.ResponseWriter, r *http.Request
 }
 
 type bulkUpdateDomainPayload struct {
-	Domains  []string           `json:"domains"`
-	OriginIP *string            `json:"origin_ip,omitempty"`
-	Proxied  *bool              `json:"proxied,omitempty"`
-	TTL      *int               `json:"ttl,omitempty"`
-	TLS      *domainTLSPayload  `json:"tls,omitempty"`
-	Owner    *string            `json:"owner,omitempty"`
-	Edge     *domainEdgePayload `json:"edge,omitempty"`
-	WAF      *domainWAFPayload  `json:"waf,omitempty"`
+	Domains       []string                     `json:"domains"`
+	OriginIP      *string                      `json:"origin_ip,omitempty"`
+	Proxied       *bool                        `json:"proxied,omitempty"`
+	TTL           *int                         `json:"ttl,omitempty"`
+	TLS           *domainTLSPayload            `json:"tls,omitempty"`
+	Owner         *string                      `json:"owner,omitempty"`
+	Edge          *domainEdgePayload           `json:"edge,omitempty"`
+	WAF           *domainWAFPayload            `json:"waf,omitempty"`
+	Role          *string                      `json:"role,omitempty"`
+	Alias         *domainAliasPayload          `json:"alias,omitempty"`
+	RedirectRules *[]domainRedirectRulePayload `json:"redirect_rules,omitempty"`
 }
 
 type bulkDomainResult struct {
@@ -369,13 +394,16 @@ func ensureTLSProxyCompatibility(rec *models.DomainRecord) error {
 }
 
 type updateDomainPayload struct {
-	OriginIP *string            `json:"origin_ip"`
-	Proxied  *bool              `json:"proxied,omitempty"`
-	TTL      *int               `json:"ttl,omitempty"`
-	TLS      *domainTLSPayload  `json:"tls,omitempty"`
-	Owner    *string            `json:"owner,omitempty"`
-	Edge     *domainEdgePayload `json:"edge,omitempty"`
-	WAF      *domainWAFPayload  `json:"waf,omitempty"`
+	OriginIP      *string                      `json:"origin_ip"`
+	Proxied       *bool                        `json:"proxied,omitempty"`
+	TTL           *int                         `json:"ttl,omitempty"`
+	TLS           *domainTLSPayload            `json:"tls,omitempty"`
+	Owner         *string                      `json:"owner,omitempty"`
+	Edge          *domainEdgePayload           `json:"edge,omitempty"`
+	WAF           *domainWAFPayload            `json:"waf,omitempty"`
+	Role          *string                      `json:"role,omitempty"`
+	Alias         *domainAliasPayload          `json:"alias,omitempty"`
+	RedirectRules *[]domainRedirectRulePayload `json:"redirect_rules,omitempty"`
 }
 
 // Routes constructs the HTTP router.
@@ -901,6 +929,328 @@ func applyDomainWAFPayload(rec *models.DomainRecord, payload *domainWAFPayload) 
 	return rec.WAF.Validate()
 }
 
+func applyDomainRoleUpdate(rec *models.DomainRecord, requestedRole *string, aliasPayload *domainAliasPayload, redirectPayload *[]domainRedirectRulePayload) error {
+	if rec == nil {
+		return nil
+	}
+	currentRole := rec.Role
+	if !currentRole.Valid() {
+		currentRole = models.DomainRolePrimary
+	}
+	targetRole := currentRole
+	if requestedRole != nil {
+		value := strings.ToLower(strings.TrimSpace(*requestedRole))
+		role := models.DomainRole(value)
+		if value == "" {
+			role = models.DomainRolePrimary
+		}
+		if !role.Valid() {
+			return models.ErrValidation("invalid domain role")
+		}
+		targetRole = role
+	}
+	switch targetRole {
+	case models.DomainRoleAlias:
+		var target string
+		if aliasPayload != nil {
+			target = strings.ToLower(strings.TrimSpace(aliasPayload.Target))
+		} else if rec.Role == models.DomainRoleAlias && rec.Alias != nil {
+			target = rec.Alias.Target
+		}
+		if target == "" {
+			return models.ErrValidation("alias target must be provided")
+		}
+		rec.Role = models.DomainRoleAlias
+		rec.Alias = &models.DomainAlias{Target: target}
+		rec.RedirectRules = nil
+	case models.DomainRoleRedirect:
+		if redirectPayload != nil {
+			rules, err := buildRedirectRulesFromPayload(rec.RedirectRules, *redirectPayload)
+			if err != nil {
+				return err
+			}
+			rec.RedirectRules = rules
+		} else if rec.Role != models.DomainRoleRedirect || len(rec.RedirectRules) == 0 {
+			return models.ErrValidation("redirect domains require redirect rules")
+		}
+		rec.Role = models.DomainRoleRedirect
+		rec.Alias = nil
+	case models.DomainRolePrimary:
+		rec.Role = models.DomainRolePrimary
+		rec.Alias = nil
+		if redirectPayload != nil {
+			rules, err := buildRedirectRulesFromPayload(rec.RedirectRules, *redirectPayload)
+			if err != nil {
+				return err
+			}
+			rec.RedirectRules = rules
+		}
+	default:
+		return models.ErrValidation("invalid domain role")
+	}
+	if redirectPayload != nil && len(rec.RedirectRules) == 0 && targetRole != models.DomainRoleAlias {
+		rec.RedirectRules = nil
+	}
+	return nil
+}
+
+func buildRedirectRulesFromPayload(existing []models.DomainRedirectRule, payload []domainRedirectRulePayload) ([]models.DomainRedirectRule, error) {
+	if len(payload) == 0 {
+		return []models.DomainRedirectRule{}, nil
+	}
+	existingByID := make(map[string]models.DomainRedirectRule, len(existing))
+	for _, rule := range existing {
+		existingByID[rule.ID] = rule
+	}
+	result := make([]models.DomainRedirectRule, 0, len(payload))
+	seen := make(map[string]struct{}, len(payload))
+	for _, item := range payload {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			id = generateRedirectRuleID()
+		}
+		if _, dup := seen[id]; dup {
+			return nil, models.ErrValidation("duplicate redirect rule id")
+		}
+		seen[id] = struct{}{}
+		rule := models.DomainRedirectRule{
+			ID:     id,
+			Source: strings.TrimSpace(item.Source),
+			Target: strings.TrimSpace(item.Target),
+		}
+		if item.StatusCode != nil {
+			rule.StatusCode = *item.StatusCode
+		} else if prev, ok := existingByID[id]; ok {
+			rule.StatusCode = prev.StatusCode
+		}
+		if rule.StatusCode == 0 {
+			rule.StatusCode = 301
+		}
+		if item.PreservePath != nil {
+			rule.PreservePath = *item.PreservePath
+		} else if prev, ok := existingByID[id]; ok {
+			rule.PreservePath = prev.PreservePath
+		}
+		if item.PreserveQuery != nil {
+			rule.PreserveQuery = *item.PreserveQuery
+		} else if prev, ok := existingByID[id]; ok {
+			rule.PreserveQuery = prev.PreserveQuery
+		} else {
+			rule.PreserveQuery = true
+		}
+		rule.Normalize()
+		result = append(result, rule)
+	}
+	return result, nil
+}
+
+func generateRedirectRuleID() string {
+	return strings.ReplaceAll(uuid.NewString(), "-", "")
+}
+
+func inheritAliasOrigin(alias *models.DomainRecord, primary *models.DomainRecord) bool {
+	if alias == nil || primary == nil {
+		return false
+	}
+	targetOrigin := strings.TrimSpace(primary.OriginIP)
+	changed := false
+	if alias.OriginIP != targetOrigin {
+		alias.OriginIP = targetOrigin
+		changed = true
+	}
+	if primary.CacheVersion > 0 {
+		if alias.CacheVersion != primary.CacheVersion {
+			alias.CacheVersion = primary.CacheVersion
+			changed = true
+		}
+	} else if changed {
+		alias.CacheVersion++
+		changed = true
+	}
+	if alias.CacheVersion <= 0 {
+		alias.CacheVersion = 1
+	}
+	return changed
+}
+
+func (s *Server) validateDomainLinkTargets(subject *models.DomainRecord, cache map[string]models.DomainRecord) (*models.DomainRecord, error) {
+	if subject == nil {
+		return nil, nil
+	}
+	var aliasPrimary *models.DomainRecord
+	if subject.Role == models.DomainRoleAlias && subject.Alias != nil {
+		target := strings.ToLower(strings.TrimSpace(subject.Alias.Target))
+		if target == "" {
+			return nil, models.ErrValidation("alias target must be provided")
+		}
+		if target == subject.Domain {
+			return nil, models.ErrValidation("alias target must differ from domain")
+		}
+		primary, err := s.lookupDomainForLinks(target, cache)
+		if err != nil {
+			return nil, err
+		}
+		if primary.Role != models.DomainRolePrimary {
+			return nil, models.ErrValidation("alias target must be a primary domain")
+		}
+		aliasPrimary = primary
+	}
+	for _, rule := range subject.RedirectRules {
+		if !rule.IsDomainRule() {
+			continue
+		}
+		target := strings.TrimSpace(rule.Target)
+		if target == "" {
+			return nil, models.ErrValidation("redirect rule target must be provided")
+		}
+		if strings.Contains(target, "://") {
+			parsed, err := url.Parse(target)
+			if err != nil {
+				return nil, models.ErrValidation("redirect rule target must be a valid URL")
+			}
+			scheme := strings.ToLower(parsed.Scheme)
+			if scheme != "http" && scheme != "https" {
+				return nil, models.ErrValidation("redirect rule target must use http or https scheme")
+			}
+			continue
+		}
+		primary, err := s.lookupDomainForLinks(target, cache)
+		if err != nil {
+			return nil, err
+		}
+		if primary.Role != models.DomainRolePrimary {
+			return nil, models.ErrValidation("redirect target must be a primary domain or external URL")
+		}
+		if primary.Domain == subject.Domain {
+			return nil, models.ErrValidation("redirect rule cannot target the same domain")
+		}
+	}
+	return aliasPrimary, nil
+}
+
+func (s *Server) lookupDomainForLinks(name string, cache map[string]models.DomainRecord) (*models.DomainRecord, error) {
+	domain := strings.ToLower(strings.TrimSpace(name))
+	if domain == "" {
+		return nil, models.ErrValidation("domain target must be provided")
+	}
+	if cache != nil {
+		if rec, ok := cache[domain]; ok {
+			copy := rec
+			return &copy, nil
+		}
+	}
+	rec, err := s.Store.GetDomain(domain)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, models.ErrValidation("domain target not found")
+		}
+		return nil, err
+	}
+	if cache != nil {
+		cache[domain] = *rec
+	}
+	return rec, nil
+}
+
+func (s *Server) syncAliasDependents(primary models.DomainRecord) {
+	if !primary.Role.Valid() || primary.Role != models.DomainRolePrimary {
+		return
+	}
+	primaryDomain := strings.ToLower(strings.TrimSpace(primary.Domain))
+	if primaryDomain == "" {
+		return
+	}
+	all, err := s.Store.GetDomains()
+	if err != nil {
+		log.Printf("domains: alias sync %s failed to list domains: %v", primary.Domain, err)
+		return
+	}
+	updatedAny := false
+	targetOrigin := strings.TrimSpace(primary.OriginIP)
+	for _, rec := range all {
+		if rec.Role != models.DomainRoleAlias || rec.Alias == nil {
+			continue
+		}
+		if rec.Alias.Target != primaryDomain {
+			continue
+		}
+		sameOrigin := strings.TrimSpace(rec.OriginIP) == targetOrigin
+		sameVersion := primary.CacheVersion <= 0 || rec.CacheVersion == primary.CacheVersion
+		if sameOrigin && sameVersion {
+			continue
+		}
+		_, err := s.Store.MutateDomain(rec.Domain, func(alias *models.DomainRecord) error {
+			if alias == nil {
+				return nil
+			}
+			if alias.Role != models.DomainRoleAlias || alias.Alias == nil || alias.Alias.Target != primaryDomain {
+				return nil
+			}
+			changed := inheritAliasOrigin(alias, &primary)
+			if !changed {
+				return nil
+			}
+			alias.EnsureCacheVersion()
+			now := time.Now().UTC()
+			alias.UpdatedAt = now
+			alias.Version.Counter++
+			if alias.Version.Counter <= 0 {
+				alias.Version.Counter = 1
+			}
+			alias.Version.NodeID = s.Config.NodeID
+			alias.Version.Updated = now.Unix()
+			return nil
+		})
+		if err != nil {
+			log.Printf("domains: alias sync %s -> %s failed: %v", rec.Domain, primary.Domain, err)
+			continue
+		}
+		updatedAny = true
+	}
+	if updatedAny {
+		s.triggerSyncBroadcast()
+		go s.Orchestrator.Trigger(context.Background())
+	}
+}
+
+func (s *Server) findDomainDependents(primary string) ([]string, error) {
+	primary = strings.ToLower(strings.TrimSpace(primary))
+	if primary == "" {
+		return nil, nil
+	}
+	domains, err := s.Store.GetDomains()
+	if err != nil {
+		return nil, err
+	}
+	dependents := make([]string, 0)
+	for _, rec := range domains {
+		if strings.EqualFold(rec.Domain, primary) {
+			continue
+		}
+		if rec.Role == models.DomainRoleAlias && rec.Alias != nil && rec.Alias.Target == primary {
+			dependents = append(dependents, rec.Domain)
+			continue
+		}
+		if len(rec.RedirectRules) == 0 {
+			continue
+		}
+		for _, rule := range rec.RedirectRules {
+			if !rule.IsDomainRule() {
+				continue
+			}
+			target := strings.ToLower(strings.TrimSpace(rule.Target))
+			if target == "" || strings.Contains(target, "://") {
+				continue
+			}
+			if target == primary {
+				dependents = append(dependents, rec.Domain)
+				break
+			}
+		}
+	}
+	return dependents, nil
+}
+
 func (s *Server) prepareDomainRecord(user userContext, domain string, owner string, origin string, proxied *bool, ttl *int, tlsPayload *domainTLSPayload, edgePayload *domainEdgePayload, wafPayload *domainWAFPayload) (models.DomainRecord, error) {
 	record := models.DomainRecord{
 		Domain:       strings.ToLower(strings.TrimSpace(domain)),
@@ -910,6 +1260,7 @@ func (s *Server) prepareDomainRecord(user userContext, domain string, owner stri
 		Proxied:      true,
 		OwnerEmail:   strings.ToLower(strings.TrimSpace(user.Email)),
 		CacheVersion: 1,
+		Role:         models.DomainRolePrimary,
 	}
 	if record.Domain == "" {
 		return models.DomainRecord{}, models.ErrValidation("domain must be provided")
@@ -1022,6 +1373,35 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	var rolePtr *string
+	roleValue := strings.TrimSpace(payload.Role)
+	if roleValue != "" {
+		rolePtr = &roleValue
+	}
+	var redirectPtr *[]domainRedirectRulePayload
+	var redirectCopy []domainRedirectRulePayload
+	if payload.RedirectRules != nil {
+		redirectCopy = payload.RedirectRules
+		redirectPtr = &redirectCopy
+	}
+	if err := applyDomainRoleUpdate(&record, rolePtr, payload.Alias, redirectPtr); err != nil {
+		if ve, ok := err.(models.ErrValidation); ok {
+			writeError(w, http.StatusBadRequest, ve.Error())
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	aliasPrimary, err := s.validateDomainLinkTargets(&record, nil)
+	if err != nil {
+		if ve, ok := err.(models.ErrValidation); ok {
+			writeError(w, http.StatusBadRequest, ve.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_ = inheritAliasOrigin(&record, aliasPrimary)
 	if record.Proxied {
 		if _, err := s.ensureDomainEdgeAssignment(&record); err != nil {
 			if ve, ok := err.(models.ErrValidation); ok {
@@ -1103,6 +1483,18 @@ func (s *Server) handleBulkCreateDomains(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("too many domains (max %d)", maxBulkDomains))
 		return
 	}
+	roleValue := strings.TrimSpace(payload.Role)
+	var rolePtr *string
+	if roleValue != "" {
+		rolePtr = &roleValue
+	}
+	var redirectPtr *[]domainRedirectRulePayload
+	var redirectCopy []domainRedirectRulePayload
+	if payload.RedirectRules != nil {
+		redirectCopy = payload.RedirectRules
+		redirectPtr = &redirectCopy
+	}
+	linkCache := make(map[string]models.DomainRecord)
 	success := 0
 	for _, domain := range normalized {
 		record, err := s.prepareDomainRecord(user, domain, payload.Owner, origin, payload.Proxied, payload.TTL, payload.TLS, payload.Edge, payload.WAF)
@@ -1118,6 +1510,26 @@ func (s *Server) handleBulkCreateDomains(w http.ResponseWriter, r *http.Request)
 			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: errMsg})
 			continue
 		}
+		if err := applyDomainRoleUpdate(&record, rolePtr, payload.Alias, redirectPtr); err != nil {
+			failed++
+			errMsg := err.Error()
+			if ve, ok := err.(models.ErrValidation); ok {
+				errMsg = ve.Error()
+			}
+			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: errMsg})
+			continue
+		}
+		aliasPrimary, err := s.validateDomainLinkTargets(&record, linkCache)
+		if err != nil {
+			failed++
+			errMsg := err.Error()
+			if ve, ok := err.(models.ErrValidation); ok {
+				errMsg = ve.Error()
+			}
+			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: errMsg})
+			continue
+		}
+		_ = inheritAliasOrigin(&record, aliasPrimary)
 		if record.Proxied {
 			if _, err := s.ensureDomainEdgeAssignment(&record); err != nil {
 				failed++
@@ -1222,6 +1634,7 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 		}
 		transferOwner = resolvedOwner
 	}
+	linkCache := make(map[string]models.DomainRecord)
 	success := 0
 	for _, domain := range normalized {
 		existing, err := s.Store.GetDomain(domain)
@@ -1309,6 +1722,28 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 				continue
 			}
 		}
+		if payload.Role != nil || payload.Alias != nil || payload.RedirectRules != nil {
+			if err := applyDomainRoleUpdate(existing, payload.Role, payload.Alias, payload.RedirectRules); err != nil {
+				failed++
+				errMsg := err.Error()
+				if ve, ok := err.(models.ErrValidation); ok {
+					errMsg = ve.Error()
+				}
+				results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: errMsg})
+				continue
+			}
+			aliasPrimary, err := s.validateDomainLinkTargets(existing, linkCache)
+			if err != nil {
+				failed++
+				errMsg := err.Error()
+				if ve, ok := err.(models.ErrValidation); ok {
+					errMsg = ve.Error()
+				}
+				results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: errMsg})
+				continue
+			}
+			_ = inheritAliasOrigin(existing, aliasPrimary)
+		}
 		if existing.Proxied {
 			// Use mutex to prevent concurrent edge assignments
 			s.edgeReconcileMu.Lock()
@@ -1353,6 +1788,7 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: err.Error()})
 			continue
 		}
+		s.syncAliasDependents(*existing)
 		success++
 		sanitized := existing.Sanitize()
 		recCopy := sanitized
@@ -1473,6 +1909,26 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if payload.Role != nil || payload.Alias != nil || payload.RedirectRules != nil {
+		if err := applyDomainRoleUpdate(&updated, payload.Role, payload.Alias, payload.RedirectRules); err != nil {
+			if ve, ok := err.(models.ErrValidation); ok {
+				writeError(w, http.StatusBadRequest, ve.Error())
+			} else {
+				writeError(w, http.StatusBadRequest, err.Error())
+			}
+			return
+		}
+		aliasPrimary, err := s.validateDomainLinkTargets(&updated, nil)
+		if err != nil {
+			if ve, ok := err.(models.ErrValidation); ok {
+				writeError(w, http.StatusBadRequest, ve.Error())
+			} else {
+				writeError(w, http.StatusInternalServerError, err.Error())
+			}
+			return
+		}
+		_ = inheritAliasOrigin(&updated, aliasPrimary)
+	}
 	if updated.Proxied {
 		s.edgeReconcileMu.Lock()
 		_, edgeErr := s.ensureDomainEdgeAssignment(&updated)
@@ -1511,6 +1967,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.syncAliasDependents(updated)
 	s.triggerSyncBroadcast()
 	go s.Orchestrator.Trigger(r.Context())
 	writeJSON(w, http.StatusOK, updated.Sanitize())
@@ -2582,6 +3039,17 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
+	if existing.Role == models.DomainRolePrimary {
+		dependents, err := s.findDomainDependents(existing.Domain)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if len(dependents) > 0 {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("domain has linked alias/redirect: %s", strings.Join(dependents, ", ")))
+			return
+		}
+	}
 	if err := s.Store.MarkDomainDeleted(domain, s.Config.NodeID, time.Now().UTC()); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -2974,11 +3442,19 @@ func (s *Server) handleDomainsOverview(w http.ResponseWriter, r *http.Request) {
 			TTL:          domain.TTL,
 			CacheVersion: domain.CacheVersion,
 			UpdatedAt:    domain.UpdatedAt,
+			Role:         domain.Role,
 			TLSMode:      domain.TLS.Mode,
 			TLSStatus:    domain.TLS.Status,
 			TLSUseRec:    domain.TLS.UseRecommended,
 			TLSRecMode:   domain.TLS.RecommendedMode,
 			TLSError:     domain.TLS.LastError,
+		}
+		if domain.Alias != nil {
+			aliasCopy := *domain.Alias
+			entry.Alias = &aliasCopy
+		}
+		if len(domain.RedirectRules) > 0 {
+			entry.RedirectRules = append([]models.DomainRedirectRule{}, domain.RedirectRules...)
 		}
 		if domain.OwnerEmail != "" {
 			entry.OwnerEmail = strings.ToLower(domain.OwnerEmail)
