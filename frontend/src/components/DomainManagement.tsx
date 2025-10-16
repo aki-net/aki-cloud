@@ -1486,7 +1486,10 @@ const resolveWhois = (
   const handleDeleteSelected = async () => {
     if (selectedDomains.size === 0) return;
 
-    if (!confirm(`Delete ${selectedDomains.size} domain(s)?`)) return;
+    const domainWord = selectedDomains.size === 1 ? 'domain' : 'domains';
+    const confirmMessage = `Are you sure you want to permanently delete ${selectedDomains.size} ${domainWord}?\n\nThis action cannot be undone.\n\nDomains to be deleted:\n${Array.from(selectedDomains).slice(0, 5).join('\n')}${selectedDomains.size > 5 ? `\n...and ${selectedDomains.size - 5} more` : ''}`;
+    
+    if (!window.confirm(confirmMessage)) return;
 
     try {
       await Promise.all(
@@ -1851,13 +1854,20 @@ const resolveWhois = (
   };
 
   const handleRemoveAlias = async (row: DomainWithMeta) => {
+    const parentDomain = row.__meta.parentDomain || 'unknown';
+    const confirmMessage = `Are you sure you want to remove the alias relationship?\n\n${row.domain} will no longer be an alias of ${parentDomain}.\n\nThis domain will become a standalone primary domain.`;
+    
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+    
     try {
       await domainsApi.update(row.domain, {
         role: 'primary',
         alias: null,
         redirect_rules: [],
       });
-      toast.success(`${row.domain} converted to primary`);
+      toast.success(`${row.domain} converted to primary domain`);
       await loadData();
     } catch (error: any) {
       toast.error(error.response?.data?.error || 'Failed to remove alias');
@@ -1865,13 +1875,20 @@ const resolveWhois = (
   };
 
   const handleRemoveRedirect = async (row: DomainWithMeta) => {
+    const redirectTarget = row.__meta.redirectTarget || 'unknown';
+    const confirmMessage = `Are you sure you want to remove the redirect?\n\n${row.domain} will no longer redirect to ${redirectTarget}.\n\nThis domain will become a standalone primary domain.`;
+    
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+    
     try {
       await domainsApi.update(row.domain, {
         role: 'primary',
         alias: null,
         redirect_rules: [],
       });
-      toast.success(`${row.domain} converted to primary`);
+      toast.success(`${row.domain} converted to primary domain`);
       await loadData();
     } catch (error: any) {
       toast.error(error.response?.data?.error || 'Failed to remove redirect');
@@ -3299,6 +3316,13 @@ function RedirectRulesModal({ domain, onClose, onSaved }: RedirectRulesModalProp
   };
 
   const handleDeleteRule = (index: number) => {
+    const rule = pathRules[index];
+    const confirmMessage = `Are you sure you want to remove this path redirect rule?\n\nFrom: ${rule.source}\nTo: ${rule.target}`;
+    
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+    
     setPathRules((prev) => prev.filter((_, i) => i !== index));
     if (editingIndex === index) {
       resetForm();
