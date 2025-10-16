@@ -55,7 +55,7 @@ compute_node_id() {
   lower_name=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
   local hash
   hash=$(printf '%s:%s' "$secret" "$lower_name" | sha256sum | awk '{print $1}')
-  printf '%s-%s-%s-%s-%s\n' "${hash:0:8}" "${hash:8:12}" "${hash:12:16}" "${hash:16:20}" "${hash:20:32}"
+  printf '%s-%s-%s-%s-%s\n' "${hash:0:8}" "${hash:8:4}" "${hash:12:4}" "${hash:16:4}" "${hash:20:12}"
 }
 
 generate_uuid() {
