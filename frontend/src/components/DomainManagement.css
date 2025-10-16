@@ -19,22 +19,20 @@
   gap: 6px;
 }
 
-.domain-cell-parent,
-.domain-cell-alias,
-.domain-cell-redirect {
+.domain-cell-linked {
   padding-left: 12px;
   border-left: 3px solid transparent;
 }
 
-.domain-cell-parent {
+.domain-cell-linked.domain-cell-parent {
   border-left-color: var(--color-accent);
 }
 
-.domain-cell-alias {
+.domain-cell-linked.domain-cell-alias {
   border-left-color: rgba(88, 101, 242, 0.35);
 }
 
-.domain-cell-redirect {
+.domain-cell-linked.domain-cell-redirect {
   border-left-color: rgba(255, 149, 0, 0.45);
 }
 
@@ -815,6 +813,12 @@
 .checkbox-inline input,
 .switch-inline input {
   width: auto;
+}
+
+.checkbox-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
 }
 
 .path-rule-list {
