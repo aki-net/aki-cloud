@@ -267,7 +267,11 @@ create_node <<EOF
 EOF
 
 log "Seeding demo domains and TLS scenarios..."
-API_BASE="$API_BASE" "$ROOT_DIR/seed-demo-data.sh"
+if [ -f "$ROOT_DIR/seed-demo-data-enhanced.sh" ]; then
+    API_BASE="$API_BASE" "$ROOT_DIR/seed-demo-data-enhanced.sh"
+else
+    API_BASE="$API_BASE" "$ROOT_DIR/seed-demo-data.sh"
+fi
 
 log "Dev stack is ready."
 cat <<EOF
@@ -281,5 +285,5 @@ Sample nodes:
   - dev-edge-west (remote)
   - dev-edge-east (remote)
 
-Sample domains seeded via ./seed-demo-data.sh.
+Sample domains with aliases, redirects and relationships seeded.
 EOF

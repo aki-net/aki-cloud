@@ -16,6 +16,7 @@ import {
   DomainNameserverSet,
   DomainWhois,
   SearchBotDomainStats,
+  SearchBotBotStats,
   WAFDefinition,
   DomainRedirectRule,
   DomainRole,
@@ -77,6 +78,7 @@ interface DomainRowMeta {
   parentDomain?: string;
   familyId?: string;
   familyIndex?: number;
+  familyPosition?: 'first' | 'middle' | 'last' | 'single';
   aliasChildren: DomainWithMeta[];
   redirectChildren: DomainWithMeta[];
   domainRule: DomainRedirectRule | null;
@@ -1892,6 +1894,7 @@ const resolveWhois = (
     const isAlias = meta.position === 'alias';
     const isRedirect = meta.position === 'redirect';
     const isParent = meta.position === 'parent';
+    const hasChildren = (meta.aliasChildren.length > 0) || (meta.redirectChildren.length > 0);
     const domainRule = meta.domainRule;
     const pathRules = meta.pathRules ?? [];
     const pathRulesInactive = Boolean(domainRule) && isParent;
@@ -1902,64 +1905,71 @@ const resolveWhois = (
     };
 
     const aliasChips = isParent && meta.aliasChildren.length > 0 && (
-      <div className="domain-chip-group">
-        {meta.aliasChildren.map((child) => (
-          <span key={`alias-${child.domain}`} className="domain-chip domain-chip-alias">
-            <span className="domain-chip-icon">＋</span>
-            <span className="domain-chip-label">{child.domain}</span>
-            <span className="domain-chip-actions">
-              <button
-                type="button"
-                onClick={(e) => handleAction(e, () => openRoleModal(child, 'alias'))}
-                title="Edit alias"
-              >
-                ✎
-              </button>
-              <button
-                type="button"
-                onClick={(e) => handleAction(e, () => handleRemoveAlias(child))}
-                title="Remove alias"
-              >
-                ✕
-              </button>
+      <div className="domain-chip-inline">
+        <span className="domain-chip-label-prefix">Aliases:</span>
+        {meta.aliasChildren.map((child, idx) => (
+          <React.Fragment key={`alias-${child.domain}`}>
+            <span className="domain-chip domain-chip-alias-compact">
+              <span className="domain-chip-label">{child.domain}</span>
+              <span className="domain-chip-actions">
+                <button
+                  type="button"
+                  onClick={(e) => handleAction(e, () => openRoleModal(child, 'alias'))}
+                  title="Edit alias"
+                >
+                  ✎
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => handleAction(e, () => handleRemoveAlias(child))}
+                  title="Remove alias"
+                >
+                  ✕
+                </button>
+              </span>
             </span>
-          </span>
+            {idx < meta.aliasChildren.length - 1 && <span className="domain-chip-separator">,</span>}
+          </React.Fragment>
         ))}
       </div>
     );
 
     const redirectChips = isParent && meta.redirectChildren.length > 0 && (
-      <div className="domain-chip-group">
-        {meta.redirectChildren.map((child) => (
-          <span key={`redirect-${child.domain}`} className="domain-chip domain-chip-redirect">
-            <span className="domain-chip-icon">↷</span>
-            <span className="domain-chip-label">{child.domain}</span>
-            <span className="domain-chip-secondary">
-              {formatRedirectTarget(child.__meta.redirectTarget, child.__meta.redirectExternal)}
+      <div className="domain-chip-inline">
+        <span className="domain-chip-label-prefix">Redirects:</span>
+        {meta.redirectChildren.map((child, idx) => (
+          <React.Fragment key={`redirect-${child.domain}`}>
+            <span className="domain-chip domain-chip-redirect-compact">
+              <span className="domain-chip-label">{child.domain}</span>
+              <span className="domain-chip-arrow">→</span>
+              <span className="domain-chip-secondary">
+                {formatRedirectTarget(child.__meta.redirectTarget, child.__meta.redirectExternal)}
+              </span>
+              <span className="domain-chip-actions">
+                <button
+                  type="button"
+                  onClick={(e) => handleAction(e, () => openRoleModal(child, 'redirect'))}
+                  title="Edit redirect"
+                >
+                  ✎
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => handleAction(e, () => handleRemoveRedirect(child))}
+                  title="Remove redirect"
+                >
+                  ✕
+                </button>
+              </span>
             </span>
-            <span className="domain-chip-actions">
-              <button
-                type="button"
-                onClick={(e) => handleAction(e, () => openRoleModal(child, 'redirect'))}
-                title="Edit redirect"
-              >
-                ✎
-              </button>
-              <button
-                type="button"
-                onClick={(e) => handleAction(e, () => handleRemoveRedirect(child))}
-                title="Remove redirect"
-              >
-                ✕
-              </button>
-            </span>
-          </span>
+            {idx < meta.redirectChildren.length - 1 && <span className="domain-chip-separator">,</span>}
+          </React.Fragment>
         ))}
       </div>
     );
 
     let subtitle: React.ReactNode = null;
-    if (isParent) {
+    if (isParent && hasChildren) {
       subtitle = <span className="domain-label domain-label-parent">Parent</span>;
     } else if (isAlias) {
       subtitle = (
@@ -1976,8 +1986,13 @@ const resolveWhois = (
       );
     }
 
+    // Only apply visual indicators if domain has relationships
+    const cellClassName = hasChildren || isAlias || isRedirect
+      ? `domain-cell domain-cell-${meta.position}` 
+      : 'domain-cell';
+      
     return (
-      <div className={`domain-cell domain-cell-${meta.position}`}>
+      <div className={cellClassName}>
         <div className="domain-header">
           <div className="domain-title">
             <span className="domain-name mono">{row.domain}</span>
@@ -1996,14 +2011,6 @@ const resolveWhois = (
             >
               ＋
             </button>
-            <button
-              type="button"
-              className="domain-inline-button"
-              onClick={(e) => handleAction(e, () => openRoleModal(row, 'redirect'))}
-              title="Configure redirect"
-            >
-              ↷
-            </button>
             {!isAlias && (
               <button
                 type="button"
@@ -2011,7 +2018,7 @@ const resolveWhois = (
                 onClick={(e) => handleAction(e, () => handleOpenRedirectRulesModal(row))}
                 title="Manage redirect rules"
               >
-                ☰
+                ↷
               </button>
             )}
           </div>
@@ -2034,12 +2041,17 @@ const resolveWhois = (
         {redirectChips}
         {pathRules.length > 0 && (
           <div className={`path-redirect-list${pathRulesInactive ? ' inactive' : ''}`}>
+            {pathRulesInactive && (
+              <div className="path-redirect-warning">
+                <span className="warning-icon">⚠</span>
+                Path redirects inactive (domain-level redirect active)
+              </div>
+            )}
             {pathRules.map((rule) => (
               <div key={`${rule.id || rule.source}`} className="path-redirect-item">
                 <span className="path-redirect-arrow">⇢</span>
                 <code className="path-redirect-source">{rule.source}</code>
                 <span className="path-redirect-target">→ {rule.target}</span>
-                {pathRulesInactive && <span className="path-redirect-badge">inactive</span>}
               </div>
             ))}
           </div>
@@ -2381,11 +2393,38 @@ const resolveWhois = (
                 }
               : undefined
           }
-          rowClassName={(row) =>
-            row.__meta.familyIndex !== undefined
-              ? `table-row-family-${row.__meta.familyIndex % 6}`
-              : undefined
-          }
+          rowClassName={(row) => {
+            const meta = row.__meta;
+            const classes: string[] = [];
+            
+            // Add family color class only for parent rows
+            const isParent = meta.position === 'parent';
+            if (isParent && meta.familyIndex !== undefined) {
+              classes.push(`table-row-family-${meta.familyIndex % 6}`);
+              classes.push('table-row-parent');
+            }
+            
+            // Add family member class for all related domains
+            const isInFamily = meta.familyId && (
+              meta.position === 'alias' || 
+              meta.position === 'redirect' || 
+              meta.aliasChildren.length > 0 || 
+              meta.redirectChildren.length > 0
+            );
+            if (isInFamily) {
+              classes.push('table-row-family-member');
+            }
+            
+            // Add position classes
+            if (meta.familyPosition === 'first' || meta.familyPosition === 'single') {
+              classes.push('table-row-family-first');
+            }
+            if (meta.familyPosition === 'last' || meta.familyPosition === 'single') {
+              classes.push('table-row-family-last');
+            }
+            
+            return classes.length > 0 ? classes.join(' ') : undefined;
+          }}
           loading={loading}
           emptyMessage="No domains found"
         />
@@ -2577,7 +2616,7 @@ function buildDomainRows(records: DomainLike[]): DomainWithMeta[] {
         families.set(record.domain, { parent: record, aliases: [], redirects: [] });
       }
     } else {
-      meta.position = 'parent';
+      // Don't set position to 'parent' yet - will determine later based on children
       let family = families.get(record.domain);
       if (!family) {
         family = { parent: record, aliases: [], redirects: [] };
@@ -2592,7 +2631,14 @@ function buildDomainRows(records: DomainLike[]): DomainWithMeta[] {
     if (family.parent) {
       family.parent.__meta.aliasChildren = family.aliases;
       family.parent.__meta.redirectChildren = family.redirects;
-      family.parent.__meta.position = family.parent.__meta.position === 'standalone' ? 'parent' : family.parent.__meta.position;
+      
+      // Only set position to 'parent' if it has children and is not already an alias/redirect
+      if (family.parent.__meta.position === 'standalone') {
+        if (family.aliases.length > 0 || family.redirects.length > 0) {
+          family.parent.__meta.position = 'parent';
+        }
+        // else leave it as 'standalone' - it's a domain without relationships
+      }
     }
   });
 
@@ -2619,25 +2665,44 @@ function buildDomainRows(records: DomainLike[]): DomainWithMeta[] {
   const rows: DomainWithMeta[] = [];
   familyList.forEach((family, index) => {
     const familyIndex = index % 6;
-    const pushRecord = (record?: DomainWithMeta) => {
-      if (!record) {
-        return;
-      }
-      record.__meta.familyIndex = familyIndex;
-      record.__meta.familyId = family.parent?.domain ?? record.domain;
-      rows.push(record);
-    };
-    const parent = family.parent;
-    if (parent) {
-      pushRecord(parent);
+    const familyMembers: DomainWithMeta[] = [];
+    
+    // Collect all family members
+    if (family.parent) {
+      familyMembers.push(family.parent);
       const sortedAliases = family.aliases.slice().sort((a, b) => compareByExpiry(a, b));
-      sortedAliases.forEach((alias) => pushRecord(alias));
+      familyMembers.push(...sortedAliases);
       const sortedRedirects = family.redirects.slice().sort((a, b) => compareByExpiry(a, b));
-      sortedRedirects.forEach((redirect) => pushRecord(redirect));
-    } else {
+      familyMembers.push(...sortedRedirects);
+    }
+    
+    // Assign family position to each member
+    familyMembers.forEach((member, idx) => {
+      member.__meta.familyIndex = familyIndex;
+      member.__meta.familyId = family.parent?.domain ?? member.domain;
+      
+      if (familyMembers.length === 1) {
+        member.__meta.familyPosition = 'single';
+      } else if (idx === 0) {
+        member.__meta.familyPosition = 'first';
+      } else if (idx === familyMembers.length - 1) {
+        member.__meta.familyPosition = 'last';
+      } else {
+        member.__meta.familyPosition = 'middle';
+      }
+      
+      rows.push(member);
+    });
+    
+    if (familyMembers.length === 0 && (family.aliases.length > 0 || family.redirects.length > 0)) {
       const standaloneMembers = [...family.aliases, ...family.redirects];
       const sortedMembers = standaloneMembers.slice().sort((a, b) => compareByExpiry(a, b));
-      sortedMembers.forEach((member) => pushRecord(member));
+      sortedMembers.forEach((member) => {
+        member.__meta.familyIndex = familyIndex;
+        member.__meta.familyId = member.domain;
+        member.__meta.familyPosition = 'single';
+        rows.push(member);
+      });
     }
   });
 
@@ -3037,86 +3102,133 @@ function DomainRoleModal({ domain, mode, onClose, onSaved, primaryOptions }: Dom
             ×
           </button>
         </header>
-        <form className="modal-content" onSubmit={handleSubmit}>
+        <form className="modal-body" onSubmit={handleSubmit}>
           {mode === 'alias' && (
-            <div className="form-field">
-              <label>Primary target</label>
-              {availablePrimaries.length === 0 ? (
-                <p className="form-hint">No primary domains available</p>
-              ) : (
-                <select
-                  value={aliasTarget}
-                  onChange={(e) => setAliasTarget(e.target.value)}
-                  required
-                >
-                  <option value="" disabled>
-                    Select primary domain
-                  </option>
-                  {availablePrimaries.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              )}
+            <div className="modal-section">
+              <div className="form-group">
+                <label>Primary target domain</label>
+                {availablePrimaries.length === 0 ? (
+                  <p className="form-hint">No primary domains available. Please add a primary domain first.</p>
+                ) : (
+                  <>
+                    <select
+                      className="form-select"
+                      value={aliasTarget}
+                      onChange={(e) => setAliasTarget(e.target.value)}
+                      required
+                    >
+                      <option value="" disabled>
+                        Select primary domain
+                      </option>
+                      {availablePrimaries.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="form-hint">
+                      This domain will serve the same content as the selected primary domain
+                    </p>
+                  </>
+                )}
+              </div>
             </div>
           )}
           {mode === 'redirect' && (
-            <>
-              <div className="form-field">
-                <label>Redirect target</label>
+            <div className="modal-section">
+              <div className="form-group">
+                <label>Redirect target URL</label>
                 <input
+                  className="form-input"
                   value={redirectTarget}
                   onChange={(e) => setRedirectTarget(e.target.value)}
-                  placeholder="https://example.com"
+                  placeholder="https://example.com or another-domain.com"
                   required
                 />
+                <p className="form-hint">
+                  Enter the destination URL (external) or domain name (internal)
+                </p>
               </div>
-              <div className="form-field-inline">
-                <label>Status code</label>
-                <select
-                  value={redirectStatus}
-                  onChange={(e) => setRedirectStatus(Number(e.target.value))}
-                >
-                  <option value={301}>301 (Moved Permanently)</option>
-                  <option value={302}>302 (Found)</option>
-                  <option value={307}>307 (Temporary Redirect)</option>
-                  <option value={308}>308 (Permanent Redirect)</option>
-                </select>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>HTTP Status Code</label>
+                  <select
+                    className="form-select"
+                    value={redirectStatus}
+                    onChange={(e) => setRedirectStatus(Number(e.target.value))}
+                  >
+                    <option value={301}>301 (Moved Permanently)</option>
+                    <option value={302}>302 (Found)</option>
+                    <option value={307}>307 (Temporary Redirect)</option>
+                    <option value={308}>308 (Permanent Redirect)</option>
+                  </select>
+                  <p className="form-hint">
+                    301/308 for permanent, 302/307 for temporary
+                  </p>
+                </div>
               </div>
-              <div className="form-field-checkboxes">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={redirectPreservePath}
-                    onChange={(e) => setRedirectPreservePath(e.target.checked)}
-                  />
-                  Preserve path
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={redirectPreserveQuery}
-                    onChange={(e) => setRedirectPreserveQuery(e.target.checked)}
-                  />
-                  Preserve query string
-                </label>
+              <div className="form-group">
+                <label>Redirect Behavior Options</label>
+                <div className="info-box">
+                  <p className="info-text">
+                    <strong>What do these options do?</strong><br/>
+                    These settings control what happens to the URL parts when someone is redirected from your domain.<br/>
+                    <a 
+                      href="https://github.com/yourusername/aki-cloud/blob/main/docs/REDIRECT_OPTIONS_EXPLAINED.md" 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      style={{color: 'var(--color-accent)', textDecoration: 'underline', fontSize: '12px'}}
+                    >
+                      📖 View detailed explanation with examples
+                    </a>
+                  </p>
+                </div>
+                <div className="checkbox-group">
+                  <label className="checkbox-label" title="When enabled, the path from the original URL will be appended to the redirect target. Example: domain.com/page → target.com/page">
+                    <input
+                      type="checkbox"
+                      checked={redirectPreservePath}
+                      onChange={(e) => setRedirectPreservePath(e.target.checked)}
+                    />
+                    <span>Keep URL path after redirect</span>
+                    <span className="checkbox-hint">
+                      <strong>What it does:</strong> Keeps everything after the domain name<br/>
+                      <strong>✓ ON:</strong> oldsite.com<em>/about/team</em> → newsite.com<em>/about/team</em><br/>
+                      <strong>✗ OFF:</strong> oldsite.com/about/team → newsite.com (path is removed)
+                    </span>
+                  </label>
+                  <label className="checkbox-label" title="When enabled, the query parameters from the original URL will be passed to the redirect target. Example: domain.com?id=123 → target.com?id=123">
+                    <input
+                      type="checkbox"
+                      checked={redirectPreserveQuery}
+                      onChange={(e) => setRedirectPreserveQuery(e.target.checked)}
+                    />
+                    <span>Keep URL parameters after redirect</span>
+                    <span className="checkbox-hint">
+                      <strong>What it does:</strong> Keeps tracking codes, IDs, and other URL parameters<br/>
+                      <strong>✓ ON:</strong> oldsite.com<em>?utm_source=google&id=123</em> → newsite.com<em>?utm_source=google&id=123</em><br/>
+                      <strong>✗ OFF:</strong> oldsite.com?utm_source=google&id=123 → newsite.com (parameters are removed)
+                    </span>
+                  </label>
+                </div>
               </div>
-            </>
+            </div>
           )}
           {mode === 'primary' && (
-            <p className="form-hint">
-              This will convert the domain back to a standard configuration. Existing alias or redirect settings will be removed.
-            </p>
+            <div className="modal-section">
+              <p className="form-hint">
+                This will convert the domain back to a standard configuration. Existing alias or redirect settings will be removed.
+              </p>
+            </div>
           )}
-          <footer className="modal-footer">
-            <Button type="button" variant="secondary" onClick={onClose}>
+          <div className="modal-actions">
+            <Button type="button" variant="ghost" onClick={onClose}>
               Cancel
             </Button>
             <Button type="submit" variant="primary" loading={loading} disabled={mode === 'alias' && availablePrimaries.length === 0}>
-              Save
+              Save Configuration
             </Button>
-          </footer>
+          </div>
         </form>
       </div>
     </div>
@@ -3273,7 +3385,7 @@ function RedirectRulesModal({ domain, onClose, onSaved }: RedirectRulesModalProp
             ×
           </button>
         </header>
-        <form className="modal-content" onSubmit={handleSubmit}>
+        <form className="modal-body" onSubmit={handleSubmit}>
           <section className="modal-section">
             <div className="section-header">
               <h3>Whole-domain redirect</h3>
@@ -3315,7 +3427,7 @@ function RedirectRulesModal({ domain, onClose, onSaved }: RedirectRulesModalProp
                     <option value={308}>308</option>
                   </select>
                 </label>
-                <label className="checkbox-inline">
+                <label className="checkbox-inline" title="Keep the URL path from the original request">
                   <input
                     type="checkbox"
                     checked={domainRuleConfig.preserve_path}
@@ -3323,9 +3435,10 @@ function RedirectRulesModal({ domain, onClose, onSaved }: RedirectRulesModalProp
                       setDomainRuleConfig((prev) => ({ ...prev, preserve_path: e.target.checked }))
                     }
                   />
-                  Preserve path
+                  <span>Keep path</span>
+                  <span className="inline-hint">(/blog/post → target.com/blog/post)</span>
                 </label>
-                <label className="checkbox-inline">
+                <label className="checkbox-inline" title="Keep URL parameters like ?id=123&utm=google">
                   <input
                     type="checkbox"
                     checked={domainRuleConfig.preserve_query}
@@ -3333,7 +3446,8 @@ function RedirectRulesModal({ domain, onClose, onSaved }: RedirectRulesModalProp
                       setDomainRuleConfig((prev) => ({ ...prev, preserve_query: e.target.checked }))
                     }
                   />
-                  Preserve query string
+                  <span>Keep parameters</span>
+                  <span className="inline-hint">(?id=123 → target.com?id=123)</span>
                 </label>
               </div>
             )}
@@ -3433,14 +3547,14 @@ function RedirectRulesModal({ domain, onClose, onSaved }: RedirectRulesModalProp
               </div>
             </div>
           </section>
-          <footer className="modal-footer">
-            <Button type="button" variant="secondary" onClick={onClose}>
+          <div className="modal-actions">
+            <Button type="button" variant="ghost" onClick={onClose}>
               Cancel
             </Button>
             <Button type="submit" variant="primary" loading={loading}>
-              Save
+              Save Redirect Rules
             </Button>
-          </footer>
+          </div>
         </form>
       </div>
     </div>
