@@ -1,6 +1,6 @@
 COMPOSE ?= docker compose
 
-.PHONY: up down logs up-force update update-force test fmt
+.PHONY: up down logs up-force update update-force test fmt dev
 
 up:
 	$(COMPOSE) up --build -d
@@ -38,3 +38,7 @@ test:
 
 fmt:
 	cd backend && gofmt -w ./
+
+dev:
+	COMPOSE="$(COMPOSE)" ./scripts/dev-bootstrap.sh
+	@$(MAKE) firewall

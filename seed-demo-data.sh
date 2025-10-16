@@ -2,7 +2,14 @@
 
 # Seed script for demo domains with various TLS/ACME statuses
 
-echo "Seeding demo domains..."
+API_BASE="${API_BASE:-}"
+if [ -z "$API_BASE" ]; then
+    API_HOST="${API_HOST:-127.0.0.1}"
+    BACKEND_PORT="${BACKEND_PORT:-8080}"
+    API_BASE="http://${API_HOST}:${BACKEND_PORT}"
+fi
+
+echo "Seeding demo domains via ${API_BASE}..."
 
 # Function to make API calls
 api_call() {
@@ -12,11 +19,11 @@ api_call() {
     local token=$4
     
     if [ -z "$data" ]; then
-        curl -s -X "$method" "http://localhost:8080/api/v1$endpoint" \
+        curl -s -X "$method" "${API_BASE}/api/v1$endpoint" \
             -H "Authorization: Bearer $token" \
             -H "Content-Type: application/json"
     else
-        curl -s -X "$method" "http://localhost:8080/api/v1$endpoint" \
+        curl -s -X "$method" "${API_BASE}/api/v1$endpoint" \
             -H "Authorization: Bearer $token" \
             -H "Content-Type: application/json" \
             -d "$data"
@@ -25,7 +32,7 @@ api_call() {
 
 # Login as user
 echo "Logging in as user@aki.cloud..."
-USER_TOKEN=$(curl -s -X POST "http://localhost:8080/auth/login" \
+USER_TOKEN=$(curl -s -X POST "${API_BASE}/auth/login" \
     -H "Content-Type: application/json" \
     -d '{"email":"user@aki.cloud","password":"test123"}' | jq -r '.token')
 
@@ -109,7 +116,7 @@ api_call POST "/domains" '{
 
 # Login as admin
 echo "Logging in as admin@aki.cloud..."
-ADMIN_TOKEN=$(curl -s -X POST "http://localhost:8080/auth/login" \
+ADMIN_TOKEN=$(curl -s -X POST "${API_BASE}/auth/login" \
     -H "Content-Type: application/json" \
     -d '{"email":"admin@aki.cloud","password":"test123"}' | jq -r '.token')
 
