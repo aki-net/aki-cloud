@@ -54,6 +54,12 @@ edge_ips = list(filter(None, (target or {}).get("edge_ips", [])))
 ns_ips = list(filter(None, (target or {}).get("ns_ips", [])))
 
 tcp_ports = {int(os.environ.get("BACKEND_PORT", "8080"))}
+frontend_port = os.environ.get("FRONTEND_PORT")
+if frontend_port:
+    try:
+        tcp_ports.add(int(frontend_port))
+    except ValueError:
+        pass
 udp_ports = set()
 
 if edge_ips:
