@@ -185,12 +185,93 @@ api_call POST "/domains/bulk" '{
     }
 }' "$USER_TOKEN"
 
+# Alias and redirect showcase
+echo "Configuring alias and redirect scenarios..."
+
+api_call POST "/domains" '{
+    "domain": "store.example.com",
+    "origin_ip": "10.0.0.120",
+    "proxied": true,
+    "ttl": 60,
+    "tls": {
+        "mode": "full_strict",
+        "use_recommended": false
+    }
+}' "$ADMIN_TOKEN"
+
+api_call POST "/domains" '{
+    "domain": "www.store.example.com",
+    "origin_ip": "",
+    "proxied": true,
+    "ttl": 60,
+    "role": "alias",
+    "alias": {
+        "target": "store.example.com"
+    }
+}' "$ADMIN_TOKEN"
+
+api_call POST "/domains" '{
+    "domain": "legacy-store.example.com",
+    "origin_ip": "",
+    "proxied": false,
+    "ttl": 60,
+    "role": "redirect",
+    "redirect_rules": [
+        {
+            "source": "",
+            "target": "https://store.example.com",
+            "status_code": 301,
+            "preserve_path": true,
+            "preserve_query": true
+        }
+    ]
+}' "$ADMIN_TOKEN"
+
+api_call PATCH "/domains/store.example.com" '{
+    "role": "primary",
+    "redirect_rules": [
+        {
+            "source": "/outlet",
+            "target": "https://marketing.example.com/outlet",
+            "status_code": 302,
+            "preserve_path": false,
+            "preserve_query": false
+        },
+        {
+            "source": "/blog",
+            "target": "https://blog.store.example.com",
+            "status_code": 307,
+            "preserve_path": true,
+            "preserve_query": true
+        }
+    ]
+}' "$ADMIN_TOKEN"
+
+api_call POST "/domains" '{
+    "domain": "external-redirect.example.com",
+    "origin_ip": "",
+    "proxied": false,
+    "ttl": 60,
+    "role": "redirect",
+    "redirect_rules": [
+        {
+            "source": "",
+            "target": "https://statuspage.io/store-status",
+            "status_code": 302,
+            "preserve_path": false,
+            "preserve_query": true
+        }
+    ]
+}' "$ADMIN_TOKEN"
+
 echo "Demo data seeded successfully!"
 echo ""
 echo "Summary:"
-echo "- User domains: 11 domains with various TLS configurations"
-echo "- Admin domains: 3 production/staging/dev domains"
+echo "- User domains: sample set covering multiple TLS configurations"
+echo "- Admin domains: production/staging/dev plus store.example.com family"
+echo "- Alias/redirect demo: store.example.com with www alias, internal and external redirects"
 echo "- Different TLS modes: Off, Flexible, Full, Full Strict, Auto"
 echo "- Mixed proxy states: Proxied and DNS-only"
+echo "- Includes path-based redirects and external target samples"
 echo ""
 echo "You can now login and see the domains with their TLS statuses."
