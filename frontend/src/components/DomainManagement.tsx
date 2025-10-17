@@ -1918,71 +1918,33 @@ const resolveWhois = (
       callback();
     };
 
+    // Simple alias display for parents
     const aliasChips = isParent && meta.aliasChildren.length > 0 && (
-      <div className="domain-chip-inline">
+      <div className="domain-relations-simple">
         <span className="domain-icon-prefix">+</span>
-        {meta.aliasChildren.map((child, idx) => (
-          <React.Fragment key={`alias-${child.domain}`}>
-            <span className="domain-chip domain-chip-alias-minimal">
-              <span className="domain-chip-label">{child.domain}</span>
-              <span className="domain-chip-actions">
-                <button
-                  type="button"
-                  onClick={(e) => handleAction(e, () => openRoleModal(child, 'alias'))}
-                  title="Edit alias"
-                >
-                  ✎
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => handleAction(e, () => handleRemoveAlias(child))}
-                  title="Remove alias"
-                >
-                  ✕
-                </button>
-              </span>
-            </span>
-            {idx < meta.aliasChildren.length - 1 && <span className="domain-chip-separator">,</span>}
-          </React.Fragment>
-        ))}
+        <span className="domain-relations-list">
+          {meta.aliasChildren.map((child, idx) => (
+            <React.Fragment key={`alias-${child.domain}`}>
+              <span className="domain-relation-item">{child.domain}</span>
+              {idx < meta.aliasChildren.length - 1 && <span>,</span>}
+            </React.Fragment>
+          ))}
+        </span>
       </div>
     );
 
+    // Simple redirect display for parents
     const redirectChips = isParent && meta.redirectChildren.length > 0 && (
-      <div className="domain-chip-inline">
+      <div className="domain-relations-simple">
         <span className="domain-icon-prefix">↖</span>
-        {meta.redirectChildren.map((child, idx) => (
-          <React.Fragment key={`redirect-${child.domain}`}>
-            <span className="domain-chip domain-chip-redirect-minimal">
-              <span className="domain-chip-label">{child.domain}</span>
-              {child.__meta.redirectTarget !== row.domain && (
-                <>
-                  <span className="domain-chip-arrow">→</span>
-                  <span className="domain-chip-secondary">
-                    {formatRedirectTarget(child.__meta.redirectTarget, child.__meta.redirectExternal)}
-                  </span>
-                </>
-              )}
-              <span className="domain-chip-actions">
-                <button
-                  type="button"
-                  onClick={(e) => handleAction(e, () => openRoleModal(child, 'redirect'))}
-                  title="Edit redirect"
-                >
-                  ✎
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => handleAction(e, () => handleRemoveRedirect(child))}
-                  title="Remove redirect"
-                >
-                  ✕
-                </button>
-              </span>
-            </span>
-            {idx < meta.redirectChildren.length - 1 && <span className="domain-chip-separator">,</span>}
-          </React.Fragment>
-        ))}
+        <span className="domain-relations-list">
+          {meta.redirectChildren.map((child, idx) => (
+            <React.Fragment key={`redirect-${child.domain}`}>
+              <span className="domain-relation-item">{child.domain}</span>
+              {idx < meta.redirectChildren.length - 1 && <span>,</span>}
+            </React.Fragment>
+          ))}
+        </span>
       </div>
     );
 
@@ -2023,16 +1985,17 @@ const resolveWhois = (
               </Badge>
             )}
           </div>
-          <div className="domain-inline-actions">
-            <button
-              type="button"
-              className="domain-inline-button"
-              onClick={(e) => handleAction(e, () => openRoleModal(row, 'alias'))}
-              title="Configure alias"
-            >
-              ＋
-            </button>
-            {!isAlias && (
+          {/* Only show action buttons for parent domains and standalone domains */}
+          {(isParent || (!isAlias && !isRedirect)) && (
+            <div className="domain-inline-actions">
+              <button
+                type="button"
+                className="domain-inline-button"
+                onClick={(e) => handleAction(e, () => openRoleModal(row, 'alias'))}
+                title="Configure alias"
+              >
+                ＋
+              </button>
               <button
                 type="button"
                 className="domain-inline-button"
@@ -2041,8 +2004,8 @@ const resolveWhois = (
               >
                 ↷
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
         {subtitle && <div className="domain-subtitle">{subtitle}</div>}
         {domainRule && isParent && (

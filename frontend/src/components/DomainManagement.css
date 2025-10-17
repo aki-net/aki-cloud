@@ -234,6 +234,32 @@
   align-items: center;
 }
 
+/* Simple relations display */
+.domain-relations-simple {
+  display: flex;
+  align-items: baseline;
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+}
+
+.domain-relations-list {
+  display: inline;
+  word-wrap: break-word;
+  word-break: break-word;
+}
+
+.domain-relation-item {
+  color: var(--color-text-tertiary);
+}
+
+.domain-relations-simple .domain-icon-prefix {
+  font-size: 14px;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
 .domain-icon-plus,
 .domain-icon-arrow {
   font-weight: 600;
