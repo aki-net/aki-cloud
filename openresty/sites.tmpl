@@ -40,14 +40,32 @@ server {
         proxy_set_header True-Client-IP $client_real_ip;
     }
 
-    {{- if .HasDomainRedirect }}
-    location / {
+   {{- if .HasDomainRedirect }}
+   location / {
+        {{- if .WAFEnabled }}
+        access_by_lua_block {
+            local waf = require("waf")
+            waf.evaluate({
+                domain = "{{ .Domain }}",
+                googlebot_only = {{ if .WAFGooglebotOnly }}true{{ else }}false{{ end }},
+            })
+        }
+        {{- end }}
         return {{ .DomainRedirect.Status }} {{ .DomainRedirect.Return }};
     }
     {{- else }}
     {{- if .HasPathRedirects }}
     {{- range .PathRedirects }}
     location ^~ {{ .Source }} {
+        {{- if $.WAFEnabled }}
+        access_by_lua_block {
+            local waf = require("waf")
+            waf.evaluate({
+                domain = "{{ $.Domain }}",
+                googlebot_only = {{ if $.WAFGooglebotOnly }}true{{ else }}false{{ end }},
+            })
+        }
+        {{- end }}
         return {{ .Status }} {{ .Return }};
     }
     {{- end }}
@@ -170,12 +188,30 @@ server {
 
     {{- if .HasDomainRedirect }}
     location / {
+        {{- if .WAFEnabled }}
+        access_by_lua_block {
+            local waf = require("waf")
+            waf.evaluate({
+                domain = "{{ .Domain }}",
+                googlebot_only = {{ if .WAFGooglebotOnly }}true{{ else }}false{{ end }},
+            })
+        }
+        {{- end }}
         return {{ .DomainRedirect.Status }} {{ .DomainRedirect.Return }};
     }
     {{- else }}
     {{- if .HasPathRedirects }}
     {{- range .PathRedirects }}
     location ^~ {{ .Source }} {
+        {{- if $.WAFEnabled }}
+        access_by_lua_block {
+            local waf = require("waf")
+            waf.evaluate({
+                domain = "{{ $.Domain }}",
+                googlebot_only = {{ if $.WAFGooglebotOnly }}true{{ else }}false{{ end }},
+            })
+        }
+        {{- end }}
         return {{ .Status }} {{ .Return }};
     }
     {{- end }}
