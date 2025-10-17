@@ -1078,15 +1078,45 @@ func (s *Server) validateDomainLinkTargets(subject *models.DomainRecord, cache m
 		if target == "" {
 			return nil, models.ErrValidation("redirect rule target must be provided")
 		}
+		var parsed *url.URL
+		var parseErr error
 		if strings.Contains(target, "://") {
-			parsed, err := url.Parse(target)
-			if err != nil {
+			parsed, parseErr = url.Parse(target)
+			if parseErr != nil {
 				return nil, models.ErrValidation("redirect rule target must be a valid URL")
 			}
 			scheme := strings.ToLower(parsed.Scheme)
 			if scheme != "http" && scheme != "https" {
 				return nil, models.ErrValidation("redirect rule target must use http or https scheme")
 			}
+			if parsed.Hostname() == "" {
+				return nil, models.ErrValidation("redirect rule target must include a host")
+			}
+		}
+		targetHost := rule.TargetHost()
+		if targetHost != "" {
+			primary, err := s.lookupDomainForLinks(targetHost, cache)
+			if err != nil {
+				if parsed != nil {
+					if _, ok := err.(models.ErrValidation); ok {
+						continue
+					}
+				}
+				return nil, err
+			}
+			if parsed != nil && parsed.Hostname() != "" && !strings.EqualFold(parsed.Hostname(), primary.Domain) {
+				// Host mismatch (e.g. includes subdomain) is treated as external.
+				continue
+			}
+			if primary.Role != models.DomainRolePrimary {
+				return nil, models.ErrValidation("redirect target must be a primary domain or external URL")
+			}
+			if primary.Domain == subject.Domain {
+				return nil, models.ErrValidation("redirect rule cannot target the same domain")
+			}
+			continue
+		}
+		if parsed != nil {
 			continue
 		}
 		primary, err := s.lookupDomainForLinks(target, cache)
@@ -1152,8 +1182,8 @@ func (s *Server) findDomainDependents(primary string) ([]string, error) {
 			if !rule.IsDomainRule() {
 				continue
 			}
-			target := strings.ToLower(strings.TrimSpace(rule.Target))
-			if target == "" || strings.Contains(target, "://") {
+			target := rule.TargetHost()
+			if target == "" {
 				continue
 			}
 			if target == primary {
@@ -1163,6 +1193,103 @@ func (s *Server) findDomainDependents(primary string) ([]string, error) {
 		}
 	}
 	return dependents, nil
+}
+
+func uniqueLowerStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		normalized := strings.ToLower(strings.TrimSpace(value))
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	return out
+}
+
+func (s *Server) resolveDomainParents(record models.DomainRecord) []string {
+	switch record.Role {
+	case models.DomainRoleAlias:
+		if record.Alias != nil {
+			return uniqueLowerStrings([]string{record.Alias.Target})
+		}
+	case models.DomainRoleRedirect:
+		candidates := make([]string, 0, len(record.RedirectRules))
+		for _, rule := range record.RedirectRules {
+			if !rule.IsDomainRule() {
+				continue
+			}
+			host := rule.TargetHost()
+			if host != "" {
+				candidates = append(candidates, host)
+			}
+		}
+		return uniqueLowerStrings(candidates)
+	default:
+		return uniqueLowerStrings([]string{record.Domain})
+	}
+	return nil
+}
+
+func (s *Server) invalidateDomainFamilyCache(updated models.DomainRecord, previousParents []string) error {
+	currentParents := s.resolveDomainParents(updated)
+	parentSet := make(map[string]struct{}, len(previousParents)+len(currentParents))
+	for _, parent := range previousParents {
+		parent = strings.ToLower(strings.TrimSpace(parent))
+		if parent != "" {
+			parentSet[parent] = struct{}{}
+		}
+	}
+	for _, parent := range currentParents {
+		parentSet[parent] = struct{}{}
+	}
+	if len(parentSet) == 0 {
+		return nil
+	}
+	members := make(map[string]struct{})
+	members[strings.ToLower(strings.TrimSpace(updated.Domain))] = struct{}{}
+	for parent := range parentSet {
+		members[parent] = struct{}{}
+		dependents, err := s.findDomainDependents(parent)
+		if err != nil {
+			return err
+		}
+		for _, dep := range dependents {
+			members[strings.ToLower(strings.TrimSpace(dep))] = struct{}{}
+		}
+	}
+	now := time.Now().UTC()
+	for name := range members {
+		if name == strings.ToLower(strings.TrimSpace(updated.Domain)) {
+			continue
+		}
+		rec, err := s.Store.GetDomain(name)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return err
+		}
+		copy := *rec
+		copy.CacheVersion++
+		copy.EnsureCacheVersion()
+		copy.UpdatedAt = now
+		copy.Version.Counter++
+		if copy.Version.Counter <= 0 {
+			copy.Version.Counter = 1
+		}
+		copy.Version.NodeID = s.Config.NodeID
+		copy.Version.Updated = now.Unix()
+		if err := s.Store.UpsertDomain(copy); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Server) prepareDomainRecord(user userContext, domain string, owner string, origin string, proxied *bool, ttl *int, tlsPayload *domainTLSPayload, edgePayload *domainEdgePayload, wafPayload *domainWAFPayload) (models.DomainRecord, error) {
@@ -1328,6 +1455,12 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if record.Role == models.DomainRoleAlias || record.Role == models.DomainRoleRedirect || len(record.RedirectRules) > 0 {
+		if err := s.invalidateDomainFamilyCache(record, nil); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	s.triggerSyncBroadcast()
 	go s.Orchestrator.Trigger(r.Context())
 	if s.Whois != nil {
@@ -1408,6 +1541,7 @@ func (s *Server) handleBulkCreateDomains(w http.ResponseWriter, r *http.Request)
 	}
 	linkCache := make(map[string]models.DomainRecord)
 	success := 0
+	familyInvalidations := make([]models.DomainRecord, 0)
 	for _, domain := range normalized {
 		record, err := s.prepareDomainRecord(user, domain, payload.Owner, origin, payload.Proxied, payload.TTL, payload.TLS, payload.Edge, payload.WAF)
 		if err != nil {
@@ -1456,6 +1590,9 @@ func (s *Server) handleBulkCreateDomains(w http.ResponseWriter, r *http.Request)
 			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: err.Error()})
 			continue
 		}
+		if record.Role == models.DomainRoleAlias || record.Role == models.DomainRoleRedirect || len(record.RedirectRules) > 0 {
+			familyInvalidations = append(familyInvalidations, record)
+		}
 		success++
 		if s.Whois != nil {
 			domainName := record.Domain
@@ -1479,6 +1616,12 @@ func (s *Server) handleBulkCreateDomains(w http.ResponseWriter, r *http.Request)
 		sanitized := record.Sanitize()
 		recCopy := sanitized
 		results = append(results, bulkDomainResult{Domain: domain, Status: "created", Record: &recCopy})
+	}
+	for _, rec := range familyInvalidations {
+		if err := s.invalidateDomainFamilyCache(rec, nil); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	if success > 0 {
 		s.triggerSyncBroadcast()
@@ -1560,6 +1703,9 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 			continue
 		}
 		prevOrigin := strings.TrimSpace(existing.OriginIP)
+		prevParents := s.resolveDomainParents(*existing)
+		linksTouched := payload.Role != nil || payload.Alias != nil || payload.RedirectRules != nil
+		cacheBumped := false
 		if payload.OriginIP != nil {
 			origin := strings.TrimSpace(*payload.OriginIP)
 			existing.OriginIP = origin
@@ -1579,6 +1725,7 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 			newOrigin := strings.TrimSpace(*payload.OriginIP)
 			if newOrigin != prevOrigin {
 				existing.CacheVersion++
+				cacheBumped = true
 			}
 		}
 		if payload.TTL != nil && *payload.TTL > 0 {
@@ -1652,6 +1799,10 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 				continue
 			}
 		}
+		if linksTouched && !cacheBumped {
+			existing.CacheVersion++
+			cacheBumped = true
+		}
 		if existing.Proxied {
 			// Use mutex to prevent concurrent edge assignments
 			s.edgeReconcileMu.Lock()
@@ -1696,6 +1847,13 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: err.Error()})
 			continue
 		}
+		if linksTouched {
+			if err := s.invalidateDomainFamilyCache(*existing, prevParents); err != nil {
+				failed++
+				results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: err.Error()})
+				continue
+			}
+		}
 		success++
 		sanitized := existing.Sanitize()
 		recCopy := sanitized
@@ -1722,6 +1880,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
+	prevParents := s.resolveDomainParents(*existing)
 	var payload updateDomainPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid payload")
@@ -1729,6 +1888,8 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	}
 	prevOrigin := strings.TrimSpace(existing.OriginIP)
 	updated := *existing
+	linksTouched := payload.Role != nil || payload.Alias != nil || payload.RedirectRules != nil
+	cacheBumped := false
 	if payload.OriginIP != nil {
 		origin := strings.TrimSpace(*payload.OriginIP)
 		updated.OriginIP = origin
@@ -1748,6 +1909,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		newOrigin := strings.TrimSpace(*payload.OriginIP)
 		if newOrigin != prevOrigin {
 			updated.CacheVersion++
+			cacheBumped = true
 		}
 	}
 	if payload.TTL != nil && *payload.TTL > 0 {
@@ -1834,6 +1996,10 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if linksTouched && !cacheBumped {
+		updated.CacheVersion++
+		cacheBumped = true
+	}
 	if updated.Proxied {
 		s.edgeReconcileMu.Lock()
 		_, edgeErr := s.ensureDomainEdgeAssignment(&updated)
@@ -1871,6 +2037,12 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	if err := s.Store.UpsertDomain(updated); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if linksTouched {
+		if err := s.invalidateDomainFamilyCache(updated, prevParents); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	s.triggerSyncBroadcast()
 	go s.Orchestrator.Trigger(r.Context())
@@ -2954,7 +3126,12 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	prevParents := s.resolveDomainParents(*existing)
 	if err := s.Store.MarkDomainDeleted(domain, s.Config.NodeID, time.Now().UTC()); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.invalidateDomainFamilyCache(*existing, prevParents); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

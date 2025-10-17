@@ -86,11 +86,27 @@ func buildRedirectReturn(rule models.DomainRedirectRule) string {
 	if target == "" {
 		return ""
 	}
+	trimmed := func(base string) string {
+		base = strings.TrimSpace(base)
+		if base == "" {
+			return ""
+		}
+		// Avoid trailing slashes before appending nginx variables such as $uri.
+		return strings.TrimRight(base, "/")
+	}
 	if rule.PreservePath && rule.PreserveQuery {
-		return target + "$request_uri"
+		base := trimmed(target)
+		if base == "" {
+			return "$request_uri"
+		}
+		return base + "$request_uri"
 	}
 	if rule.PreservePath {
-		return target + "$uri"
+		base := trimmed(target)
+		if base == "" {
+			return "$uri"
+		}
+		return base + "$uri"
 	}
 	if rule.PreserveQuery {
 		return target + "$is_args$args"

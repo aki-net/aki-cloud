@@ -2,6 +2,7 @@ package models
 
 import (
 	"net"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -86,6 +87,33 @@ func (r *DomainRedirectRule) Normalize() {
 	if r.StatusCode == 0 {
 		r.StatusCode = 301
 	}
+}
+
+// TargetHost extracts the hostname portion of the redirect target, if any.
+func (r DomainRedirectRule) TargetHost() string {
+	target := strings.TrimSpace(r.Target)
+	if target == "" {
+		return ""
+	}
+	if strings.Contains(target, "://") {
+		parsed, err := url.Parse(target)
+		if err != nil || parsed.Host == "" {
+			return ""
+		}
+		host := strings.ToLower(parsed.Host)
+		if idx := strings.Index(host, ":"); idx >= 0 {
+			host = host[:idx]
+		}
+		return host
+	}
+	host := strings.ToLower(target)
+	if idx := strings.Index(host, "/"); idx >= 0 {
+		host = host[:idx]
+	}
+	if idx := strings.Index(host, ":"); idx >= 0 {
+		host = host[:idx]
+	}
+	return host
 }
 
 // IsDomainRule reports whether the rule applies to the entire domain.

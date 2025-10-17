@@ -2590,6 +2590,31 @@ function splitRedirectRules(record: DomainLike): {
   return { domainRule, pathRules };
 }
 
+function resolveRedirectTarget(target?: string | null): {
+  host: string | null;
+  hasScheme: boolean;
+} {
+  const raw = target?.trim() ?? "";
+  if (!raw) {
+    return { host: null, hasScheme: false };
+  }
+  if (!raw.includes("://")) {
+    const lowered = raw.toLowerCase();
+    const slashIdx = lowered.indexOf("/");
+    const host = slashIdx >= 0 ? lowered.slice(0, slashIdx) : lowered;
+    const colonIdx = host.indexOf(":");
+    const cleanHost = colonIdx >= 0 ? host.slice(0, colonIdx) : host;
+    return { host: cleanHost || null, hasScheme: false };
+  }
+  try {
+    const parsed = new URL(raw);
+    const host = parsed.hostname?.toLowerCase() ?? null;
+    return { host: host && host.length > 0 ? host : null, hasScheme: true };
+  } catch {
+    return { host: null, hasScheme: true };
+  }
+}
+
 function computeExpiryTimestamp(record: DomainLike): number {
   const expiresAt = record.whois?.expires_at;
   if (!expiresAt) {
@@ -2667,12 +2692,12 @@ function buildDomainRows(records: DomainLike[]): DomainWithMeta[] {
     } else if (role === 'redirect') {
       const { domainRule } = splitRedirectRules(record);
       const target = domainRule?.target?.trim() ?? '';
-      const normalized = target.toLowerCase();
+      const targetInfo = resolveRedirectTarget(target);
       meta.position = 'redirect';
       meta.redirectTarget = target;
-      const parent = normalized ? recordMap.get(normalized) : undefined;
+      const parent = targetInfo.host ? recordMap.get(targetInfo.host) : undefined;
       const isInternal = !!parent && (parent.role ?? 'primary') === 'primary';
-      meta.redirectExternal = !isInternal && !!target && target.includes('://');
+      meta.redirectExternal = targetInfo.host ? !isInternal : targetInfo.hasScheme;
       if (isInternal && parent) {
         meta.parentDomain = parent.domain;
         let family = families.get(parent.domain);
