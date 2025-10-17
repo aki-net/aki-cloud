@@ -1899,9 +1899,6 @@ const resolveWhois = (
     if (!target) {
       return '—';
     }
-    if (external || target.includes('://')) {
-      return `${target} (external)`;
-    }
     return target;
   };
 
@@ -1923,10 +1920,10 @@ const resolveWhois = (
 
     const aliasChips = isParent && meta.aliasChildren.length > 0 && (
       <div className="domain-chip-inline">
-        <span className="domain-chip-label-prefix">Aliases:</span>
+        <span className="domain-icon-prefix">+</span>
         {meta.aliasChildren.map((child, idx) => (
           <React.Fragment key={`alias-${child.domain}`}>
-            <span className="domain-chip domain-chip-alias-compact">
+            <span className="domain-chip domain-chip-alias-minimal">
               <span className="domain-chip-label">{child.domain}</span>
               <span className="domain-chip-actions">
                 <button
@@ -1953,15 +1950,19 @@ const resolveWhois = (
 
     const redirectChips = isParent && meta.redirectChildren.length > 0 && (
       <div className="domain-chip-inline">
-        <span className="domain-chip-label-prefix">Redirects:</span>
+        <span className="domain-icon-prefix">↖</span>
         {meta.redirectChildren.map((child, idx) => (
           <React.Fragment key={`redirect-${child.domain}`}>
-            <span className="domain-chip domain-chip-redirect-compact">
+            <span className="domain-chip domain-chip-redirect-minimal">
               <span className="domain-chip-label">{child.domain}</span>
-              <span className="domain-chip-arrow">→</span>
-              <span className="domain-chip-secondary">
-                {formatRedirectTarget(child.__meta.redirectTarget, child.__meta.redirectExternal)}
-              </span>
+              {child.__meta.redirectTarget !== row.domain && (
+                <>
+                  <span className="domain-chip-arrow">→</span>
+                  <span className="domain-chip-secondary">
+                    {formatRedirectTarget(child.__meta.redirectTarget, child.__meta.redirectExternal)}
+                  </span>
+                </>
+              )}
               <span className="domain-chip-actions">
                 <button
                   type="button"
@@ -1986,19 +1987,22 @@ const resolveWhois = (
     );
 
     let subtitle: React.ReactNode = null;
-    if (isParent && hasChildren) {
-      subtitle = <span className="domain-label domain-label-parent">Parent</span>;
-    } else if (isAlias) {
+    if (isAlias) {
       subtitle = (
-        <span className="domain-label">
-          Alias of <strong>{meta.parentDomain ?? 'unknown'}</strong>
+        <span className="domain-label domain-label-alias">
+          <span className="domain-icon-plus">+</span> {meta.parentDomain ?? 'unknown'}
         </span>
       );
     } else if (isRedirect) {
+      // Check if redirecting to the parent domain
+      const redirectToParent = meta.parentDomain && 
+        (meta.redirectTarget === meta.parentDomain || 
+         meta.redirectTarget === `https://${meta.parentDomain}` ||
+         meta.redirectTarget === `http://${meta.parentDomain}`);
+      const redirectIcon = redirectToParent ? '↖' : '→';
       subtitle = (
-        <span className="domain-label">
-          Redirects to{' '}
-            <strong>{formatRedirectTarget(meta.redirectTarget, meta.redirectExternal)}</strong>
+        <span className="domain-label domain-label-redirect">
+          <span className="domain-icon-arrow">{redirectIcon}</span> {formatRedirectTarget(meta.redirectTarget, meta.redirectExternal)}
         </span>
       );
     }
@@ -2043,15 +2047,14 @@ const resolveWhois = (
         {subtitle && <div className="domain-subtitle">{subtitle}</div>}
         {domainRule && isParent && (
           <div className="domain-redirect-summary">
-            <span className="domain-redirect-icon">↷</span>
-            <div className="domain-redirect-text">
-              Whole-domain redirect to{' '}
-              <strong>{formatRedirectTarget(domainRule.target, domainRule.target?.includes('://'))}</strong>
+            <span className="domain-redirect-icon">→</span>
+            <strong>{formatRedirectTarget(domainRule.target, domainRule.target?.includes('://'))}</strong>
+            {(domainRule.preserve_path || !domainRule.preserve_query) && (
               <span className="domain-redirect-flags">
-                {domainRule.preserve_path && <span className="domain-redirect-flag">keep path</span>}
-                {!domainRule.preserve_query && <span className="domain-redirect-flag">drop query</span>}
+                {domainRule.preserve_path && <span className="domain-redirect-flag">+path</span>}
+                {!domainRule.preserve_query && <span className="domain-redirect-flag">-query</span>}
               </span>
-            </div>
+            )}
           </div>
         )}
         {aliasChips}

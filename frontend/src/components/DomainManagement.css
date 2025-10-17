@@ -110,14 +110,35 @@
   font-size: 13px;
 }
 
-.domain-chip-label-prefix {
-  color: var(--color-text-tertiary);
-  font-weight: 500;
-  margin-right: 4px;
+.domain-icon-prefix {
+  color: var(--color-accent);
+  font-weight: 600;
+  font-size: 16px;
+  margin-right: 8px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.domain-icon-plus,
+.domain-icon-arrow {
+  font-weight: 600;
+  margin-right: 6px;
+  font-size: 14px;
+  opacity: 0.8;
+}
+
+.domain-label-alias .domain-icon-plus {
+  color: var(--color-accent);
+}
+
+.domain-label-redirect .domain-icon-arrow {
+  color: rgb(255, 149, 0);
 }
 
 .domain-chip-alias-compact,
-.domain-chip-redirect-compact {
+.domain-chip-redirect-compact,
+.domain-chip-alias-minimal,
+.domain-chip-redirect-minimal {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -126,6 +147,12 @@
   background: var(--color-bg-tertiary);
   transition: all 0.15s ease;
   font-size: 12px;
+}
+
+.domain-chip-alias-minimal,
+.domain-chip-redirect-minimal {
+  background: transparent;
+  padding: 0;
 }
 
 .domain-chip-alias-compact {
@@ -143,11 +170,28 @@
   background: var(--color-bg-elevated);
 }
 
+.domain-chip-alias-minimal:hover,
+.domain-chip-redirect-minimal:hover {
+  background: var(--color-bg-tertiary);
+  padding: 2px 6px;
+  margin: -2px -6px;
+}
+
 .domain-chip-alias-compact .domain-chip-label,
-.domain-chip-redirect-compact .domain-chip-label {
+.domain-chip-redirect-compact .domain-chip-label,
+.domain-chip-alias-minimal .domain-chip-label,
+.domain-chip-redirect-minimal .domain-chip-label {
   font-weight: 500;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
+}
+
+.domain-chip-alias-minimal .domain-chip-label {
+  color: var(--color-text-primary);
+}
+
+.domain-chip-redirect-minimal .domain-chip-label {
+  color: var(--color-text-primary);
 }
 
 .domain-chip-redirect-compact .domain-chip-secondary {
@@ -164,7 +208,8 @@
 
 .domain-chip-separator {
   color: var(--color-text-tertiary);
-  margin: 0 2px;
+  margin: 0 4px;
+  opacity: 0.5;
 }
 
 .domain-chip {
@@ -195,62 +240,70 @@
 
 .domain-chip-actions {
   display: inline-flex;
-  gap: 4px;
+  gap: 2px;
   opacity: 0;
   transition: opacity 0.15s ease;
+  margin-left: 4px;
 }
 
 .domain-chip:hover .domain-chip-actions,
 .domain-chip-alias-compact:hover .domain-chip-actions,
-.domain-chip-redirect-compact:hover .domain-chip-actions {
-  opacity: 1;
+.domain-chip-redirect-compact:hover .domain-chip-actions,
+.domain-chip-alias-minimal:hover .domain-chip-actions,
+.domain-chip-redirect-minimal:hover .domain-chip-actions {
+  opacity: 0.7;
 }
 
 .domain-chip-actions button {
   border: none;
   background: transparent;
-  color: var(--color-text-secondary);
-  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
   cursor: pointer;
+  padding: 0 2px;
+  opacity: 0.8;
 }
 
 .domain-chip-actions button:hover {
   color: var(--color-accent);
+  opacity: 1;
 }
 
 .domain-redirect-summary {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: 6px;
+  padding: 4px 8px;
   border-radius: 6px;
-  background: var(--color-bg-tertiary);
+  background: rgba(255, 149, 0, 0.08);
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 13px;
+  margin-top: 4px;
 }
 
 .domain-redirect-icon {
-  color: var(--color-accent);
-  font-size: 12px;
+  color: rgb(255, 149, 0);
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .domain-redirect-flags {
   display: inline-flex;
-  gap: 6px;
-  margin-left: 10px;
+  gap: 4px;
+  margin-left: 6px;
 }
 
 .domain-redirect-flag {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 2px 6px;
+  padding: 1px 4px;
   border-radius: 999px;
-  background: var(--color-bg-elevated);
+  background: rgba(0, 0, 0, 0.1);
   font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-weight: 600;
   color: var(--color-text-secondary);
+  opacity: 0.8;
 }
 
 .path-redirect-list {
