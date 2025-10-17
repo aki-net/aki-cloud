@@ -272,6 +272,8 @@ server {
         proxy_ssl_name {{ .OriginServerName }};
         {{- if .VerifyOrigin }}
         proxy_ssl_verify on;
+        proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+        proxy_ssl_verify_depth 5;
         {{- else }}
         proxy_ssl_verify off;
         {{- end }}
@@ -387,6 +389,8 @@ server {
         proxy_ssl_name {{ .OriginServerName }};
         {{- if .VerifyOrigin }}
         proxy_ssl_verify on;
+        proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+        proxy_ssl_verify_depth 5;
         {{- else }}
         proxy_ssl_verify off;
         {{- end }}
