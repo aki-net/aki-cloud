@@ -6,6 +6,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"aki-cloud/backend/internal/extensions"
 	"aki-cloud/backend/internal/infra"
@@ -48,6 +50,9 @@ func main() {
 		log.Fatalf("init store: %v", err)
 	}
 
+	backendPort := intFromEnv("BACKEND_PORT", 8080)
+	frontendPort := intFromEnv("FRONTEND_PORT", 3000)
+
 	infraCtl := infra.New(store, dataDir)
 	extSvc := extensions.New(store, "")
 
@@ -58,7 +63,19 @@ func main() {
 			log.Fatalf("render coredns: %v", err)
 		}
 	case "openresty":
-		gen := render.OpenRestyGenerator{Store: store, Infra: infraCtl, Extensions: extSvc, DataDir: dataDir, NginxTmpl: nginxTemplate, SitesTmpl: sitesTemplate, OutputDir: openrestyOut, NSLabel: nsLabel, NSBaseDomain: nsBaseDomain}
+		gen := render.OpenRestyGenerator{
+			Store:        store,
+			Infra:        infraCtl,
+			Extensions:   extSvc,
+			DataDir:      dataDir,
+			NginxTmpl:    nginxTemplate,
+			SitesTmpl:    sitesTemplate,
+			OutputDir:    openrestyOut,
+			NSLabel:      nsLabel,
+			NSBaseDomain: nsBaseDomain,
+			BackendPort:  backendPort,
+			FrontendPort: frontendPort,
+		}
 		if err := gen.Render(); err != nil {
 			log.Fatalf("render openresty: %v", err)
 		}
@@ -67,7 +84,19 @@ func main() {
 		if err := corednsGen.Render(); err != nil {
 			log.Fatalf("render coredns: %v", err)
 		}
-		openrestyGen := render.OpenRestyGenerator{Store: store, Infra: infraCtl, Extensions: extSvc, DataDir: dataDir, NginxTmpl: nginxTemplate, SitesTmpl: sitesTemplate, OutputDir: openrestyOut, NSLabel: nsLabel, NSBaseDomain: nsBaseDomain}
+		openrestyGen := render.OpenRestyGenerator{
+			Store:        store,
+			Infra:        infraCtl,
+			Extensions:   extSvc,
+			DataDir:      dataDir,
+			NginxTmpl:    nginxTemplate,
+			SitesTmpl:    sitesTemplate,
+			OutputDir:    openrestyOut,
+			NSLabel:      nsLabel,
+			NSBaseDomain: nsBaseDomain,
+			BackendPort:  backendPort,
+			FrontendPort: frontendPort,
+		}
 		if err := openrestyGen.Render(); err != nil {
 			log.Fatalf("render openresty: %v", err)
 		}
@@ -78,6 +107,17 @@ func main() {
 	if err := writeMarker(component, dataDir); err != nil {
 		log.Printf("warning: unable to write marker: %v", err)
 	}
+}
+
+func intFromEnv(key string, fallback int) int {
+	val := strings.TrimSpace(os.Getenv(key))
+	if val == "" {
+		return fallback
+	}
+	if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
+		return parsed
+	}
+	return fallback
 }
 
 func writeMarker(component string, dataDir string) error {

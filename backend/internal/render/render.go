@@ -49,6 +49,8 @@ type OpenRestyGenerator struct {
 	OutputDir    string
 	NSLabel      string
 	NSBaseDomain string
+	BackendPort  int
+	FrontendPort int
 }
 
 // ZoneFile represents a DNS zone rendering payload.
@@ -124,8 +126,13 @@ func (g *CoreDNSGenerator) Render() error {
 		return err
 	}
 	nodeMap := make(map[string]models.Node, len(nodes))
+	nodeByName := make(map[string]models.Node, len(nodes))
 	for _, node := range nodes {
 		nodeMap[node.ID] = node
+		nameKey := strings.ToLower(strings.TrimSpace(node.Name))
+		if nameKey != "" {
+			nodeByName[nameKey] = node
+		}
 	}
 	nsList, err := g.Infra.ActiveNameServers()
 	if err != nil {
@@ -549,6 +556,13 @@ func (g *OpenRestyGenerator) Render() error {
 	for _, node := range nodes {
 		nodeMap[node.ID] = node
 	}
+	nodeByName := make(map[string]models.Node, len(nodes))
+	for _, node := range nodes {
+		nameKey := strings.ToLower(strings.TrimSpace(node.Name))
+		if nameKey != "" {
+			nodeByName[nameKey] = node
+		}
+	}
 	edges, err := g.Infra.EdgeIPs()
 	if err != nil {
 		return err
@@ -733,7 +747,12 @@ func (g *OpenRestyGenerator) Render() error {
 	}
 
 	edgeUsage := make(map[string]bool)
+	systemDomains := make(map[string]models.DomainRecord)
 	for _, domain := range domains {
+		if domain.IsSystemManaged() {
+			systemDomains[strings.ToLower(strings.TrimSpace(domain.Domain))] = domain
+			continue
+		}
 		if !domain.Proxied {
 			continue
 		}
@@ -812,11 +831,11 @@ func (g *OpenRestyGenerator) Render() error {
 			originAddress = ""
 		}
 		placeholderActive := false
-		if placeholderCfg.Enabled && originAddress == "" {
+		if originAddress == "" {
 			placeholderActive = true
-		} else if originAddress == "" {
-			fmt.Printf("OpenResty generator: skipping domain %s, origin IP not set and placeholder disabled\n", domain.Domain)
-			continue
+			if !placeholderCfg.Enabled {
+				fmt.Printf("OpenResty generator: using implicit placeholder for %s (extension disabled)\n", domain.Domain)
+			}
 		}
 		placeholderFileName := fmt.Sprintf("%s.html", baseName)
 		placeholderPath := filepath.Join(placeholderDir, placeholderFileName)
@@ -1038,6 +1057,10 @@ func (g *OpenRestyGenerator) Render() error {
 		if err := os.WriteFile(file, buf.Bytes(), 0o644); err != nil {
 			return err
 		}
+	}
+
+	if err := g.renderControlPlaneServers(sitesDir, systemDomains, nodeByName, localEdgeSet, edgeUsage); err != nil {
+		return err
 	}
 
 	for _, ip := range localEdges {
@@ -1400,6 +1423,81 @@ func envBool(key string, def bool) bool {
 	default:
 		return def
 	}
+}
+
+func (g *OpenRestyGenerator) renderControlPlaneServers(sitesDir string, systemDomains map[string]models.DomainRecord, nodeByName map[string]models.Node, localEdgeSet map[string]struct{}, edgeUsage map[string]bool) error {
+	if len(systemDomains) == 0 {
+		return nil
+	}
+
+	backendPort := g.BackendPort
+	if backendPort <= 0 {
+		backendPort = 8080
+	}
+	frontendPort := g.FrontendPort
+	if frontendPort <= 0 {
+		frontendPort = 3000
+	}
+
+	for _, rec := range systemDomains {
+		if rec.IsDeleted() {
+			continue
+		}
+		domain := strings.TrimSpace(rec.Domain)
+		if domain == "" {
+			continue
+		}
+		assignedIP := strings.TrimSpace(rec.Edge.AssignedIP)
+		if assignedIP == "" {
+			continue
+		}
+		if _, ok := localEdgeSet[assignedIP]; !ok {
+			continue
+		}
+
+		parts := strings.Split(domain, ".")
+		if len(parts) == 0 {
+			continue
+		}
+		nodeKey := strings.ToLower(parts[0])
+		if node, ok := nodeByName[nodeKey]; !ok || node.IsDeleted() {
+			continue
+		}
+
+		logBase := fmt.Sprintf("control-plane.%s", sanitizeFileName(domain))
+		certBase := sanitizeFileName(domain)
+		certPath := filepath.Join(g.OutputDir, "certs", fmt.Sprintf("%s.crt", certBase))
+		keyPath := filepath.Join(g.OutputDir, "certs", fmt.Sprintf("%s.key", certBase))
+		if !fileExists(certPath) || !fileExists(keyPath) {
+			var err error
+			certPath, keyPath, err = ensurePlaceholderCertificate(g.DataDir, domain)
+			if err != nil {
+				return err
+			}
+		}
+
+		var buf strings.Builder
+		fmt.Fprintf(&buf, "server {\n    listen %s:80;\n    server_name %s;\n    return 301 https://$host$request_uri;\n}\n\n", assignedIP, domain)
+		fmt.Fprintf(&buf, "server {\n    listen %s:443 ssl http2;\n    server_name %s;\n", assignedIP, domain)
+		fmt.Fprintf(&buf, "    access_log /var/log/nginx/%s.access.log combined;\n", logBase)
+		fmt.Fprintf(&buf, "    error_log /var/log/nginx/%s.error.log warn;\n", logBase)
+		fmt.Fprintf(&buf, "    ssl_certificate %s;\n    ssl_certificate_key %s;\n", certPath, keyPath)
+		fmt.Fprintf(&buf, "    ssl_session_cache shared:SSL:10m;\n    ssl_session_timeout 10m;\n    ssl_protocols TLSv1.2 TLSv1.3;\n")
+		fmt.Fprintf(&buf, "    add_header Strict-Transport-Security \"max-age=31536000\" always;\n")
+		fmt.Fprintf(&buf, "    proxy_connect_timeout 5s;\n    proxy_send_timeout 60s;\n    proxy_read_timeout 60s;\n\n")
+		fmt.Fprintf(&buf, "    location ^~ /.well-known/acme-challenge/ {\n        default_type text/plain;\n        proxy_pass http://127.0.0.1:%d$request_uri;\n        proxy_set_header Host %s;\n        proxy_set_header X-Real-IP $client_real_ip;\n        proxy_set_header X-Forwarded-For $edge_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header X-Forwarded-Host $host;\n    }\n\n", backendPort, domain)
+		fmt.Fprintf(&buf, "    location /api/ {\n        proxy_pass http://127.0.0.1:%d;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $client_real_ip;\n        proxy_set_header X-Forwarded-For $edge_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header X-Forwarded-Host $host;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection $connection_upgrade;\n        proxy_http_version 1.1;\n    }\n\n", backendPort)
+		fmt.Fprintf(&buf, "    location / {\n        proxy_pass http://127.0.0.1:%d;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $client_real_ip;\n        proxy_set_header X-Forwarded-For $edge_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header X-Forwarded-Host $host;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection $connection_upgrade;\n        proxy_http_version 1.1;\n    }\n}\n", frontendPort)
+
+		fileName := fmt.Sprintf("control-plane-%s.conf", certBase)
+		if err := os.WriteFile(filepath.Join(sitesDir, fileName), []byte(buf.String()), 0o644); err != nil {
+			return err
+		}
+
+		edgeUsage[assignedIP] = true
+	}
+
+	return nil
 }
 
 func writeEdgeStub(dir string, ip string) error {

@@ -56,7 +56,7 @@ func EnsureDomainEdgeAssignment(record *models.DomainRecord, endpoints []EdgeEnd
 		}
 	}
 
-	defaultSalt := computeDefaultSalt(record.Domain)
+	defaultSalt := ComputeDefaultSalt(record.Domain)
 	if base, pinnedIP, ok := parsePinnedSalt(record.Edge.AssignmentSalt); ok {
 		if base != defaultSalt {
 			record.Edge.AssignmentSalt = fmt.Sprintf("pin:%s:%s", defaultSalt, pinnedIP)
@@ -146,7 +146,7 @@ func EnsureDomainEdgeAssignment(record *models.DomainRecord, endpoints []EdgeEnd
 }
 
 func ensureAssignmentSalt(edge *models.DomainEdge, domain string) bool {
-	defaultSalt := computeDefaultSalt(domain)
+	defaultSalt := ComputeDefaultSalt(domain)
 	current := strings.TrimSpace(edge.AssignmentSalt)
 	if _, pinnedIP, ok := parsePinnedSalt(current); ok {
 		normalized := fmt.Sprintf("pin:%s:%s", defaultSalt, pinnedIP)
@@ -176,7 +176,8 @@ func ensureAssignmentSalt(edge *models.DomainEdge, domain string) bool {
 	return false
 }
 
-func computeDefaultSalt(domain string) string {
+// ComputeDefaultSalt returns the deterministic default assignment salt for a domain.
+func ComputeDefaultSalt(domain string) string {
 	domainKey := strings.ToLower(strings.TrimSpace(domain))
 	hasher := sha256.Sum256([]byte(domainKey))
 	return hex.EncodeToString(hasher[:8])

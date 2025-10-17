@@ -47,6 +47,9 @@ const (
 	DomainRoleRedirect DomainRole = "redirect"
 )
 
+// SystemOwnerID marks resources maintained by the control plane itself.
+const SystemOwnerID = "system"
+
 // Valid reports whether the role is recognised.
 func (r DomainRole) Valid() bool {
 	switch r {
@@ -654,6 +657,11 @@ func (d *DomainRecord) EnsureCacheVersion() {
 	d.Whois.Normalize()
 	d.WAF.Normalize()
 	d.NormalizeLinks()
+}
+
+// IsSystemManaged reports whether the record is owned by the control plane.
+func (d DomainRecord) IsSystemManaged() bool {
+	return strings.EqualFold(strings.TrimSpace(d.Owner), SystemOwnerID)
 }
 
 // MatchesOwner reports whether the record belongs to the provided owner id or email.

@@ -103,6 +103,7 @@ func main() {
 
 	server.SyncLocalNodeCapabilities(context.Background())
 	server.TriggerDomainReconcile("startup")
+	server.EnsureControlPlaneDomains()
 
 	router := server.Routes()
 

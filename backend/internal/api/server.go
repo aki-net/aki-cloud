@@ -425,8 +425,28 @@ type updateDomainPayload struct {
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 
+	allowedSuffix := fmt.Sprintf(".%s.%s", strings.ToLower(strings.TrimSpace(s.Config.NSLabel)), strings.ToLower(strings.TrimSpace(s.Config.NSBaseDomain)))
+	if allowedSuffix == "." {
+		allowedSuffix = ".dns.aki.cloud"
+	}
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"http://*", "https://*"},
+		AllowOriginFunc: func(r *http.Request, origin string) bool {
+			if origin == "" {
+				return false
+			}
+			u, err := url.Parse(origin)
+			if err != nil {
+				return false
+			}
+			host := strings.ToLower(u.Hostname())
+			if host == "" {
+				return false
+			}
+			if host == "localhost" || host == "127.0.0.1" {
+				return true
+			}
+			return strings.HasSuffix(host, allowedSuffix)
+		},
 		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
 		ExposedHeaders:   []string{"Link"},
@@ -841,6 +861,9 @@ func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) {
 	defaultEntries := prepareDefaultNameServers(nsList)
 	response := make([]domainResponse, 0, len(records))
 	for i := range records {
+		if records[i].IsSystemManaged() {
+			continue
+		}
 		edge := records[i].Edge
 		sanitized := records[i].Sanitize()
 		sanitized.Edge = edge
@@ -3870,6 +3893,9 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if _, err := s.ensureControlPlaneDomain(node); err != nil {
+		log.Printf("control-plane: ensure domain for %s failed: %v", node.Name, err)
+	}
 	s.triggerSyncBroadcast()
 	if node.ID == s.Config.NodeID {
 		if err := s.Store.SaveLocalNodeSnapshot(node); err != nil {
@@ -3970,12 +3996,21 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 	}
 	existing.ComputeEdgeIPs()
 	now := time.Now().UTC()
+	renamed := oldName != existing.Name
 	existing.Version.Counter++
 	existing.Version.NodeID = s.Config.NodeID
 	existing.Version.Updated = now.Unix()
 	if err := s.Store.UpsertNode(*existing); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if renamed && strings.TrimSpace(oldName) != "" {
+		if err := s.deleteControlPlaneDomain(oldName); err != nil {
+			log.Printf("control-plane: delete domain for %s failed: %v", oldName, err)
+		}
+	}
+	if _, err := s.ensureControlPlaneDomain(*existing); err != nil {
+		log.Printf("control-plane: ensure domain for %s failed: %v", existing.Name, err)
 	}
 	s.triggerSyncBroadcast()
 	// Save local node snapshot if this is our node
@@ -4034,6 +4069,11 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if target != nil && strings.TrimSpace(target.Name) != "" {
+		if err := s.deleteControlPlaneDomain(target.Name); err != nil {
+			log.Printf("control-plane: delete domain for %s failed: %v", target.Name, err)
+		}
+	}
 	s.triggerSyncBroadcast()
 	if err := s.syncPeersFromNodes(); err != nil {
 		log.Printf("sync peers after delete node: %v", err)
@@ -4066,6 +4106,9 @@ func (s *Server) handleDomainsOverview(w http.ResponseWriter, r *http.Request) {
 	defaultEntries := prepareDefaultNameServers(nsList)
 	overview := make([]domainOverview, 0, len(domains))
 	for _, domain := range domains {
+		if domain.IsSystemManaged() {
+			continue
+		}
 		entry := domainOverview{
 			Domain:       domain.Domain,
 			OwnerID:      domain.Owner,
@@ -4518,6 +4561,9 @@ func (s *Server) SyncLocalNodeCapabilities(ctx context.Context) bool {
 		log.Printf("infra: update local node capabilities failed: %v", err)
 		return true
 	}
+	if _, err := s.ensureControlPlaneDomain(desired); err != nil {
+		log.Printf("control-plane: ensure domain for %s failed: %v", desired.Name, err)
+	}
 	s.triggerSyncBroadcast()
 
 	if err := s.Store.SaveLocalNodeSnapshot(desired); err != nil {
@@ -4647,6 +4693,188 @@ func (s *Server) triggerSyncBroadcast() {
 		return
 	}
 	s.Sync.TriggerBroadcast()
+}
+
+func (s *Server) controlPlaneDomainForName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	label := strings.TrimSpace(s.Config.NSLabel)
+	if label == "" {
+		label = "dns"
+	}
+	base := strings.TrimSpace(s.Config.NSBaseDomain)
+	if base == "" {
+		base = "aki.cloud"
+	}
+	return fmt.Sprintf("%s.%s.%s", strings.ToLower(name), strings.ToLower(label), strings.ToLower(base))
+}
+
+func (s *Server) ensureControlPlaneDomain(node models.Node) (bool, error) {
+	domain := s.controlPlaneDomainForName(node.Name)
+	if domain == "" {
+		return false, nil
+	}
+	targetIP := ""
+	for _, ip := range append([]string{}, node.EdgeIPs...) {
+		ip = strings.TrimSpace(ip)
+		if ip != "" {
+			targetIP = ip
+			break
+		}
+	}
+	if targetIP == "" {
+		for _, ip := range node.IPs {
+			ip = strings.TrimSpace(ip)
+			if ip != "" {
+				targetIP = ip
+				break
+			}
+		}
+	}
+	if targetIP == "" {
+		return false, nil
+	}
+
+	now := time.Now().UTC()
+	pinnedSalt := fmt.Sprintf("pin:%s:%s", infra.ComputeDefaultSalt(domain), targetIP)
+	changed := false
+
+	_, err := s.Store.MutateDomain(domain, func(rec *models.DomainRecord) error {
+		if rec.IsDeleted() {
+			return fs.ErrNotExist
+		}
+		rec.EnsureTLSDefaults()
+		rec.EnsureCacheVersion()
+		if !rec.IsSystemManaged() || rec.Owner != models.SystemOwnerID {
+			rec.Owner = models.SystemOwnerID
+			rec.OwnerEmail = ""
+			changed = true
+		}
+		if !rec.Proxied {
+			rec.Proxied = true
+			changed = true
+		}
+		if rec.Role != models.DomainRolePrimary {
+			rec.Role = models.DomainRolePrimary
+			changed = true
+		}
+		if rec.OriginIP != "" {
+			rec.OriginIP = ""
+			changed = true
+		}
+		rec.Alias = nil
+		rec.RedirectRules = nil
+		if rec.Edge.AssignmentSalt != pinnedSalt {
+			rec.Edge.AssignmentSalt = pinnedSalt
+			changed = true
+		}
+		if rec.Edge.AssignedIP != targetIP {
+			rec.Edge.AssignedIP = targetIP
+			changed = true
+		}
+		if rec.Edge.AssignedNodeID != node.ID {
+			rec.Edge.AssignedNodeID = node.ID
+			changed = true
+		}
+		if rec.Edge.AssignedAt.IsZero() {
+			rec.Edge.AssignedAt = now
+		}
+		if rec.TLS.Mode != models.EncryptionFlexible {
+			rec.TLS.Mode = models.EncryptionFlexible
+			changed = true
+		}
+		if !rec.TLS.UseRecommended {
+			rec.TLS.UseRecommended = true
+			changed = true
+		}
+		if changed {
+			rec.TLS.Status = models.CertificateStatusNone
+			rec.TLS.RecommendedMode = ""
+			rec.TLS.RecommendedAt = time.Time{}
+			rec.UpdatedAt = now
+			rec.Version.Counter++
+			if rec.Version.Counter <= 0 {
+				rec.Version.Counter = 1
+			}
+			rec.Version.NodeID = s.Config.NodeID
+			rec.Version.Updated = now.Unix()
+			rec.CacheVersion++
+			if rec.CacheVersion <= 0 {
+				rec.CacheVersion = 1
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			record := models.DomainRecord{
+				Domain:       domain,
+				Owner:        models.SystemOwnerID,
+				OwnerEmail:   "",
+				TTL:          60,
+				Proxied:      true,
+				CacheVersion: 1,
+				UpdatedAt:    now,
+				Version: models.ClockVersion{
+					Counter: 1,
+					NodeID:  s.Config.NodeID,
+					Updated: now.Unix(),
+				},
+			}
+			record.Edge.AssignmentSalt = pinnedSalt
+			record.Edge.AssignedIP = targetIP
+			record.Edge.AssignedNodeID = node.ID
+			record.Edge.AssignedAt = now
+			record.Role = models.DomainRolePrimary
+			record.TLS.Mode = models.EncryptionFlexible
+			record.TLS.UseRecommended = true
+			record.TLS.Status = models.CertificateStatusNone
+			record.EnsureTLSDefaults()
+			record.EnsureCacheVersion()
+			if err := s.Store.UpsertDomain(record); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+		return false, err
+	}
+	return changed, nil
+}
+
+func (s *Server) deleteControlPlaneDomain(nodeName string) error {
+	domain := s.controlPlaneDomainForName(nodeName)
+	if domain == "" {
+		return nil
+	}
+	return s.Store.MarkDomainDeleted(domain, s.Config.NodeID, time.Now().UTC())
+}
+
+func (s *Server) EnsureControlPlaneDomains() {
+	nodes, err := s.Store.GetNodes()
+	if err != nil {
+		log.Printf("control-plane: load nodes for domain ensure failed: %v", err)
+		return
+	}
+	changed := false
+	for _, node := range nodes {
+		if node.IsDeleted() {
+			continue
+		}
+		ok, err := s.ensureControlPlaneDomain(node)
+		if err != nil {
+			log.Printf("control-plane: ensure domain for %s failed: %v", node.Name, err)
+			continue
+		}
+		if ok {
+			changed = true
+		}
+	}
+	if changed {
+		s.triggerSyncBroadcast()
+		go s.Orchestrator.Trigger(context.Background())
+	}
 }
 
 func (s *Server) reconcileDomainAssignments(ctx context.Context, reason string) {

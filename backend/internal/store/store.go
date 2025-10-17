@@ -91,11 +91,32 @@ func writeJSONAtomic(path string, in interface{}) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
-	if err := os.WriteFile(tmp, data, 0o640); err != nil {
+	file, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o640)
+	if err != nil {
+		return fmt.Errorf("create tmp: %w", err)
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmp)
 		return fmt.Errorf("write tmp: %w", err)
 	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("sync tmp: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("close tmp: %w", err)
+	}
 	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("rename: %w", err)
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err == nil {
+		_ = dir.Sync()
+		_ = dir.Close()
 	}
 	return nil
 }

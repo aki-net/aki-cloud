@@ -396,6 +396,21 @@ prompt_secret_if_empty() {
   fi
 }
 
+read_env_value() {
+  local key="$1"
+  local file="$2"
+  if [[ ! -f "$file" ]]; then
+    return 1
+  fi
+  while IFS='=' read -r k v; do
+    if [[ "$k" == "$key" ]]; then
+      echo "$v"
+      return 0
+    fi
+  done <"$file"
+  return 1
+}
+
 normalize_csv() {
   local input="$1"
   echo "$input" | tr ' ' '\n' | tr ',' '\n' | awk 'NF' | paste -sd',' -
@@ -875,8 +890,10 @@ main() {
       PRIMARY_IP="${IPS%%,*}"
     fi
   fi
-  prompt_if_empty NS_LABEL "NS label"
-  prompt_if_empty NS_BASE_DOMAIN "NS base domain"
+	if [[ "$MODE" == "fresh" ]]; then
+		prompt_if_empty NS_LABEL "NS label"
+		prompt_if_empty NS_BASE_DOMAIN "NS base domain"
+	fi
   prompt_if_empty BACKEND_PORT "Backend port"
   prompt_if_empty FRONTEND_PORT "Frontend port"
 
@@ -941,9 +958,10 @@ main() {
     configure_firewall "$enable_dns" "$enable_proxy"
     PROJECT_DIR="$PROJECT_DIR" SYSTEM_USER="$SYSTEM_USER" \
       bash "$PROJECT_DIR/scripts/apply_sysctl.sh"
-    PROJECT_DIR="$PROJECT_DIR" DATA_DIR="$PROJECT_DIR/data" AUTO_FIREWALL="$AUTO_FIREWALL" ENABLE_DNS="$enable_dns" ENABLE_PROXY="$enable_proxy" \
-      bash "$PROJECT_DIR/scripts/install_firewall_timer.sh"
-  else
+	PROJECT_DIR="$PROJECT_DIR" DATA_DIR="$PROJECT_DIR/data" AUTO_FIREWALL="$AUTO_FIREWALL" ENABLE_DNS="$enable_dns" ENABLE_PROXY="$enable_proxy" \
+	  bash "$PROJECT_DIR/scripts/install_firewall_timer.sh"
+	PROJECT_DIR="$PROJECT_DIR" bash "$PROJECT_DIR/scripts/install_logrotate.sh"
+	else
     if [[ -z "$SEED" ]]; then
       prompt_if_empty SEED "Seed backend URL (e.g. http://1.2.3.4:8080)"
     fi
@@ -964,6 +982,39 @@ main() {
     write_node_files "$NODE_ID" "$NODE_NAME" "$IPS" "$NS_IPS" "$EDGE_IPS" "$NODE_LABELS" "$NS_LABEL" "$NS_BASE_DOMAIN" "$API_ENDPOINT"
     pull_snapshot "$SEED" "$SECRETS_SUPPLIED"
     apply_snapshot
+    if [[ -z "$NS_LABEL" || -z "$NS_BASE_DOMAIN" ]]; then
+      readarray -t cluster_ns <<<"$(python3 - <<'PY'
+import json
+import os
+
+data_dir = os.environ.get('DATA_DIR', './data')
+nodes_path = os.path.join(data_dir, 'infra', 'nodes.json')
+label = ''
+base = ''
+try:
+    with open(nodes_path, 'r', encoding='utf-8') as fh:
+        nodes = json.load(fh) or []
+    for node in nodes:
+        label = (node or {}).get('ns_label') or label
+        base = (node or {}).get('ns_base_domain') or base
+        if label and base:
+            break
+except FileNotFoundError:
+    pass
+print(label or '')
+print(base or '')
+PY
+)"
+      NS_LABEL="${cluster_ns[0]}"
+      NS_BASE_DOMAIN="${cluster_ns[1]}"
+    fi
+    if [[ -z "$NS_LABEL" || -z "$NS_BASE_DOMAIN" ]]; then
+      NS_LABEL="$(read_env_value NS_LABEL "$PROJECT_DIR/.env" || true)"
+      NS_BASE_DOMAIN="$(read_env_value NS_BASE_DOMAIN "$PROJECT_DIR/.env" || true)"
+    fi
+    if [[ -z "$NS_LABEL" || -z "$NS_BASE_DOMAIN" ]]; then
+      abort "Unable to determine NS label/base domain from cluster snapshot. Provide --ns-label/--ns-base-domain explicitly."
+    fi
     write_node_files "$NODE_ID" "$NODE_NAME" "$IPS" "$NS_IPS" "$EDGE_IPS" "$NODE_LABELS" "$NS_LABEL" "$NS_BASE_DOMAIN" "$API_ENDPOINT"
     # Determine service flags based on configured IPs
     local enable_dns="false"
