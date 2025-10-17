@@ -727,6 +727,7 @@ func (g *OpenRestyGenerator) Render() error {
 		if mode == "" {
 			mode = models.EncryptionFlexible
 		}
+		originMode := mode
 		hasCertMaterial := domain.TLS.Certificate != nil && domain.TLS.Certificate.CertChainPEM != ""
 		baseName := sanitizeFileName(domain.Domain)
 		certPath := filepath.Join(certsDir, fmt.Sprintf("%s.crt", baseName))
@@ -778,6 +779,18 @@ func (g *OpenRestyGenerator) Render() error {
 				fmt.Printf("OpenResty generator: alias %s target %s missing or not primary\n", domain.Domain, domain.Alias.Target)
 			}
 		}
+		if aliasPrimary != nil {
+			parentMode := aliasPrimary.TLS.Mode
+			if aliasPrimary.TLS.UseRecommended && aliasPrimary.TLS.RecommendedMode != "" {
+				parentMode = aliasPrimary.TLS.RecommendedMode
+			}
+			if parentMode != "" {
+				originMode = parentMode
+			}
+		}
+		if originMode == "" {
+			originMode = models.EncryptionFlexible
+		}
 		if isRedirectDomain {
 			originAddress = ""
 		}
@@ -802,14 +815,14 @@ func (g *OpenRestyGenerator) Render() error {
 		originScheme := "http"
 		verifyOrigin := false
 		if originAddress != "" {
-			if mode == models.EncryptionFull || mode == models.EncryptionFullStrict || mode == models.EncryptionStrictOriginPull {
+			if originMode == models.EncryptionFull || originMode == models.EncryptionFullStrict || originMode == models.EncryptionStrictOriginPull {
 				originScheme = "https"
 			}
-			if mode == models.EncryptionFullStrict || mode == models.EncryptionStrictOriginPull {
+			if originMode == models.EncryptionFullStrict || originMode == models.EncryptionStrictOriginPull {
 				verifyOrigin = true
 			}
 		}
-		strictOrigin := originAddress != "" && mode == models.EncryptionStrictOriginPull && originPullCert != "" && originPullKey != ""
+		strictOrigin := originAddress != "" && originMode == models.EncryptionStrictOriginPull && originPullCert != "" && originPullKey != ""
 		serveTLS := hasCertMaterial && mode != models.EncryptionOff
 		redirectHTTP := serveTLS && mode != models.EncryptionFlexible
 		needsTLS := mode != models.EncryptionOff
