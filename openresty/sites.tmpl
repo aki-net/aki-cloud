@@ -31,7 +31,7 @@ server {
     location ^~ /.well-known/acme-challenge/ {
         default_type text/plain;
         proxy_pass {{ or .ChallengeProxy "http://127.0.0.1:8080" }}$request_uri;
-        proxy_set_header Host $host;
+        proxy_set_header Host {{ .UpstreamHost }};
         proxy_set_header X-Real-IP $client_real_ip;
         proxy_set_header X-Forwarded-For $edge_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -85,7 +85,7 @@ server {
         proxy_pass {{ .ProxyPass }};
         {{- end }}
         proxy_cache_key "$scheme$host$request_uri|$edge_cache_version";
-        proxy_set_header Host $host;
+        proxy_set_header Host {{ .UpstreamHost }};
         proxy_set_header X-Real-IP $client_real_ip;
         proxy_set_header X-Forwarded-For $edge_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -159,7 +159,7 @@ server {
     location ^~ /.well-known/acme-challenge/ {
         default_type text/plain;
         proxy_pass {{ or .ChallengeProxy "http://127.0.0.1:8080" }}$request_uri;
-        proxy_set_header Host $host;
+        proxy_set_header Host {{ .UpstreamHost }};
         proxy_set_header X-Real-IP $client_real_ip;
         proxy_set_header X-Forwarded-For $edge_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -208,7 +208,7 @@ server {
         proxy_pass {{ .ProxyPass }};
         {{- end }}
         proxy_cache_key "$scheme$host$request_uri|$edge_cache_version";
-        proxy_set_header Host $host;
+        proxy_set_header Host {{ .UpstreamHost }};
         proxy_set_header X-Real-IP $client_real_ip;
         proxy_set_header X-Forwarded-For $edge_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -286,7 +286,7 @@ server {
     location ^~ /.well-known/acme-challenge/ {
         default_type text/plain;
         proxy_pass {{ or .ChallengeProxy "http://127.0.0.1:8080" }}$request_uri;
-        proxy_set_header Host $host;
+        proxy_set_header Host {{ .UpstreamHost }};
         proxy_set_header X-Real-IP $client_real_ip;
         proxy_set_header X-Forwarded-For $edge_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -323,7 +323,7 @@ server {
         proxy_pass {{ .ProxyPass }};
         {{- end }}
         proxy_cache_key "$scheme$host$request_uri|$edge_cache_version";
-        proxy_set_header Host $host;
+        proxy_set_header Host {{ .UpstreamHost }};
         proxy_set_header X-Real-IP $client_real_ip;
         proxy_set_header X-Forwarded-For $edge_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;

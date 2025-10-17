@@ -765,6 +765,7 @@ func (g *OpenRestyGenerator) Render() error {
 		}
 
 		originAddress := strings.TrimSpace(domain.OriginIP)
+		var aliasPrimary *models.DomainRecord
 		isAliasDomain := domain.Role == models.DomainRoleAlias && domain.Alias != nil
 		isRedirectDomain := domain.Role == models.DomainRoleRedirect
 		if isAliasDomain {
@@ -772,6 +773,7 @@ func (g *OpenRestyGenerator) Render() error {
 				if addr := strings.TrimSpace(primary.OriginIP); addr != "" {
 					originAddress = addr
 				}
+				aliasPrimary = primary
 			} else {
 				fmt.Printf("OpenResty generator: alias %s target %s missing or not primary\n", domain.Domain, domain.Alias.Target)
 			}
@@ -917,6 +919,12 @@ func (g *OpenRestyGenerator) Render() error {
 		}
 		hasPathRedirects := len(renderPathRedirects) > 0
 		wafDomainFile := fmt.Sprintf("%s.html", sanitizeFileName(domain.Domain))
+		originServerName := domain.Domain
+		upstreamHost := "$host"
+		if aliasPrimary != nil {
+			originServerName = aliasPrimary.Domain
+			upstreamHost = aliasPrimary.Domain
+		}
 		data := map[string]interface{}{
 			"Domain":              domain.Domain,
 			"EdgeIP":              assignedIP,
@@ -933,7 +941,7 @@ func (g *OpenRestyGenerator) Render() error {
 			"OriginIsHTTPS":       originScheme == "https",
 			"OriginAvailable":     originAddress != "",
 			"VerifyOrigin":        verifyOrigin,
-			"OriginServerName":    domain.Domain,
+			"OriginServerName":    originServerName,
 			"StrictOriginPull":    strictOrigin,
 			"OriginPullCert":      originPullCert,
 			"OriginPullKey":       originPullKey,
@@ -982,6 +990,7 @@ func (g *OpenRestyGenerator) Render() error {
 			"DomainRedirect":           domainRedirectPtr,
 			"HasPathRedirects":         hasPathRedirects,
 			"PathRedirects":            renderPathRedirects,
+			"UpstreamHost":             upstreamHost,
 		}
 		buf := bytes.Buffer{}
 		if err := tmpl.Execute(&buf, data); err != nil {
