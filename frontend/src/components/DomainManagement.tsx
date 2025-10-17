@@ -2678,6 +2678,18 @@ function buildDomainRows(records: DomainLike[]): DomainWithMeta[] {
   clones.forEach((record) => {
     const role: DomainRole = record.role ?? 'primary';
     const meta = record.__meta;
+    const domainRule = meta.domainRule;
+    const domainRuleTarget = domainRule?.target?.trim() ?? '';
+    const targetInfoForDomainRule = domainRule ? resolveRedirectTarget(domainRuleTarget) : { host: null, hasScheme: false };
+    const internalDomainRedirectParent =
+      domainRule &&
+      domainRule.source.trim() === '' &&
+      targetInfoForDomainRule.host
+        ? findRecord(targetInfoForDomainRule.host)
+        : undefined;
+    const internalDomainRedirect =
+      !!internalDomainRedirectParent && ((internalDomainRedirectParent.role ?? 'primary') === 'primary');
+
     if (role === 'alias' && record.alias?.target) {
       const target = record.alias.target;
       const parent = findRecord(target);
@@ -2696,9 +2708,24 @@ function buildDomainRows(records: DomainLike[]): DomainWithMeta[] {
       } else {
         families.set(record.domain, { parent: record, aliases: [], redirects: [] });
       }
+    } else if (internalDomainRedirect) {
+      const parent = internalDomainRedirectParent!;
+      meta.position = 'redirect';
+      meta.parentDomain = parent.domain;
+      meta.redirectTarget = domainRuleTarget;
+      meta.redirectExternal = false;
+      let family = families.get(parent.domain);
+      if (!family) {
+        family = { parent, aliases: [], redirects: [] };
+        families.set(parent.domain, family);
+      } else if (!family.parent) {
+        family.parent = parent;
+      }
+      family.redirects.push(record);
+      parent.__meta.redirectChildren.push(record);
     } else if (role === 'redirect') {
-      const { domainRule } = splitRedirectRules(record);
-      const target = domainRule?.target?.trim() ?? '';
+      const { domainRule: redirectDomainRule } = splitRedirectRules(record);
+      const target = redirectDomainRule?.target?.trim() ?? '';
       const targetInfo = resolveRedirectTarget(target);
       meta.position = 'redirect';
       meta.redirectTarget = target;
@@ -2720,6 +2747,9 @@ function buildDomainRows(records: DomainLike[]): DomainWithMeta[] {
         families.set(record.domain, { parent: record, aliases: [], redirects: [] });
       }
     } else {
+      if (domainRule && domainRule.source.trim() === '') {
+        meta.redirectExternal = targetInfoForDomainRule.host ? false : targetInfoForDomainRule.hasScheme;
+      }
       // Don't set position to 'parent' yet - will determine later based on children
       let family = families.get(record.domain);
       if (!family) {

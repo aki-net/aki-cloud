@@ -1220,7 +1220,18 @@ func (s *Server) resolveDomainParents(record models.DomainRecord) []string {
 		}
 		return uniqueLowerStrings(candidates)
 	default:
-		return uniqueLowerStrings([]string{record.Domain})
+		parents := []string{record.Domain}
+		if len(record.RedirectRules) > 0 {
+			for _, rule := range record.RedirectRules {
+				if !rule.IsDomainRule() {
+					continue
+				}
+				if host := rule.TargetHost(); host != "" {
+					parents = append(parents, host)
+				}
+			}
+		}
+		return uniqueLowerStrings(parents)
 	}
 	return nil
 }
