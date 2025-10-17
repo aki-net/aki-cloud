@@ -2663,8 +2663,15 @@ function buildDomainRows(records: DomainLike[]): DomainWithMeta[] {
 
   const recordMap = new Map<string, DomainWithMeta>();
   clones.forEach((record) => {
-    recordMap.set(record.domain, record);
+    recordMap.set(record.domain.toLowerCase(), record);
   });
+
+  const findRecord = (name?: string | null): DomainWithMeta | undefined => {
+    if (!name) {
+      return undefined;
+    }
+    return recordMap.get(name.toLowerCase());
+  };
 
   const families = new Map<string, { parent?: DomainWithMeta; aliases: DomainWithMeta[]; redirects: DomainWithMeta[] }>();
 
@@ -2673,7 +2680,7 @@ function buildDomainRows(records: DomainLike[]): DomainWithMeta[] {
     const meta = record.__meta;
     if (role === 'alias' && record.alias?.target) {
       const target = record.alias.target;
-      const parent = recordMap.get(target);
+      const parent = findRecord(target);
       meta.position = 'alias';
       meta.parentDomain = target;
       if (parent) {
@@ -2695,7 +2702,7 @@ function buildDomainRows(records: DomainLike[]): DomainWithMeta[] {
       const targetInfo = resolveRedirectTarget(target);
       meta.position = 'redirect';
       meta.redirectTarget = target;
-      const parent = targetInfo.host ? recordMap.get(targetInfo.host) : undefined;
+      const parent = targetInfo.host ? findRecord(targetInfo.host) : undefined;
       const isInternal = !!parent && (parent.role ?? 'primary') === 'primary';
       meta.redirectExternal = targetInfo.host ? !isInternal : targetInfo.hasScheme;
       if (isInternal && parent) {
