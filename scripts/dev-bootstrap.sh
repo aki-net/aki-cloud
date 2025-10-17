@@ -273,6 +273,9 @@ else
     API_BASE="$API_BASE" "$ROOT_DIR/seed-demo-data.sh"
 fi
 
+log "Regenerating OpenResty config..."
+compose exec backend /app/scripts/generate_openresty.sh >/dev/null
+
 log "Dev stack is ready."
 cat <<EOF
 
