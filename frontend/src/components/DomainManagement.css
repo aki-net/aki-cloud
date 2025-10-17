@@ -238,9 +238,9 @@
 .domain-relations-simple {
   display: flex;
   align-items: baseline;
-  margin-top: 6px;
+  margin-top: 2px;
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 1.2;
   color: var(--color-text-secondary);
 }
 
@@ -411,40 +411,30 @@
 }
 
 .domain-redirect-summary {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: rgba(255, 149, 0, 0.08);
-  color: var(--color-text-secondary);
+  display: flex;
+  align-items: baseline;
+  margin-top: 2px;
   font-size: 13px;
-  margin-top: 4px;
+  line-height: 1.2;
+  color: var(--color-text-secondary);
 }
 
 .domain-redirect-icon {
   color: rgb(255, 149, 0);
   font-size: 14px;
-  font-weight: 600;
+  margin-right: 6px;
+  flex-shrink: 0;
 }
 
 .domain-redirect-flags {
-  display: inline-flex;
-  gap: 4px;
+  display: inline;
   margin-left: 6px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
 }
 
 .domain-redirect-flag {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1px 4px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.1);
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--color-text-secondary);
-  opacity: 0.8;
+  margin: 0 2px;
 }
 
 .path-redirect-list {

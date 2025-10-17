@@ -2002,16 +2002,16 @@ const resolveWhois = (
                 onClick={(e) => handleAction(e, () => handleOpenRedirectRulesModal(row))}
                 title="Manage redirect rules"
               >
-                ↷
+                →
               </button>
             </div>
           )}
         </div>
         {subtitle && <div className="domain-subtitle">{subtitle}</div>}
-        {domainRule && isParent && (
+        {domainRule && (isParent || (!isAlias && !isRedirect)) && (
           <div className="domain-redirect-summary">
             <span className="domain-redirect-icon">→</span>
-            <strong>{formatRedirectTarget(domainRule.target, domainRule.target?.includes('://'))}</strong>
+            <span>{formatRedirectTarget(domainRule.target, domainRule.target?.includes('://'))}</span>
             {(domainRule.preserve_path || !domainRule.preserve_query) && (
               <span className="domain-redirect-flags">
                 {domainRule.preserve_path && <span className="domain-redirect-flag">+path</span>}
@@ -3580,7 +3580,6 @@ function RedirectRulesModal({ domain, onClose, onSaved }: RedirectRulesModalProp
                     value={formRule.source}
                     onChange={(e) => setFormRule((prev) => ({ ...prev, source: e.target.value }))}
                     placeholder="/old-path"
-                    required
                   />
                 </label>
                 <label>
@@ -3589,7 +3588,6 @@ function RedirectRulesModal({ domain, onClose, onSaved }: RedirectRulesModalProp
                     value={formRule.target}
                     onChange={(e) => setFormRule((prev) => ({ ...prev, target: e.target.value }))}
                     placeholder="https://example.com/new"
-                    required
                   />
                 </label>
                 <label>
