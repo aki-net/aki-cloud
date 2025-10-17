@@ -2471,9 +2471,10 @@ const resolveWhois = (
               <Card className="domains-card domains-header-card" padding="none">
                 <Table
                   columns={columns}
-                  data={[]}
+                  data={tableData}
                   keyExtractor={(d: DomainWithMeta) => d.domain}
                   selectedRows={selectionEnabled ? selectedDomains : undefined}
+                  onRowSelect={selectionEnabled ? () => {} : undefined}
                   onSelectAll={
                     selectionEnabled
                       ? (selected) => {

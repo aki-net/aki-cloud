@@ -8,111 +8,105 @@
 .domains-table-group {
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 16px;
 }
 
 /* Header card with just the table header */
 .domains-header-card {
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  border-bottom: none;
+  border-radius: var(--radius-lg);
   overflow: hidden;
 }
 
 /* Hide tbody for header-only table */
+.domains-header-card tbody,
 .domains-header-card .table-body {
-  display: none;
+  display: none !important;
 }
 
 /* Each domain group card */
 .domain-group-card {
   background: var(--color-bg-secondary);
-  border-left: 1px solid var(--color-border);
-  border-right: 1px solid var(--color-border);
-  overflow: visible;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
   position: relative;
 }
 
-/* Add space between groups */
-.domain-group-card + .domain-group-card {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 2px solid var(--color-border-heavy);
-}
-
-/* Connect first group to header */
-.domain-group-card:first-of-type {
-  border-top: none;
-}
-
-/* Last domain group should have bottom border and rounded corners */
-.domain-group-card:last-child {
-  border-bottom: 1px solid var(--color-border);
-  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-  padding-bottom: 1px;
-}
-
 /* Hide header for group tables */
+.domain-group-no-header thead,
 .domain-group-no-header .table-header {
-  display: none;
+  display: none !important;
 }
 
-/* Ensure consistent column widths */
-.domains-table-group .table {
+/* Ensure consistent column widths across all tables */
+.domains-table-group table {
   table-layout: fixed;
+  width: 100%;
 }
 
-.domains-table-group .table th:nth-child(1),
-.domains-table-group .table td:nth-child(1) {
-  width: 50px;
+/* Column 1 - Checkbox */
+.domains-table-group th:nth-child(1),
+.domains-table-group td:nth-child(1) {
+  width: 45px !important;
+  max-width: 45px !important;
 }
 
-.domains-table-group .table th:nth-child(2),
-.domains-table-group .table td:nth-child(2) {
-  width: 30%;
+/* Column 2 - Domain */
+.domains-table-group th:nth-child(2),
+.domains-table-group td:nth-child(2) {
+  width: 28% !important;
   min-width: 250px;
 }
 
-.domains-table-group .table th:nth-child(3),
-.domains-table-group .table td:nth-child(3) {
-  width: 15%;
+/* Column 3 - Nameservers */
+.domains-table-group th:nth-child(3),
+.domains-table-group td:nth-child(3) {
+  width: 12% !important;
   min-width: 100px;
 }
 
-.domains-table-group .table th:nth-child(4),
-.domains-table-group .table td:nth-child(4) {
-  width: 12%;
-  min-width: 120px;
+/* Column 4 - Origin IP */
+.domains-table-group th:nth-child(4),
+.domains-table-group td:nth-child(4) {
+  width: 11% !important;
+  min-width: 110px;
 }
 
-.domains-table-group .table th:nth-child(5),
-.domains-table-group .table td:nth-child(5) {
-  width: 10%;
+/* Column 5 - Renewal */
+.domains-table-group th:nth-child(5),
+.domains-table-group td:nth-child(5) {
+  width: 9% !important;
   min-width: 80px;
 }
 
-.domains-table-group .table th:nth-child(6),
-.domains-table-group .table td:nth-child(6) {
-  width: 8%;
+/* Column 6 - Proxy */
+.domains-table-group th:nth-child(6),
+.domains-table-group td:nth-child(6) {
+  width: 7% !important;
   min-width: 60px;
 }
 
-.domains-table-group .table th:nth-child(7),
-.domains-table-group .table td:nth-child(7) {
-  width: 15%;
-  min-width: 140px;
+/* Column 7 - Edge */
+.domains-table-group th:nth-child(7),
+.domains-table-group td:nth-child(7) {
+  width: 12% !important;
+  min-width: 120px;
 }
 
-.domains-table-group .table th:nth-child(8),
-.domains-table-group .table td:nth-child(8) {
-  width: 20%;
-  min-width: 180px;
+/* Column 8 - TLS */
+.domains-table-group th:nth-child(8),
+.domains-table-group td:nth-child(8) {
+  width: 16% !important;
+  min-width: 150px;
 }
 
-.domains-table-group .table th:nth-child(9),
-.domains-table-group .table td:nth-child(9) {
-  width: 120px;
+/* Column 9 - Actions */
+.domains-table-group th:nth-child(9),
+.domains-table-group td:nth-child(9) {
+  width: 110px !important;
+  max-width: 110px !important;
 }
 
 /* Reset the overrides from previous attempts */
