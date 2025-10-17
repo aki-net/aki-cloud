@@ -50,9 +50,7 @@ wget https://raw.githubusercontent.com/aki-net/aki-cloud/main/install.sh
 # Make it executable
 chmod +x install.sh
 
-# Run the installer (interactive mode, requires root)
-sudo ./install.sh
-# OR as root
+# Run the installer as root
 ./install.sh
 
 # Or use with flags (see below)
