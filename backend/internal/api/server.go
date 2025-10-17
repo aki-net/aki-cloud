@@ -1079,54 +1079,43 @@ func (s *Server) validateDomainLinkTargets(subject *models.DomainRecord, cache m
 			return nil, models.ErrValidation("redirect rule target must be provided")
 		}
 		var parsed *url.URL
-		var parseErr error
 		if strings.Contains(target, "://") {
-			parsed, parseErr = url.Parse(target)
-			if parseErr != nil {
+			p, err := url.Parse(target)
+			if err != nil {
 				return nil, models.ErrValidation("redirect rule target must be a valid URL")
 			}
-			scheme := strings.ToLower(parsed.Scheme)
+			if p.Scheme == "" {
+				return nil, models.ErrValidation("redirect rule target must include a scheme")
+			}
+			scheme := strings.ToLower(p.Scheme)
 			if scheme != "http" && scheme != "https" {
 				return nil, models.ErrValidation("redirect rule target must use http or https scheme")
 			}
-			if parsed.Hostname() == "" {
+			if p.Hostname() == "" {
 				return nil, models.ErrValidation("redirect rule target must include a host")
 			}
+			parsed = p
 		}
-		targetHost := rule.TargetHost()
-		if targetHost != "" {
-			primary, err := s.lookupDomainForLinks(targetHost, cache)
-			if err != nil {
-				if parsed != nil {
-					if _, ok := err.(models.ErrValidation); ok {
-						continue
-					}
-				}
-				return nil, err
-			}
-			if parsed != nil && parsed.Hostname() != "" && !strings.EqualFold(parsed.Hostname(), primary.Domain) {
-				// Host mismatch (e.g. includes subdomain) is treated as external.
+		host := rule.TargetHost()
+		if host == "" {
+			return nil, models.ErrValidation("redirect rule target must include a host")
+		}
+		if strings.EqualFold(host, subject.Domain) {
+			return nil, models.ErrValidation("redirect rule cannot target the same domain")
+		}
+		if parsed != nil && parsed.Hostname() != "" && !strings.EqualFold(parsed.Hostname(), host) {
+			// URL points at a specific subdomain; treat as external without further validation.
+			continue
+		}
+		targetRec, err := s.lookupDomainForLinks(host, cache)
+		if err != nil {
+			if _, ok := err.(models.ErrValidation); ok {
+				// Domain not managed locally – treat as external destination.
 				continue
 			}
-			if primary.Role != models.DomainRolePrimary {
-				return nil, models.ErrValidation("redirect target must be a primary domain or external URL")
-			}
-			if primary.Domain == subject.Domain {
-				return nil, models.ErrValidation("redirect rule cannot target the same domain")
-			}
-			continue
-		}
-		if parsed != nil {
-			continue
-		}
-		primary, err := s.lookupDomainForLinks(target, cache)
-		if err != nil {
 			return nil, err
 		}
-		if primary.Role != models.DomainRolePrimary {
-			return nil, models.ErrValidation("redirect target must be a primary domain or external URL")
-		}
-		if primary.Domain == subject.Domain {
+		if strings.EqualFold(targetRec.Domain, subject.Domain) {
 			return nil, models.ErrValidation("redirect rule cannot target the same domain")
 		}
 	}
