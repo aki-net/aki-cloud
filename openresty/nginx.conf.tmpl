@@ -112,7 +112,6 @@ http {
     }
 
     {{- if .SearchBotLogging.Enabled }}
-    set $edge_searchbot_verified 0;
     log_format searchbot escape=json '{'
         '"msec":"$msec",'
         '"bot":"$edge_searchbot_key",'
@@ -140,6 +139,10 @@ http {
         {{- range .SearchBotLogging.Bots }}
         ~*{{ .Regex }} {{ .Key }};
         {{- end }}
+    }
+
+    map $edge_searchbot_key $edge_searchbot_verified {
+        default 0;
     }
 
     geo $edge_searchbot_range {
