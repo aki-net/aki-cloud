@@ -20,6 +20,9 @@ import {
   SearchBotDomainStats,
   SearchBotNodeUsage,
   WAFDefinition,
+  DomainDNSRecord,
+  CreateDNSRecordPayload,
+  UpdateDNSRecordPayload,
 } from "../types";
 
 const resolveApiBase = (): string => {
@@ -169,6 +172,41 @@ export const domains = {
 
   delete: async (domain: string): Promise<void> => {
     await client.delete(`/domains/${domain}`);
+  },
+
+  dnsRecords: {
+    list: async (domain: string): Promise<DomainDNSRecord[]> => {
+      const res = await client.get<DomainDNSRecord[]>(
+        `/domains/${encodeURIComponent(domain)}/dns-records`,
+      );
+      return res.data;
+    },
+    create: async (
+      domain: string,
+      payload: CreateDNSRecordPayload,
+    ): Promise<DomainDNSRecord> => {
+      const res = await client.post<DomainDNSRecord>(
+        `/domains/${encodeURIComponent(domain)}/dns-records`,
+        payload,
+      );
+      return res.data;
+    },
+    update: async (
+      domain: string,
+      id: string,
+      payload: UpdateDNSRecordPayload,
+    ): Promise<DomainDNSRecord> => {
+      const res = await client.put<DomainDNSRecord>(
+        `/domains/${encodeURIComponent(domain)}/dns-records/${encodeURIComponent(id)}`,
+        payload,
+      );
+      return res.data;
+    },
+    delete: async (domain: string, id: string): Promise<void> => {
+      await client.delete(
+        `/domains/${encodeURIComponent(domain)}/dns-records/${encodeURIComponent(id)}`,
+      );
+    },
   },
 
   searchbots: {

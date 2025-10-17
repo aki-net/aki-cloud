@@ -1,6 +1,6 @@
 server {
     listen {{ .EdgeIP }}:80;
-    server_name {{ .Domain }};
+    server_name {{ .ServerNames }};
 
     access_log /var/log/nginx/{{ .Domain }}.access.log combined;
     {{- if and .SearchBotLoggingEnabled .SearchBotLogFile }}
@@ -128,7 +128,7 @@ server {
 {{- if .HasCertificate }}
 server {
     listen {{ .EdgeIP }}:443 ssl http2;
-    server_name {{ .Domain }};
+    server_name {{ .ServerNames }};
 
     access_log /var/log/nginx/{{ .Domain }}.access.log combined;
     {{- if and .SearchBotLoggingEnabled .SearchBotLogFile }}
@@ -264,7 +264,7 @@ server {
 {{- if and .PendingTLS (not .HasCertificate) }}
 server {
     listen {{ .EdgeIP }}:443 ssl;
-    server_name {{ .Domain }};
+    server_name {{ .ServerNames }};
     ssl_certificate {{ .PlaceholderCert }};
     ssl_certificate_key {{ .PlaceholderKey }};
     ssl_session_cache shared:SSL-PENDING:1m;

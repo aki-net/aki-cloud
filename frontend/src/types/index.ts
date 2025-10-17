@@ -164,6 +164,54 @@ export interface WAFDefinition {
   description: string;
 }
 
+export type DNSRecordType =
+  | "A"
+  | "AAAA"
+  | "CAA"
+  | "CERT"
+  | "CNAME"
+  | "DNSKEY"
+  | "DS"
+  | "HTTPS"
+  | "LOC"
+  | "MX"
+  | "NAPTR"
+  | "NS"
+  | "OPENPGPKEY"
+  | "PTR"
+  | "SMIMEA"
+  | "SRV"
+  | "SSHFP"
+  | "SVCB"
+  | "TLSA"
+  | "TXT"
+  | "URI";
+
+export interface DomainDNSRecord {
+  id: string;
+  name: string;
+  type: DNSRecordType;
+  content: string;
+  ttl: number;
+  priority?: number | null;
+  proxied: boolean;
+  comment?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CreateDNSRecordPayload {
+  name: string;
+  type: DNSRecordType;
+  content: string;
+  ttl?: number;
+  priority?: number;
+  proxied?: boolean;
+  comment?: string;
+}
+
+export type UpdateDNSRecordPayload = CreateDNSRecordPayload;
+
 export interface Domain {
   domain: string;
   owner: string;
@@ -182,6 +230,7 @@ export interface Domain {
   nameservers?: DomainNameserverSet;
   whois?: DomainWhois;
   waf?: DomainWAF;
+  dns_records?: DomainDNSRecord[];
 }
 
 export interface DomainTLSPayload {
@@ -201,6 +250,7 @@ export interface CreateDomainPayload {
   role?: DomainRole;
   alias?: DomainAlias;
   redirect_rules?: DomainRedirectRule[];
+  dns_records?: CreateDNSRecordPayload[];
 }
 
 export interface UpdateDomainPayload {
@@ -214,6 +264,7 @@ export interface UpdateDomainPayload {
   role?: DomainRole;
   alias?: DomainAlias | null;
   redirect_rules?: DomainRedirectRule[];
+  dns_records?: CreateDNSRecordPayload[];
 }
 
 export interface DomainWhoisOverridePayload {
@@ -233,6 +284,7 @@ export interface BulkDomainPayload {
   role?: DomainRole;
   alias?: DomainAlias;
   redirect_rules?: DomainRedirectRule[];
+  dns_records?: CreateDNSRecordPayload[];
 }
 
 export interface BulkUpdateDomainPayload {
@@ -247,6 +299,7 @@ export interface BulkUpdateDomainPayload {
   role?: DomainRole;
   alias?: DomainAlias | null;
   redirect_rules?: DomainRedirectRule[];
+  dns_records?: CreateDNSRecordPayload[];
 }
 
 export type BulkDomainStatus = 'created' | 'updated' | 'skipped' | 'failed';
@@ -351,6 +404,7 @@ export interface DomainOverview {
   edge_node_id?: string;
   edge_labels?: string[];
   edge_assigned_at?: string;
+  dns_records?: DomainDNSRecord[];
   nameservers?: DomainNameserverSet;
   whois?: DomainWhois;
   waf?: DomainWAF;

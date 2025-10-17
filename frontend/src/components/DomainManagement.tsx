@@ -20,6 +20,7 @@ import {
   WAFDefinition,
   DomainRedirectRule,
   DomainRole,
+  DomainDNSRecord,
 } from "../types";
 import Table from "./ui/Table";
 import Button from "./ui/Button";
@@ -32,6 +33,7 @@ import toast from "react-hot-toast";
 import { format, formatDistanceToNow, differenceInCalendarDays } from "date-fns";
 import { useAuth } from "../contexts/AuthContext";
 import "./DomainManagement.css";
+import DNSRecordsModal from "./DNSRecordsModal";
 
 const SEARCHBOT_PERIODS: Array<{
   key: "today" | "month" | "year";
@@ -94,6 +96,22 @@ interface RoleModalState {
   mode: 'alias' | 'redirect' | 'primary';
 }
 
+const getDNSRecords = (domain: DomainLike): DomainDNSRecord[] => {
+  const records = (domain as any).dns_records;
+  return Array.isArray(records) ? records : [];
+};
+
+const isApexRecord = (record: DomainDNSRecord): boolean => {
+  const name = record.name?.trim().toLowerCase() ?? "";
+  return record.type === "A" && (name === "@" || name === "");
+};
+
+const findApexARecord = (domain: DomainLike): DomainDNSRecord | undefined =>
+  getDNSRecords(domain).find(isApexRecord);
+
+const countAdditionalRecords = (domain: DomainLike): number =>
+  getDNSRecords(domain).filter((record) => !isApexRecord(record)).length;
+
 export default function DomainManagement({ isAdmin = false }: Props) {
   const { user } = useAuth();
   const [domains, setDomains] = useState<Domain[]>([]);
@@ -141,6 +159,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
   const [wafUpdatingDomains, setWafUpdatingDomains] = useState<Set<string>>(new Set());
   const [roleModalState, setRoleModalState] = useState<RoleModalState | null>(null);
   const [redirectRulesModalDomain, setRedirectRulesModalDomain] = useState<DomainWithMeta | null>(null);
+  const [dnsModalDomain, setDnsModalDomain] = useState<Domain | null>(null);
   const searchBotLastPassiveRef = useRef<number>(0);
   const [searchBotMenuDomain, setSearchBotMenuDomain] = useState<string | null>(
     null,
@@ -1159,6 +1178,7 @@ const resolveWhois = (
   const renderDomainActions = (record: Domain | DomainOverview) => {
     const domainName = record.domain;
     const domainKey = domainName.toLowerCase();
+    const domainDetails = domains.find((item) => item.domain === domainName);
     const isPurging = purgingDomain === domainName;
     const stats = searchBotStats[domainKey];
     const hasStats = Boolean(stats);
@@ -1197,6 +1217,36 @@ const resolveWhois = (
 
     return (
       <div className="domain-actions">
+        <button
+          type="button"
+          className="dns-manage-btn"
+          onClick={(event) => {
+            event.stopPropagation();
+            if (domainDetails) {
+              setDnsModalDomain(domainDetails);
+            } else {
+              toast.error("Domain details are still loading for DNS management");
+            }
+          }}
+          title="Manage DNS records"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          >
+            <circle cx="5" cy="7" r="1.5" />
+            <circle cx="5" cy="12" r="1.5" />
+            <circle cx="5" cy="17" r="1.5" />
+            <line x1="8.5" y1="7" x2="19" y2="7" />
+            <line x1="8.5" y1="12" x2="19" y2="12" />
+            <line x1="8.5" y1="17" x2="19" y2="17" />
+          </svg>
+        </button>
         <button
           type="button"
           className={`waf-toggle-btn${googlebotEnabled ? " waf-toggle-btn--active" : ""}`}
@@ -1448,8 +1498,16 @@ const resolveWhois = (
   const handleEditIP = (domain: Domain | DomainOverview) => {
     const domainName = domain.domain;
     setEditingDomain(domainName);
-    const current = (domain as any).origin_ip ?? "";
-    setEditingIP(typeof current === "string" ? current : "");
+    const apex = findApexARecord(domain);
+    const apexContentRaw = apex?.content ?? "";
+    const fallbackOrigin = (domain as any).origin_ip ?? "";
+    const current =
+      apexContentRaw && apexContentRaw !== "@"
+        ? apexContentRaw
+        : typeof fallbackOrigin === "string"
+          ? fallbackOrigin
+          : String(fallbackOrigin ?? "");
+    setEditingIP(typeof current === "string" ? current : String(current ?? ""));
     setTimeout(() => editInputRef.current?.select(), 0);
   };
 
@@ -1457,9 +1515,11 @@ const resolveWhois = (
     const domainName = domain.domain;
 
     const normalized = editingIP?.trim() ?? "";
-    const current = ((domain as any).origin_ip ?? "")
-      .toString()
-      .trim();
+    const apex = findApexARecord(domain);
+    const apexCurrent = apex?.content?.trim();
+    const originCurrent = ((domain as any).origin_ip ?? "").toString().trim();
+    const current =
+      (apexCurrent && apexCurrent !== "@" ? apexCurrent : originCurrent) || "";
     if (normalized === current) {
       setEditingDomain(null);
       return;
@@ -2080,12 +2140,22 @@ const resolveWhois = (
     key: "origin_ip",
     header: "Origin IP",
     accessor: (d: any) => {
+      const apex = findApexARecord(d);
       const originRaw = (d as any).origin_ip ?? "";
       const originValue =
         typeof originRaw === "string" ? originRaw : String(originRaw ?? "");
-      const trimmed = originValue.trim();
-      const isPlaceholder = trimmed === "";
-      const displayValue = isPlaceholder ? "aki.cloud placeholder" : trimmed;
+      const apexContentRaw = apex?.content?.trim() ?? "";
+      const apexContent = apexContentRaw === "@" ? "" : apexContentRaw;
+      const trimmedOrigin = originValue.trim();
+      const effectiveValue = apexContent || trimmedOrigin;
+      const isPlaceholder = effectiveValue === "";
+      const displayValue = isPlaceholder
+        ? "aki.cloud placeholder"
+        : effectiveValue;
+      const extraRecords = countAdditionalRecords(d);
+      const placeholderLabel = extraRecords > 0
+        ? "placeholder – additional DNS records active"
+        : "placeholder";
 
       if (editingDomain === d.domain) {
         return (
@@ -2110,9 +2180,9 @@ const resolveWhois = (
           <span
             className={`ip-display ${isPlaceholder ? "ip-placeholder" : "mono"}`}
             onClick={() => handleEditIP(d)}
-            title={displayValue}
+            title={isPlaceholder ? placeholderLabel : displayValue}
           >
-            {isPlaceholder ? "placeholder" : displayValue}
+            {isPlaceholder ? placeholderLabel : displayValue}
             <svg
               className="edit-icon"
               width="14"
@@ -2126,9 +2196,15 @@ const resolveWhois = (
               <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
             </svg>
           </span>
+          {isPlaceholder && extraRecords > 0 && (
+            <span className="ip-placeholder-hint">
+              Root traffic is using the placeholder page while other records remain active.
+            </span>
+          )}
         </div>
       );
     },
+    width: "170px",
   });
 
   columns.push({
@@ -2564,6 +2640,13 @@ const resolveWhois = (
             setRedirectRulesModalDomain(null);
             loadData();
           }}
+        />
+      )}
+      {dnsModalDomain && (
+        <DNSRecordsModal
+          domain={dnsModalDomain}
+          onClose={() => setDnsModalDomain(null)}
+          onChange={() => loadData(false)}
         />
       )}
     </div>

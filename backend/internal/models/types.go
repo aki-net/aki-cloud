@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // ClockVersion represents Lamport-style version metadata for eventual consistency.
@@ -145,6 +147,7 @@ type DomainRecord struct {
 	Owner         string               `json:"owner"`
 	OwnerEmail    string               `json:"owner_email,omitempty"`
 	OriginIP      string               `json:"origin_ip"`
+	DNSRecords    []DomainDNSRecord    `json:"dns_records,omitempty"`
 	Proxied       bool                 `json:"proxied"`
 	TTL           int                  `json:"ttl"`
 	CacheVersion  int64                `json:"cache_version,omitempty"`
@@ -159,6 +162,315 @@ type DomainRecord struct {
 	Role          DomainRole           `json:"role,omitempty"`
 	Alias         *DomainAlias         `json:"alias,omitempty"`
 	RedirectRules []DomainRedirectRule `json:"redirect_rules,omitempty"`
+}
+
+// DNSRecordType enumerates supported DNS record kinds.
+type DNSRecordType string
+
+const (
+	DNSRecordTypeA          DNSRecordType = "A"
+	DNSRecordTypeAAAA       DNSRecordType = "AAAA"
+	DNSRecordTypeCAA        DNSRecordType = "CAA"
+	DNSRecordTypeCERT       DNSRecordType = "CERT"
+	DNSRecordTypeCNAME      DNSRecordType = "CNAME"
+	DNSRecordTypeDNSKEY     DNSRecordType = "DNSKEY"
+	DNSRecordTypeDS         DNSRecordType = "DS"
+	DNSRecordTypeHTTPS      DNSRecordType = "HTTPS"
+	DNSRecordTypeLOC        DNSRecordType = "LOC"
+	DNSRecordTypeMX         DNSRecordType = "MX"
+	DNSRecordTypeNAPTR      DNSRecordType = "NAPTR"
+	DNSRecordTypeNS         DNSRecordType = "NS"
+	DNSRecordTypeOPENPGPKEY DNSRecordType = "OPENPGPKEY"
+	DNSRecordTypePTR        DNSRecordType = "PTR"
+	DNSRecordTypeSMIMEA     DNSRecordType = "SMIMEA"
+	DNSRecordTypeSRV        DNSRecordType = "SRV"
+	DNSRecordTypeSSHFP      DNSRecordType = "SSHFP"
+	DNSRecordTypeSVCB       DNSRecordType = "SVCB"
+	DNSRecordTypeTLSA       DNSRecordType = "TLSA"
+	DNSRecordTypeTXT        DNSRecordType = "TXT"
+	DNSRecordTypeURI        DNSRecordType = "URI"
+)
+
+// Valid reports whether the DNS record type is supported.
+func (t DNSRecordType) Valid() bool {
+	switch t {
+	case DNSRecordTypeA,
+		DNSRecordTypeAAAA,
+		DNSRecordTypeCAA,
+		DNSRecordTypeCERT,
+		DNSRecordTypeCNAME,
+		DNSRecordTypeDNSKEY,
+		DNSRecordTypeDS,
+		DNSRecordTypeHTTPS,
+		DNSRecordTypeLOC,
+		DNSRecordTypeMX,
+		DNSRecordTypeNAPTR,
+		DNSRecordTypeNS,
+		DNSRecordTypeOPENPGPKEY,
+		DNSRecordTypePTR,
+		DNSRecordTypeSMIMEA,
+		DNSRecordTypeSRV,
+		DNSRecordTypeSSHFP,
+		DNSRecordTypeSVCB,
+		DNSRecordTypeTLSA,
+		DNSRecordTypeTXT,
+		DNSRecordTypeURI:
+		return true
+	default:
+		return false
+	}
+}
+
+// SupportsProxy reports whether records of this type may be proxied.
+func (t DNSRecordType) SupportsProxy() bool {
+	switch t {
+	case DNSRecordTypeA, DNSRecordTypeAAAA, DNSRecordTypeCNAME:
+		return true
+	default:
+		return false
+	}
+}
+
+// RequiresPriority indicates whether the record type mandates a priority value.
+func (t DNSRecordType) RequiresPriority() bool {
+	return t == DNSRecordTypeMX || t == DNSRecordTypeSRV
+}
+
+// DomainDNSRecord describes a DNS resource record managed under a domain.
+type DomainDNSRecord struct {
+	ID        string        `json:"id,omitempty"`
+	Name      string        `json:"name"`
+	Type      DNSRecordType `json:"type"`
+	Content   string        `json:"content"`
+	TTL       int           `json:"ttl,omitempty"`
+	Priority  *int          `json:"priority,omitempty"`
+	Proxied   bool          `json:"proxied"`
+	Comment   string        `json:"comment,omitempty"`
+	CreatedAt time.Time     `json:"created_at,omitempty"`
+	UpdatedAt time.Time     `json:"updated_at,omitempty"`
+}
+
+// Normalize standardises record metadata.
+func (r *DomainDNSRecord) Normalize() {
+	if r == nil {
+		return
+	}
+	r.ID = strings.TrimSpace(r.ID)
+	name := strings.TrimSpace(r.Name)
+	if name == "" || name == "@" {
+		r.Name = "@"
+	} else {
+		name = strings.TrimSuffix(name, ".")
+		lower := strings.ToLower(name)
+		if strings.HasPrefix(lower, "*.") {
+			r.Name = "*." + strings.TrimPrefix(lower, "*.")
+		} else {
+			r.Name = lower
+		}
+		if r.Name == "" {
+			r.Name = "@"
+		}
+	}
+	r.Type = DNSRecordType(strings.ToUpper(strings.TrimSpace(string(r.Type))))
+	r.Content = strings.TrimSpace(r.Content)
+	if r.TTL < 0 {
+		r.TTL = 0
+	}
+	if r.Comment != "" {
+		r.Comment = strings.TrimSpace(r.Comment)
+		if len(r.Comment) > 512 {
+			r.Comment = r.Comment[:512]
+		}
+	}
+	if r.Priority != nil && *r.Priority < 0 {
+		zero := 0
+		*r.Priority = zero
+	}
+}
+
+// nameTypeKey returns a stable dedupe key for the record.
+func (r DomainDNSRecord) nameTypeKey() string {
+	name := r.Name
+	if name == "" {
+		name = "@"
+	}
+	return strings.ToLower(name) + "|" + strings.ToUpper(string(r.Type))
+}
+
+// Validate ensures the record is internally consistent.
+func (r DomainDNSRecord) Validate(domain string, domainProxied bool, originIP string) error {
+	if !r.Type.Valid() {
+		return ErrValidation("unsupported dns record type")
+	}
+	if !validRecordName(r.Name) {
+		return ErrValidation("invalid dns record name")
+	}
+	if r.Proxied {
+		if !domainProxied {
+			return ErrValidation("proxied dns records require the domain proxy to be enabled")
+		}
+		if !r.Type.SupportsProxy() {
+			return ErrValidation("record type does not support proxying")
+		}
+	}
+	switch r.Type {
+	case DNSRecordTypeA:
+		value := strings.TrimSpace(r.Content)
+		if value == "@" {
+			value = ""
+		}
+		if value == "" {
+			if !r.Proxied && originIP == "" {
+				return ErrValidation("dns record content required for A record")
+			}
+		} else {
+			ip := net.ParseIP(value)
+			if ip == nil || ip.To4() == nil {
+				return ErrValidation("dns record content must be a valid IPv4 address")
+			}
+		}
+	case DNSRecordTypeAAAA:
+		value := strings.TrimSpace(r.Content)
+		if value == "@" {
+			value = ""
+		}
+		if value == "" {
+			if !r.Proxied {
+				return ErrValidation("dns record content required for AAAA record")
+			}
+		} else {
+			ip := net.ParseIP(value)
+			if ip == nil || ip.To16() == nil || ip.To4() != nil {
+				return ErrValidation("dns record content must be a valid IPv6 address")
+			}
+		}
+	case DNSRecordTypeCNAME, DNSRecordTypeNS, DNSRecordTypePTR:
+		value := strings.TrimSpace(r.Content)
+		if value == "" {
+			return ErrValidation("dns record content required")
+		}
+		if value != "@" && !validHostname(value) {
+			return ErrValidation("dns record content must be a valid hostname")
+		}
+	case DNSRecordTypeMX:
+		value := strings.TrimSpace(r.Content)
+		if value == "" {
+			return ErrValidation("dns record content required")
+		}
+		if value != "@" && !validHostname(value) {
+			return ErrValidation("mx record content must be a valid hostname")
+		}
+		if r.Priority == nil {
+			return ErrValidation("mx record priority required")
+		}
+	case DNSRecordTypeTXT,
+		DNSRecordTypeCAA,
+		DNSRecordTypeCERT,
+		DNSRecordTypeDNSKEY,
+		DNSRecordTypeDS,
+		DNSRecordTypeHTTPS,
+		DNSRecordTypeLOC,
+		DNSRecordTypeNAPTR,
+		DNSRecordTypeOPENPGPKEY,
+		DNSRecordTypeSMIMEA,
+		DNSRecordTypeSRV,
+		DNSRecordTypeSSHFP,
+		DNSRecordTypeSVCB,
+		DNSRecordTypeTLSA,
+		DNSRecordTypeURI:
+		if strings.TrimSpace(r.Content) == "" {
+			return ErrValidation("dns record content required")
+		}
+	default:
+		if strings.TrimSpace(r.Content) == "" {
+			return ErrValidation("dns record content required")
+		}
+	}
+	if !r.Type.RequiresPriority() && r.Priority != nil && *r.Priority < 0 {
+		*r.Priority = 0
+	}
+	if r.Type.RequiresPriority() && r.Priority != nil && *r.Priority < 0 {
+		return ErrValidation("record priority must be zero or positive")
+	}
+	return nil
+}
+
+func validRecordName(name string) bool {
+	if name == "" || name == "@" {
+		return true
+	}
+	lower := strings.ToLower(strings.TrimSpace(name))
+	lower = strings.TrimSuffix(lower, ".")
+	if lower == "" {
+		return false
+	}
+	if lower == "*" {
+		return true
+	}
+	if strings.HasPrefix(lower, "*.") {
+		lower = lower[2:]
+		if lower == "" {
+			return false
+		}
+	}
+	parts := strings.Split(lower, ".")
+	for _, part := range parts {
+		if !validDNSLabel(part, true) {
+			return false
+		}
+	}
+	return true
+}
+
+func validHostname(value string) bool {
+	if value == "" {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(value))
+	lower = strings.TrimSuffix(lower, ".")
+	if lower == "" {
+		return false
+	}
+	if lower == "*" {
+		return false
+	}
+	if strings.HasPrefix(lower, "*.") {
+		lower = lower[2:]
+		if lower == "" {
+			return false
+		}
+	}
+	parts := strings.Split(lower, ".")
+	for _, part := range parts {
+		if !validDNSLabel(part, true) {
+			return false
+		}
+	}
+	return true
+}
+
+func validDNSLabel(label string, allowUnderscore bool) bool {
+	if label == "" {
+		return false
+	}
+	for i := 0; i < len(label); i++ {
+		ch := label[i]
+		switch {
+		case ch >= 'a' && ch <= 'z':
+			continue
+		case ch >= '0' && ch <= '9':
+			continue
+		case ch == '-':
+			if i == 0 || i == len(label)-1 {
+				return false
+			}
+		case allowUnderscore && ch == '_':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // Validate performs minimal sanity checks.
@@ -249,6 +561,36 @@ func (d *DomainRecord) Validate() error {
 		return err
 	}
 	d.Whois.Normalize()
+	if len(d.DNSRecords) > 0 {
+		records := make([]DomainDNSRecord, 0, len(d.DNSRecords))
+		seen := make(map[string]struct{}, len(d.DNSRecords))
+		for i := range d.DNSRecords {
+			rec := d.DNSRecords[i]
+			rec.Normalize()
+			if strings.TrimSpace(rec.ID) == "" {
+				rec.ID = uuid.NewString()
+			}
+			if rec.TTL <= 0 {
+				rec.TTL = d.TTL
+			}
+			if err := rec.Validate(d.Domain, d.Proxied, d.OriginIP); err != nil {
+				return err
+			}
+			key := rec.nameTypeKey()
+			if _, exists := seen[key]; exists {
+				return ErrValidation("duplicate dns record name and type")
+			}
+			seen[key] = struct{}{}
+			records = append(records, rec)
+		}
+		sort.Slice(records, func(i, j int) bool {
+			if records[i].Name == records[j].Name {
+				return records[i].Type < records[j].Type
+			}
+			return records[i].Name < records[j].Name
+		})
+		d.DNSRecords = records
+	}
 	return nil
 }
 

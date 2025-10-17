@@ -40,6 +40,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/miekg/dns"
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/net/publicsuffix"
 	"sync"
 )
 
@@ -91,6 +92,7 @@ type domainOverview struct {
 	EdgeNodeID    string                      `json:"edge_node_id,omitempty"`
 	EdgeLabels    []string                    `json:"edge_labels,omitempty"`
 	EdgeUpdated   *time.Time                  `json:"edge_assigned_at,omitempty"`
+	DNSRecords    []models.DomainDNSRecord    `json:"dns_records,omitempty"`
 	Nameservers   *domainNameServerSet        `json:"nameservers,omitempty"`
 	Whois         *models.DomainWhois         `json:"whois,omitempty"`
 	WAF           models.DomainWAF            `json:"waf,omitempty"`
@@ -138,6 +140,17 @@ type domainRedirectRulePayload struct {
 	PreserveQuery *bool  `json:"preserve_query,omitempty"`
 }
 
+type domainDNSRecordPayload struct {
+	ID       string  `json:"id,omitempty"`
+	Name     string  `json:"name"`
+	Type     string  `json:"type"`
+	Content  string  `json:"content"`
+	TTL      *int    `json:"ttl,omitempty"`
+	Priority *int    `json:"priority,omitempty"`
+	Proxied  *bool   `json:"proxied,omitempty"`
+	Comment  *string `json:"comment,omitempty"`
+}
+
 type domainWhoisManualPayload struct {
 	ExpiresAt string `json:"expires_at"`
 	RawInput  string `json:"raw_input,omitempty"`
@@ -155,6 +168,7 @@ type createDomainPayload struct {
 	Role          string                      `json:"role,omitempty"`
 	Alias         *domainAliasPayload         `json:"alias,omitempty"`
 	RedirectRules []domainRedirectRulePayload `json:"redirect_rules,omitempty"`
+	DNSRecords    []domainDNSRecordPayload    `json:"dns_records,omitempty"`
 }
 
 const (
@@ -179,6 +193,7 @@ type bulkDomainPayload struct {
 	Role          string                      `json:"role,omitempty"`
 	Alias         *domainAliasPayload         `json:"alias,omitempty"`
 	RedirectRules []domainRedirectRulePayload `json:"redirect_rules,omitempty"`
+	DNSRecords    []domainDNSRecordPayload    `json:"dns_records,omitempty"`
 }
 
 type nameServerEntryDTO struct {
@@ -480,6 +495,12 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/domains/{domain}/cache/purge", s.authorizeUser(s.handlePurgeDomainCache))
 			r.Post("/domains/{domain}/whois/refresh", s.authorizeUser(s.handleRefreshDomainWhois))
 			r.Put("/domains/{domain}/whois", s.authorizeUser(s.handleOverrideDomainWhois))
+			r.Route("/domains/{domain}/dns-records", func(r chi.Router) {
+				r.Get("/", s.authorizeUser(s.handleListDomainDNSRecords))
+				r.Post("/", s.authorizeUser(s.handleCreateDomainDNSRecord))
+				r.Put("/{id}", s.authorizeUser(s.handleUpdateDomainDNSRecord))
+				r.Delete("/{id}", s.authorizeUser(s.handleDeleteDomainDNSRecord))
+			})
 			r.Get("/domains/{domain}/searchbots/stats", s.authorizeUser(s.handleDomainSearchBotStats))
 			r.Get("/domains/{domain}/searchbots/logs/{bot}", s.authorizeUser(s.handleDomainSearchBotExport))
 			r.Post("/domains/{domain}/edge/reassign", func(w http.ResponseWriter, req *http.Request) {
@@ -1292,7 +1313,36 @@ func (s *Server) invalidateDomainFamilyCache(updated models.DomainRecord, previo
 	return nil
 }
 
-func (s *Server) prepareDomainRecord(user userContext, domain string, owner string, origin string, proxied *bool, ttl *int, tlsPayload *domainTLSPayload, edgePayload *domainEdgePayload, wafPayload *domainWAFPayload) (models.DomainRecord, error) {
+func ensureRootDomain(name string) error {
+	domain := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+	if domain == "" {
+		return models.ErrValidation("domain must be provided")
+	}
+	if net.ParseIP(domain) != nil {
+		return models.ErrValidation("domain must be a hostname, not an IP address")
+	}
+	if strings.Contains(domain, "..") || strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") {
+		return models.ErrValidation("invalid domain name")
+	}
+	if etld1, err := publicsuffix.EffectiveTLDPlusOne(domain); err == nil {
+		if domain != strings.ToLower(etld1) {
+			return models.ErrValidation("please provide the root domain (e.g., example.com, not subdomain.example.com)")
+		}
+		return nil
+	}
+	parts := strings.Split(domain, ".")
+	if len(parts) != 2 {
+		return models.ErrValidation("please provide the root domain (e.g., example.com, not subdomain.example.com)")
+	}
+	for _, part := range parts {
+		if part == "" {
+			return models.ErrValidation("invalid domain name")
+		}
+	}
+	return nil
+}
+
+func (s *Server) prepareDomainRecord(user userContext, domain string, owner string, origin string, proxied *bool, ttl *int, tlsPayload *domainTLSPayload, edgePayload *domainEdgePayload, wafPayload *domainWAFPayload, dnsRecords []domainDNSRecordPayload) (models.DomainRecord, error) {
 	record := models.DomainRecord{
 		Domain:       strings.ToLower(strings.TrimSpace(domain)),
 		Owner:        strings.TrimSpace(owner),
@@ -1305,6 +1355,9 @@ func (s *Server) prepareDomainRecord(user userContext, domain string, owner stri
 	}
 	if record.Domain == "" {
 		return models.DomainRecord{}, models.ErrValidation("domain must be provided")
+	}
+	if err := ensureRootDomain(record.Domain); err != nil {
+		return models.DomainRecord{}, err
 	}
 	if record.Owner == "" {
 		record.Owner = user.ID
@@ -1366,6 +1419,15 @@ func (s *Server) prepareDomainRecord(user userContext, domain string, owner stri
 		disableTLSForDNS(&record)
 	}
 	now := time.Now().UTC()
+	if len(dnsRecords) == 0 {
+		record.DNSRecords = defaultDomainDNSRecords(record.Domain, record.OriginIP, record.Proxied, record.TTL, now)
+	} else {
+		custom, err := buildDomainDNSRecords(record.TTL, record.Proxied, dnsRecords, now)
+		if err != nil {
+			return models.DomainRecord{}, err
+		}
+		record.DNSRecords = custom
+	}
 	record.TLS.UpdatedAt = now
 	if err := record.Validate(); err != nil {
 		return models.DomainRecord{}, err
@@ -1380,6 +1442,218 @@ func (s *Server) prepareDomainRecord(user userContext, domain string, owner stri
 	record.Version.NodeID = s.Config.NodeID
 	record.Version.Updated = now.Unix()
 	return record, nil
+}
+
+func defaultDomainDNSRecords(domain string, origin string, proxied bool, defaultTTL int, now time.Time) []models.DomainDNSRecord {
+	if defaultTTL <= 0 {
+		defaultTTL = 300
+	}
+	base := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(domain)), ".")
+	apex := models.DomainDNSRecord{
+		ID:        uuid.NewString(),
+		Name:      "@",
+		Type:      models.DNSRecordTypeA,
+		Content:   strings.TrimSpace(origin),
+		Proxied:   proxied,
+		TTL:       defaultTTL,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	www := models.DomainDNSRecord{
+		ID:        uuid.NewString(),
+		Name:      "www",
+		Type:      models.DNSRecordTypeCNAME,
+		Content:   base,
+		Proxied:   proxied,
+		TTL:       defaultTTL,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	records := make([]models.DomainDNSRecord, 0, 2)
+	if strings.TrimSpace(origin) != "" {
+		records = append(records, apex)
+	}
+	records = append(records, www)
+	return records
+}
+
+func buildDomainDNSRecords(defaultTTL int, proxied bool, payload []domainDNSRecordPayload, now time.Time) ([]models.DomainDNSRecord, error) {
+	if len(payload) == 0 {
+		return nil, nil
+	}
+	if defaultTTL <= 0 {
+		defaultTTL = 300
+	}
+	records := make([]models.DomainDNSRecord, 0, len(payload))
+	for _, entry := range payload {
+		name := strings.TrimSpace(entry.Name)
+		if name == "" {
+			return nil, models.ErrValidation("dns record name required")
+		}
+		recordType := models.DNSRecordType(strings.ToUpper(strings.TrimSpace(entry.Type)))
+		rec := models.DomainDNSRecord{
+			ID:        strings.TrimSpace(entry.ID),
+			Name:      name,
+			Type:      recordType,
+			Content:   strings.TrimSpace(entry.Content),
+			Proxied:   proxied,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if entry.Proxied != nil {
+			rec.Proxied = *entry.Proxied
+		}
+		if entry.TTL != nil {
+			rec.TTL = *entry.TTL
+		} else {
+			rec.TTL = defaultTTL
+		}
+		if entry.Priority != nil {
+			val := *entry.Priority
+			rec.Priority = &val
+		}
+		if recordType.RequiresPriority() && rec.Priority == nil {
+			defaultPriority := 10
+			rec.Priority = &defaultPriority
+		}
+		if entry.Comment != nil {
+			rec.Comment = strings.TrimSpace(*entry.Comment)
+		}
+		if rec.ID == "" {
+			rec.ID = uuid.NewString()
+		}
+		records = append(records, rec)
+	}
+	return records, nil
+}
+
+func normalizeRecordContentForDomain(rec *models.DomainRecord, record *models.DomainDNSRecord) {
+	if rec == nil || record == nil {
+		return
+	}
+	trimmed := strings.TrimSpace(record.Content)
+	if trimmed != "@" {
+		return
+	}
+	switch record.Type {
+	case models.DNSRecordTypeA:
+		origin := strings.TrimSpace(rec.OriginIP)
+		record.Content = origin
+	case models.DNSRecordTypeAAAA:
+		record.Content = ""
+	case models.DNSRecordTypeCNAME, models.DNSRecordTypeMX, models.DNSRecordTypeNS, models.DNSRecordTypePTR,
+		models.DNSRecordTypeHTTPS, models.DNSRecordTypeSVCB, models.DNSRecordTypeURI, models.DNSRecordTypeSRV:
+		record.Content = strings.TrimSuffix(rec.Domain, ".")
+	}
+}
+
+func ensureApexARecord(rec *models.DomainRecord, now time.Time) bool {
+	if rec == nil {
+		return false
+	}
+	origin := strings.TrimSpace(rec.OriginIP)
+	indices := make([]int, 0, len(rec.DNSRecords))
+	for i := range rec.DNSRecords {
+		record := rec.DNSRecords[i]
+		name := strings.TrimSpace(record.Name)
+		if name == "" || name == "@" {
+			if record.Type == models.DNSRecordTypeA {
+				indices = append(indices, i)
+			}
+		}
+	}
+	changed := false
+	if origin == "" {
+		if len(indices) > 0 {
+			filtered := make([]models.DomainDNSRecord, 0, len(rec.DNSRecords)-len(indices))
+			for i := range rec.DNSRecords {
+				skip := false
+				for _, idx := range indices {
+					if i == idx {
+						skip = true
+						break
+					}
+				}
+				if !skip {
+					filtered = append(filtered, rec.DNSRecords[i])
+				}
+			}
+			rec.DNSRecords = filtered
+			changed = true
+		}
+		return changed
+	}
+	// Ensure exactly one apex A record remains, sync content/flags/ttl
+	var target *models.DomainDNSRecord
+	if len(indices) > 0 {
+		target = &rec.DNSRecords[indices[0]]
+		// Remove duplicates beyond the first
+		if len(indices) > 1 {
+			filtered := make([]models.DomainDNSRecord, 0, len(rec.DNSRecords)-(len(indices)-1))
+			for i := range rec.DNSRecords {
+				duplicate := false
+				for _, idx := range indices[1:] {
+					if i == idx {
+						duplicate = true
+						break
+					}
+				}
+				if !duplicate {
+					filtered = append(filtered, rec.DNSRecords[i])
+				}
+			}
+			rec.DNSRecords = filtered
+			// target pointer may have been invalidated, reassign
+			for i := range rec.DNSRecords {
+				record := rec.DNSRecords[i]
+				name := strings.TrimSpace(record.Name)
+				if record.Type == models.DNSRecordTypeA && (name == "" || name == "@") {
+					target = &rec.DNSRecords[i]
+					break
+				}
+			}
+			changed = true
+		}
+	}
+	if target == nil {
+		ttl := rec.TTL
+		if ttl <= 0 {
+			ttl = 300
+		}
+		rec.DNSRecords = append(rec.DNSRecords, models.DomainDNSRecord{
+			ID:        uuid.NewString(),
+			Name:      "@",
+			Type:      models.DNSRecordTypeA,
+			Content:   origin,
+			TTL:       ttl,
+			Proxied:   rec.Proxied,
+			CreatedAt: now,
+			UpdatedAt: now,
+		})
+		return true
+	}
+	ttl := rec.TTL
+	if ttl <= 0 {
+		ttl = 300
+	}
+	updatedFlag := false
+	if target.Content != origin {
+		target.Content = origin
+		updatedFlag = true
+	}
+	if target.Proxied != rec.Proxied {
+		target.Proxied = rec.Proxied
+		updatedFlag = true
+	}
+	if target.TTL != ttl {
+		target.TTL = ttl
+		updatedFlag = true
+	}
+	if updatedFlag {
+		target.UpdatedAt = now
+	}
+	target.Normalize()
+	return changed || updatedFlag
 }
 
 func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
@@ -1401,7 +1675,7 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "domain required")
 		return
 	}
-	record, err := s.prepareDomainRecord(user, payload.Domain, payload.Owner, origin, payload.Proxied, payload.TTL, payload.TLS, payload.Edge, payload.WAF)
+	record, err := s.prepareDomainRecord(user, payload.Domain, payload.Owner, origin, payload.Proxied, payload.TTL, payload.TLS, payload.Edge, payload.WAF, payload.DNSRecords)
 	if err != nil {
 		if errors.Is(err, errForbiddenDomainOwner) {
 			writeError(w, http.StatusForbidden, err.Error())
@@ -1543,7 +1817,7 @@ func (s *Server) handleBulkCreateDomains(w http.ResponseWriter, r *http.Request)
 	success := 0
 	familyInvalidations := make([]models.DomainRecord, 0)
 	for _, domain := range normalized {
-		record, err := s.prepareDomainRecord(user, domain, payload.Owner, origin, payload.Proxied, payload.TTL, payload.TLS, payload.Edge, payload.WAF)
+		record, err := s.prepareDomainRecord(user, domain, payload.Owner, origin, payload.Proxied, payload.TTL, payload.TLS, payload.Edge, payload.WAF, payload.DNSRecords)
 		if err != nil {
 			failed++
 			errMsg := err.Error()
@@ -1890,27 +2164,39 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	updated := *existing
 	linksTouched := payload.Role != nil || payload.Alias != nil || payload.RedirectRules != nil
 	cacheBumped := false
+	apexTouched := false
 	if payload.OriginIP != nil {
 		origin := strings.TrimSpace(*payload.OriginIP)
 		updated.OriginIP = origin
+		for i := range updated.DNSRecords {
+			rec := &updated.DNSRecords[i]
+			if rec.Type == models.DNSRecordTypeA && rec.Proxied {
+				trimmedContent := strings.TrimSpace(rec.Content)
+				if trimmedContent == "" || trimmedContent == prevOrigin {
+					rec.Content = origin
+				}
+			}
+		}
+		if origin != prevOrigin {
+			updated.CacheVersion++
+			cacheBumped = true
+		}
+		apexTouched = true
 	}
 	if payload.Proxied != nil {
 		prevProxy := updated.Proxied
 		updated.Proxied = *payload.Proxied
 		if !updated.Proxied {
+			for i := range updated.DNSRecords {
+				updated.DNSRecords[i].Proxied = false
+			}
 			disableTLSForDNS(&updated)
 		} else if !prevProxy && payload.TLS == nil {
 			updated.TLS.UseRecommended = true
 			updated.TLS.Mode = models.EncryptionFlexible
 			queueTLSAutomation(&updated, time.Now().UTC())
 		}
-	}
-	if payload.OriginIP != nil {
-		newOrigin := strings.TrimSpace(*payload.OriginIP)
-		if newOrigin != prevOrigin {
-			updated.CacheVersion++
-			cacheBumped = true
-		}
+		apexTouched = true
 	}
 	if payload.TTL != nil && *payload.TTL > 0 {
 		updated.TTL = *payload.TTL
@@ -2025,11 +2311,18 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	if !updated.Proxied {
 		disableTLSForDNS(&updated)
 	}
+	now := time.Now().UTC()
+	if ensureApexARecord(&updated, now) {
+		apexTouched = true
+	}
+	if apexTouched && !cacheBumped {
+		updated.CacheVersion++
+		cacheBumped = true
+	}
 	if err := updated.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	now := time.Now().UTC()
 	updated.UpdatedAt = now
 	updated.Version.Counter++
 	updated.Version.NodeID = s.Config.NodeID
@@ -2047,6 +2340,265 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 	s.triggerSyncBroadcast()
 	go s.Orchestrator.Trigger(r.Context())
 	writeJSON(w, http.StatusOK, updated.Sanitize())
+}
+
+func (s *Server) handleListDomainDNSRecords(w http.ResponseWriter, r *http.Request) {
+	user := userFromContext(r.Context())
+	domain := strings.ToLower(chi.URLParam(r, "domain"))
+	existing, err := s.Store.GetDomain(domain)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "domain not found")
+		return
+	}
+	s.attachOwnerMetadata(existing)
+	if !userOwnsDomain(user, *existing) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	records := make([]models.DomainDNSRecord, len(existing.DNSRecords))
+	copy(records, existing.DNSRecords)
+	writeJSON(w, http.StatusOK, records)
+}
+
+func (s *Server) handleCreateDomainDNSRecord(w http.ResponseWriter, r *http.Request) {
+	user := userFromContext(r.Context())
+	domainName := strings.ToLower(chi.URLParam(r, "domain"))
+	existing, err := s.Store.GetDomain(domainName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "domain not found")
+		return
+	}
+	s.attachOwnerMetadata(existing)
+	if !userOwnsDomain(user, *existing) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	var payload domainDNSRecordPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	now := time.Now().UTC()
+	var created models.DomainDNSRecord
+	_, err = s.Store.MutateDomain(domainName, func(rec *models.DomainRecord) error {
+		records, err := buildDomainDNSRecords(rec.TTL, rec.Proxied, []domainDNSRecordPayload{payload}, now)
+		if err != nil {
+			return err
+		}
+		newRecord := records[0]
+		normalizeRecordContentForDomain(rec, &newRecord)
+		rec.DNSRecords = append(rec.DNSRecords, newRecord)
+		trimmedName := strings.TrimSpace(newRecord.Name)
+		if trimmedName == "" || trimmedName == "@" {
+			if newRecord.Type == models.DNSRecordTypeA {
+				trimmedContent := strings.TrimSpace(newRecord.Content)
+				if trimmedContent != "" && trimmedContent != "@" {
+					rec.OriginIP = trimmedContent
+				}
+			}
+		}
+		rec.CacheVersion++
+		rec.EnsureCacheVersion()
+		rec.UpdatedAt = now
+		rec.Version.Counter++
+		if rec.Version.Counter <= 0 {
+			rec.Version.Counter = 1
+		}
+		rec.Version.NodeID = s.Config.NodeID
+		rec.Version.Updated = now.Unix()
+		if err := rec.Validate(); err != nil {
+			return err
+		}
+		for _, candidate := range rec.DNSRecords {
+			if candidate.ID == newRecord.ID {
+				created = candidate
+				break
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			writeError(w, http.StatusNotFound, "domain not found")
+			return
+		}
+		if ve, ok := err.(models.ErrValidation); ok {
+			writeError(w, http.StatusBadRequest, ve.Error())
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.triggerSyncBroadcast()
+	go s.Orchestrator.Trigger(r.Context())
+	writeJSON(w, http.StatusCreated, created)
+}
+
+func (s *Server) handleUpdateDomainDNSRecord(w http.ResponseWriter, r *http.Request) {
+	user := userFromContext(r.Context())
+	domainName := strings.ToLower(chi.URLParam(r, "domain"))
+	recordID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if recordID == "" {
+		writeError(w, http.StatusBadRequest, "dns record id required")
+		return
+	}
+	existing, err := s.Store.GetDomain(domainName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "domain not found")
+		return
+	}
+	s.attachOwnerMetadata(existing)
+	if !userOwnsDomain(user, *existing) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	var payload domainDNSRecordPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	payload.ID = recordID
+	now := time.Now().UTC()
+	var updatedRecord models.DomainDNSRecord
+	_, err = s.Store.MutateDomain(domainName, func(rec *models.DomainRecord) error {
+		index := -1
+		var current models.DomainDNSRecord
+		for i := range rec.DNSRecords {
+			if rec.DNSRecords[i].ID == recordID {
+				index = i
+				current = rec.DNSRecords[i]
+				break
+			}
+		}
+		if index < 0 {
+			return fs.ErrNotExist
+		}
+		records, err := buildDomainDNSRecords(rec.TTL, rec.Proxied, []domainDNSRecordPayload{payload}, now)
+		if err != nil {
+			return err
+		}
+		next := records[0]
+		normalizeRecordContentForDomain(rec, &next)
+		next.ID = current.ID
+		if !current.CreatedAt.IsZero() {
+			next.CreatedAt = current.CreatedAt
+		}
+		next.UpdatedAt = now
+		rec.DNSRecords[index] = next
+		trimmedName := strings.TrimSpace(next.Name)
+		if trimmedName == "" || trimmedName == "@" {
+			if next.Type == models.DNSRecordTypeA {
+				trimmedContent := strings.TrimSpace(next.Content)
+				if trimmedContent != "" && trimmedContent != "@" {
+					rec.OriginIP = trimmedContent
+				}
+			}
+		}
+		rec.CacheVersion++
+		rec.EnsureCacheVersion()
+		rec.UpdatedAt = now
+		rec.Version.Counter++
+		if rec.Version.Counter <= 0 {
+			rec.Version.Counter = 1
+		}
+		rec.Version.NodeID = s.Config.NodeID
+		rec.Version.Updated = now.Unix()
+		if err := rec.Validate(); err != nil {
+			return err
+		}
+		for _, candidate := range rec.DNSRecords {
+			if candidate.ID == next.ID {
+				updatedRecord = candidate
+				break
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			writeError(w, http.StatusNotFound, "dns record not found")
+			return
+		}
+		if ve, ok := err.(models.ErrValidation); ok {
+			writeError(w, http.StatusBadRequest, ve.Error())
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.triggerSyncBroadcast()
+	go s.Orchestrator.Trigger(r.Context())
+	writeJSON(w, http.StatusOK, updatedRecord)
+}
+
+func (s *Server) handleDeleteDomainDNSRecord(w http.ResponseWriter, r *http.Request) {
+	user := userFromContext(r.Context())
+	domainName := strings.ToLower(chi.URLParam(r, "domain"))
+	recordID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if recordID == "" {
+		writeError(w, http.StatusBadRequest, "dns record id required")
+		return
+	}
+	existing, err := s.Store.GetDomain(domainName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "domain not found")
+		return
+	}
+	s.attachOwnerMetadata(existing)
+	if !userOwnsDomain(user, *existing) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	now := time.Now().UTC()
+	_, err = s.Store.MutateDomain(domainName, func(rec *models.DomainRecord) error {
+		index := -1
+		for i := range rec.DNSRecords {
+			if rec.DNSRecords[i].ID == recordID {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			return fs.ErrNotExist
+		}
+		record := rec.DNSRecords[index]
+		rec.DNSRecords = append(rec.DNSRecords[:index], rec.DNSRecords[index+1:]...)
+		trimmedName := strings.TrimSpace(record.Name)
+		trimmedContent := strings.TrimSpace(record.Content)
+		if (trimmedName == "" || trimmedName == "@") && record.Type == models.DNSRecordTypeA {
+			if trimmedContent != "" && trimmedContent != "@" {
+				rec.OriginIP = ""
+			}
+		}
+		rec.CacheVersion++
+		rec.EnsureCacheVersion()
+		rec.UpdatedAt = now
+		rec.Version.Counter++
+		if rec.Version.Counter <= 0 {
+			rec.Version.Counter = 1
+		}
+		rec.Version.NodeID = s.Config.NodeID
+		rec.Version.Updated = now.Unix()
+		if err := rec.Validate(); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			writeError(w, http.StatusNotFound, "dns record not found")
+			return
+		}
+		if ve, ok := err.(models.ErrValidation); ok {
+			writeError(w, http.StatusBadRequest, ve.Error())
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.triggerSyncBroadcast()
+	go s.Orchestrator.Trigger(r.Context())
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handlePurgeDomainCache(w http.ResponseWriter, r *http.Request) {
@@ -3584,6 +4136,9 @@ func (s *Server) handleDomainsOverview(w http.ResponseWriter, r *http.Request) {
 			entry.Whois = &copy
 		}
 		entry.WAF = domain.WAF
+		if len(domain.DNSRecords) > 0 {
+			entry.DNSRecords = append(make([]models.DomainDNSRecord, 0, len(domain.DNSRecords)), domain.DNSRecords...)
+		}
 		overview = append(overview, entry)
 	}
 	sort.Slice(overview, func(i, j int) bool {

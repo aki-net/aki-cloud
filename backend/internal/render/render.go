@@ -59,8 +59,7 @@ type ZoneFile struct {
 	AdminEmail string
 	Serial     string
 	NSRecords  []string
-	ARecords   []string
-	Extra      []ZoneRecord
+	Records    []ZoneRecord
 }
 
 // ZoneRecord represents an arbitrary record in a zone file.
@@ -280,23 +279,29 @@ func (g *CoreDNSGenerator) Render() error {
 				Value: fmt.Sprintf(`"%s"`, ch.DNSValue),
 			})
 		}
-		extraRecords := append([]ZoneRecord{}, challengeExtras...)
-		arecords := make([]string, 0, 2)
+		zoneRecords := append([]ZoneRecord{}, challengeExtras...)
+		assignedIP := strings.TrimSpace(domain.Edge.AssignedIP)
 		if domain.Proxied {
-			// Only use the assigned IP, never all edge IPs
-			if ip := strings.TrimSpace(domain.Edge.AssignedIP); ip != "" {
-				arecords = append(arecords, ip)
-				fmt.Printf("DEBUG: Domain %s using assigned IP %s\n", domain.Domain, ip)
+			if assignedIP != "" {
+				fmt.Printf("DEBUG: Domain %s using assigned IP %s\n", domain.Domain, assignedIP)
 			} else {
 				fmt.Printf("DEBUG: Domain %s has no assigned IP (Edge: %+v)\n", domain.Domain, domain.Edge)
 			}
 		} else {
 			fmt.Printf("DEBUG: Domain %s is not proxied\n", domain.Domain)
 		}
-		// Fall back to origin IP if no edge IP assigned or not proxied
-		if len(arecords) == 0 && strings.TrimSpace(domain.OriginIP) != "" {
+		var usedOriginFallback bool
+		if len(domain.DNSRecords) == 0 {
+			fallbackRecords, usedOrigin := renderFallbackZoneRecords(domain, assignedIP)
+			zoneRecords = append(zoneRecords, fallbackRecords...)
+			usedOriginFallback = usedOrigin
+		} else {
+			customRecords, usedOrigin := renderCustomDNSRecords(domain, assignedIP)
+			zoneRecords = append(zoneRecords, customRecords...)
+			usedOriginFallback = usedOrigin
+		}
+		if usedOriginFallback && strings.TrimSpace(domain.OriginIP) != "" {
 			fmt.Printf("DEBUG: Domain %s falling back to origin IP %s\n", domain.Domain, domain.OriginIP)
-			arecords = append(arecords, domain.OriginIP)
 		}
 		nsRecords := make([]string, 0, len(activeNS))
 		for _, ns := range activeNS {
@@ -318,7 +323,7 @@ func (g *CoreDNSGenerator) Render() error {
 					nsRecords = append(nsRecords, ensureDot(name))
 				}
 				if name != "" && ip != "" {
-					extraRecords = append(extraRecords, ZoneRecord{
+					zoneRecords = append(zoneRecords, ZoneRecord{
 						Name:  relativeLabel(name, domain.Domain),
 						Type:  "A",
 						Value: ip,
@@ -336,8 +341,7 @@ func (g *CoreDNSGenerator) Render() error {
 			AdminEmail: fmt.Sprintf("admin.%s.", strings.TrimSuffix(domain.Domain, ".")),
 			Serial:     serial,
 			NSRecords:  uniqueStrings(nsRecords),
-			ARecords:   uniqueStrings(arecords),
-			Extra:      dedupeRecords(extraRecords),
+			Records:    dedupeRecords(zoneRecords),
 		}
 		zoneFiles = append(zoneFiles, zone)
 	}
@@ -346,7 +350,7 @@ func (g *CoreDNSGenerator) Render() error {
 	zoneFiles = append(zoneFiles, infraZones...)
 
 	for _, zone := range zoneFiles {
-		fmt.Printf("CoreDNS generator: writing zone for %s (%d NS, %d A, %d extra)\n", zone.Domain, len(zone.NSRecords), len(zone.ARecords), len(zone.Extra))
+		fmt.Printf("CoreDNS generator: writing zone for %s (%d NS, %d records)\n", zone.Domain, len(zone.NSRecords), len(zone.Records))
 		if err := writeZoneFile(zonesDir, zone); err != nil {
 			return err
 		}
@@ -418,10 +422,7 @@ $TTL {{.TTL}}
 {{- range .NSRecords}}
 @ IN NS {{.}}
 {{- end}}
-{{- range .ARecords}}
-@ IN A {{.}}
-{{- end}}
-{{- range .Extra}}
+{{- range .Records}}
 {{.Name}} IN {{.Type}} {{.Value}}
 {{- end}}
 `
@@ -494,7 +495,7 @@ func (g *CoreDNSGenerator) buildInfrastructureZones(nsList []infra.NameServer, s
 			AdminEmail: fmt.Sprintf("admin.%s.", strings.TrimSuffix(base, ".")),
 			Serial:     serial,
 			NSRecords:  uniqueStrings(nsRecords),
-			Extra:      dedupeRecords(extra),
+			Records:    dedupeRecords(extra),
 		}
 		zones = append(zones, zone)
 		for label, nsByLabel := range labelMap {
@@ -521,7 +522,7 @@ func (g *CoreDNSGenerator) buildInfrastructureZones(nsList []infra.NameServer, s
 				AdminEmail: fmt.Sprintf("admin.%s.", strings.TrimSuffix(labelDomain, ".")),
 				Serial:     serial,
 				NSRecords:  uniqueStrings(labelNSRecords),
-				Extra:      dedupeRecords(append(labelExtras, vanityExtras[labelDomain]...)),
+				Records:    dedupeRecords(append(labelExtras, vanityExtras[labelDomain]...)),
 			}
 			zones = append(zones, labelZone)
 		}
@@ -957,8 +958,13 @@ func (g *OpenRestyGenerator) Render() error {
 			originServerName = aliasPrimary.Domain
 			upstreamHost = aliasPrimary.Domain
 		}
+		serverNames := buildServerNames(domain)
+		if len(serverNames) == 0 {
+			serverNames = []string{strings.TrimSuffix(domain.Domain, ".")}
+		}
 		data := map[string]interface{}{
 			"Domain":              domain.Domain,
+			"ServerNames":         strings.Join(serverNames, " "),
 			"EdgeIP":              assignedIP,
 			"OriginIP":            originAddress,
 			"ProxyPass":           proxyPass,
@@ -1662,6 +1668,213 @@ func uniqueStrings(values []string) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+func buildServerNames(domain models.DomainRecord) []string {
+	base := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(domain.Domain)), ".")
+	names := make([]string, 0, len(domain.DNSRecords)+1)
+	if base != "" {
+		names = append(names, base)
+	}
+	if domain.Proxied && len(domain.DNSRecords) > 0 {
+		for _, rec := range domain.DNSRecords {
+			if !rec.Proxied {
+				continue
+			}
+			host := dnsRecordHost(base, rec.Name)
+			if host == "" {
+				continue
+			}
+			names = append(names, host)
+		}
+	}
+	return uniqueStrings(names)
+}
+
+func dnsRecordHost(base string, name string) string {
+	label := strings.ToLower(strings.TrimSpace(name))
+	base = strings.TrimSpace(base)
+	if label == "" || label == "@" {
+		return base
+	}
+	label = strings.TrimSuffix(label, ".")
+	if base != "" && label == base {
+		return base
+	}
+	if base != "" && strings.HasSuffix(label, "."+base) {
+		return label
+	}
+	if label == "*" {
+		if base == "" {
+			return "*"
+		}
+		return "*." + base
+	}
+	if strings.HasPrefix(label, "*.") {
+		trimmed := strings.TrimPrefix(label, "*.")
+		if trimmed == "" {
+			if base == "" {
+				return "*"
+			}
+			return "*." + base
+		}
+		if base != "" && strings.HasSuffix(trimmed, "."+base) {
+			return label
+		}
+		if base == "" {
+			return "*." + trimmed
+		}
+		return "*." + trimmed + "." + base
+	}
+	if base == "" {
+		return label
+	}
+	return label + "." + base
+}
+
+func renderFallbackZoneRecords(domain models.DomainRecord, assignedIP string) ([]ZoneRecord, bool) {
+	records := make([]ZoneRecord, 0, 2)
+	origin := strings.TrimSpace(domain.OriginIP)
+	if domain.Proxied && assignedIP != "" {
+		records = append(records, ZoneRecord{
+			Name:  "@",
+			Type:  "A",
+			Value: assignedIP,
+		})
+	}
+	if len(records) == 0 && origin != "" {
+		records = append(records, ZoneRecord{
+			Name:  "@",
+			Type:  "A",
+			Value: origin,
+		})
+		return records, true
+	}
+	return records, false
+}
+
+func renderCustomDNSRecords(domain models.DomainRecord, assignedIP string) ([]ZoneRecord, bool) {
+	records := make([]ZoneRecord, 0, len(domain.DNSRecords))
+	origin := strings.TrimSpace(domain.OriginIP)
+	usedOrigin := false
+	apexHost := strings.TrimSuffix(domain.Domain, ".")
+	for _, rec := range domain.DNSRecords {
+		name := strings.TrimSpace(rec.Name)
+		if name == "" || name == "@" {
+			name = "@"
+		}
+		switch rec.Type {
+		case models.DNSRecordTypeA:
+			value := strings.TrimSpace(rec.Content)
+			if value == "@" {
+				value = ""
+			}
+			if rec.Proxied && domain.Proxied {
+				if assignedIP != "" {
+					records = append(records, ZoneRecord{Name: name, Type: "A", Value: assignedIP})
+				} else if origin != "" {
+					records = append(records, ZoneRecord{Name: name, Type: "A", Value: origin})
+					usedOrigin = true
+				}
+			} else if value != "" {
+				records = append(records, ZoneRecord{Name: name, Type: "A", Value: value})
+			}
+		case models.DNSRecordTypeAAAA:
+			value := strings.TrimSpace(rec.Content)
+			if rec.Proxied && domain.Proxied {
+				if assignedIP != "" {
+					records = append(records, ZoneRecord{Name: name, Type: "A", Value: assignedIP})
+				} else if origin != "" {
+					records = append(records, ZoneRecord{Name: name, Type: "A", Value: origin})
+					usedOrigin = true
+				}
+			} else if value != "" {
+				records = append(records, ZoneRecord{Name: name, Type: "AAAA", Value: value})
+			}
+		case models.DNSRecordTypeCNAME:
+			target := strings.TrimSpace(rec.Content)
+			if target == "@" {
+				target = apexHost
+			}
+			if rec.Proxied && domain.Proxied {
+				if assignedIP != "" {
+					records = append(records, ZoneRecord{Name: name, Type: "A", Value: assignedIP})
+				} else if origin != "" {
+					records = append(records, ZoneRecord{Name: name, Type: "A", Value: origin})
+					usedOrigin = true
+				}
+			} else if target != "" {
+				records = append(records, ZoneRecord{Name: name, Type: "CNAME", Value: ensureDot(target)})
+			}
+		case models.DNSRecordTypeMX:
+			target := strings.TrimSpace(rec.Content)
+			if target == "@" {
+				target = apexHost
+			}
+			if target == "" {
+				continue
+			}
+			priority := 0
+			if rec.Priority != nil {
+				priority = *rec.Priority
+			}
+			records = append(records, ZoneRecord{
+				Name:  name,
+				Type:  "MX",
+				Value: fmt.Sprintf("%d %s", priority, ensureDot(target)),
+			})
+		case models.DNSRecordTypeNS:
+			target := strings.TrimSpace(rec.Content)
+			if target == "@" {
+				target = apexHost
+			}
+			if target == "" {
+				continue
+			}
+			records = append(records, ZoneRecord{
+				Name:  name,
+				Type:  "NS",
+				Value: ensureDot(target),
+			})
+		case models.DNSRecordTypeTXT:
+			if strings.TrimSpace(rec.Content) == "" {
+				continue
+			}
+			records = append(records, ZoneRecord{
+				Name:  name,
+				Type:  "TXT",
+				Value: formatTXTValue(rec.Content),
+			})
+		default:
+			content := strings.TrimSpace(rec.Content)
+			if content == "@" {
+				switch rec.Type {
+				case models.DNSRecordTypeHTTPS, models.DNSRecordTypeSVCB, models.DNSRecordTypeURI, models.DNSRecordTypePTR:
+					content = apexHost
+				}
+			}
+			if content == "" {
+				continue
+			}
+			records = append(records, ZoneRecord{
+				Name:  name,
+				Type:  strings.ToUpper(string(rec.Type)),
+				Value: content,
+			})
+		}
+	}
+	return records, usedOrigin
+}
+
+func formatTXTValue(content string) string {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return `""`
+	}
+	if strings.HasPrefix(trimmed, `"`) && strings.HasSuffix(trimmed, `"`) && len(trimmed) >= 2 {
+		return trimmed
+	}
+	return fmt.Sprintf(`"%s"`, trimmed)
 }
 
 func dedupeRecords(records []ZoneRecord) []ZoneRecord {
