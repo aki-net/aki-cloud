@@ -2382,38 +2382,6 @@ const resolveWhois = (
   )}
 
       <div className="domains-table-group">
-        {selectionEnabled && tableData.length > 0 && (
-          <div className="global-selection-controls">
-            <label className="global-select-all">
-              <input
-                type="checkbox"
-                checked={selectedDomains.size === tableData.length && tableData.length > 0}
-                onChange={(e) => {
-                  if (e.target.checked) {
-                    setSelectedDomains(new Set(tableData.map(d => d.domain)));
-                  } else {
-                    setSelectedDomains(new Set());
-                  }
-                }}
-              />
-              <span>Select all {tableData.length} domains</span>
-            </label>
-            {selectedDomains.size > 0 && selectedDomains.size < tableData.length && (
-              <span className="partial-selection-info">
-                {selectedDomains.size} of {tableData.length} selected
-              </span>
-            )}
-            {selectedDomains.size > 0 && (
-              <button
-                className="clear-selection-btn"
-                onClick={() => setSelectedDomains(new Set())}
-                type="button"
-              >
-                Clear selection
-              </button>
-            )}
-          </div>
-        )}
         {(() => {
           // Group table data by families
           const familyGroups: DomainWithMeta[][] = [];
@@ -2482,7 +2450,7 @@ const resolveWhois = (
               </Card>
             );
           }
-          
+
           if (familyGroups.length === 0) {
             return (
               <Card className="domains-card" padding="none">
@@ -2496,69 +2464,84 @@ const resolveWhois = (
               </Card>
             );
           }
-          
-          return familyGroups.map((group, index) => (
-            <Card key={`group-${index}-${group[0]?.domain}`} className="domains-card domain-group-card" padding="none">
-              <Table
-                columns={columns}
-                data={group}
-                keyExtractor={(d: DomainWithMeta) => d.domain}
-                selectedRows={selectionEnabled ? selectedDomains : undefined}
-                onRowSelect={
-                  selectionEnabled
-                    ? (id, selected) => {
-                        const newSelected = new Set(selectedDomains);
-                        if (selected) {
-                          newSelected.add(id);
-                        } else {
-                          newSelected.delete(id);
+
+          return (
+            <>
+              {/* Main table header */}
+              <Card className="domains-card domains-header-card" padding="none">
+                <Table
+                  columns={columns}
+                  data={[]}
+                  keyExtractor={(d: DomainWithMeta) => d.domain}
+                  selectedRows={selectionEnabled ? selectedDomains : undefined}
+                  onSelectAll={
+                    selectionEnabled
+                      ? (selected) => {
+                          if (selected) {
+                            setSelectedDomains(new Set(tableData.map(d => d.domain)));
+                          } else {
+                            setSelectedDomains(new Set());
+                          }
                         }
-                        setSelectedDomains(newSelected);
-                      }
-                    : undefined
-                }
-                onSelectAll={
-                  selectionEnabled
-                    ? (selected) => {
-                        const newSelected = new Set(selectedDomains);
-                        if (selected) {
-                          group.forEach(row => newSelected.add(row.domain));
-                        } else {
-                          group.forEach(row => newSelected.delete(row.domain));
-                        }
-                        setSelectedDomains(newSelected);
-                      }
-                    : undefined
-                }
-                rowClassName={(row) => {
-                  const meta = row.__meta;
-                  const classes: string[] = [];
-                  
-                  // Add family color class only for parent rows
-                  const isParent = meta.position === 'parent';
-                  if (isParent && meta.familyIndex !== undefined) {
-                    classes.push(`table-row-family-${meta.familyIndex % 6}`);
-                    classes.push('table-row-parent');
+                      : undefined
                   }
-                  
-                  // Add family member class for all related domains
-                  const isInFamily = meta.familyId && (
-                    meta.position === 'alias' || 
-                    meta.position === 'redirect' || 
-                    meta.aliasChildren.length > 0 || 
-                    meta.redirectChildren.length > 0
-                  );
-                  if (isInFamily) {
-                    classes.push('table-row-family-member');
-                  }
-                  
-                  return classes.length > 0 ? classes.join(' ') : undefined;
-                }}
-                loading={false}
-                emptyMessage="No domains found"
-              />
-            </Card>
-          ));
+                  loading={false}
+                  emptyMessage=""
+                />
+              </Card>
+              
+              {/* Domain groups without headers */}
+              {familyGroups.map((group, index) => (
+                <Card key={`group-${index}-${group[0]?.domain}`} className="domains-card domain-group-card domain-group-no-header" padding="none">
+                  <Table
+                    columns={columns}
+                    data={group}
+                    keyExtractor={(d: DomainWithMeta) => d.domain}
+                    selectedRows={selectionEnabled ? selectedDomains : undefined}
+                    onRowSelect={
+                      selectionEnabled
+                        ? (id, selected) => {
+                            const newSelected = new Set(selectedDomains);
+                            if (selected) {
+                              newSelected.add(id);
+                            } else {
+                              newSelected.delete(id);
+                            }
+                            setSelectedDomains(newSelected);
+                          }
+                        : undefined
+                    }
+                    rowClassName={(row) => {
+                      const meta = row.__meta;
+                      const classes: string[] = [];
+
+                      // Add family color class only for parent rows
+                      const isParent = meta.position === 'parent';
+                      if (isParent && meta.familyIndex !== undefined) {
+                        classes.push(`table-row-family-${meta.familyIndex % 6}`);
+                        classes.push('table-row-parent');
+                      }
+
+                      // Add family member class for all related domains
+                      const isInFamily = meta.familyId && (
+                        meta.position === 'alias' ||
+                        meta.position === 'redirect' ||
+                        meta.aliasChildren.length > 0 ||
+                        meta.redirectChildren.length > 0
+                      );
+                      if (isInFamily) {
+                        classes.push('table-row-family-member');
+                      }
+
+                      return classes.length > 0 ? classes.join(' ') : undefined;
+                    }}
+                    loading={false}
+                    emptyMessage=""
+                  />
+                </Card>
+              ))}
+            </>
+          );
         })()}
       </div>
 

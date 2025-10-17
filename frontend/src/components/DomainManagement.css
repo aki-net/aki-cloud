@@ -8,78 +8,111 @@
 .domains-table-group {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 0;
 }
 
-/* Global selection controls */
-.global-selection-controls {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-accent);
-  border-radius: var(--radius-lg);
-  margin-bottom: 8px;
-  animation: slideUp 0.3s ease-out;
-}
-
-.global-select-all {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  font-weight: 500;
-  color: var(--color-text-primary);
-}
-
-.global-select-all input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
-  cursor: pointer;
-}
-
-.global-select-all:hover {
-  color: var(--color-accent);
-}
-
-.partial-selection-info {
-  font-size: 13px;
-  color: var(--color-text-secondary);
-  padding: 4px 12px;
+/* Header card with just the table header */
+.domains-header-card {
   background: var(--color-bg-secondary);
-  border-radius: var(--radius-md);
-}
-
-.clear-selection-btn {
-  padding: 6px 12px;
-  background: transparent;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  cursor: pointer;
-  transition: all 0.15s ease;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  border-bottom: none;
+  overflow: hidden;
 }
 
-.clear-selection-btn:hover {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-  background: var(--color-bg-secondary);
+/* Hide tbody for header-only table */
+.domains-header-card .table-body {
+  display: none;
 }
 
 /* Each domain group card */
 .domain-group-card {
-  animation: slideUp 0.3s ease-out;
   background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  border-left: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border);
+  overflow: visible;
+  position: relative;
 }
 
-.domain-group-card:hover {
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+/* Add space between groups */
+.domain-group-card + .domain-group-card {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 2px solid var(--color-border-heavy);
+}
+
+/* Connect first group to header */
+.domain-group-card:first-of-type {
+  border-top: none;
+}
+
+/* Last domain group should have bottom border and rounded corners */
+.domain-group-card:last-child {
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  padding-bottom: 1px;
+}
+
+/* Hide header for group tables */
+.domain-group-no-header .table-header {
+  display: none;
+}
+
+/* Ensure consistent column widths */
+.domains-table-group .table {
+  table-layout: fixed;
+}
+
+.domains-table-group .table th:nth-child(1),
+.domains-table-group .table td:nth-child(1) {
+  width: 50px;
+}
+
+.domains-table-group .table th:nth-child(2),
+.domains-table-group .table td:nth-child(2) {
+  width: 30%;
+  min-width: 250px;
+}
+
+.domains-table-group .table th:nth-child(3),
+.domains-table-group .table td:nth-child(3) {
+  width: 15%;
+  min-width: 100px;
+}
+
+.domains-table-group .table th:nth-child(4),
+.domains-table-group .table td:nth-child(4) {
+  width: 12%;
+  min-width: 120px;
+}
+
+.domains-table-group .table th:nth-child(5),
+.domains-table-group .table td:nth-child(5) {
+  width: 10%;
+  min-width: 80px;
+}
+
+.domains-table-group .table th:nth-child(6),
+.domains-table-group .table td:nth-child(6) {
+  width: 8%;
+  min-width: 60px;
+}
+
+.domains-table-group .table th:nth-child(7),
+.domains-table-group .table td:nth-child(7) {
+  width: 15%;
+  min-width: 140px;
+}
+
+.domains-table-group .table th:nth-child(8),
+.domains-table-group .table td:nth-child(8) {
+  width: 20%;
+  min-width: 180px;
+}
+
+.domains-table-group .table th:nth-child(9),
+.domains-table-group .table td:nth-child(9) {
+  width: 120px;
 }
 
 /* Reset the overrides from previous attempts */
