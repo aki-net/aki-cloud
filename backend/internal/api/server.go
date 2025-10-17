@@ -4716,22 +4716,21 @@ func (s *Server) ensureControlPlaneDomain(node models.Node) (bool, error) {
 	if domain == "" {
 		return false, nil
 	}
-	targetIP := ""
-	for _, ip := range append([]string{}, node.EdgeIPs...) {
-		ip = strings.TrimSpace(ip)
-		if ip != "" {
-			targetIP = ip
-			break
-		}
-	}
-	if targetIP == "" {
-		for _, ip := range node.IPs {
-			ip = strings.TrimSpace(ip)
+	firstIP := func(values []string) string {
+		for _, candidate := range values {
+			ip := strings.TrimSpace(candidate)
 			if ip != "" {
-				targetIP = ip
-				break
+				return ip
 			}
 		}
+		return ""
+	}
+	targetIP := firstIP(node.NSIPs)
+	if targetIP == "" {
+		targetIP = firstIP(node.EdgeIPs)
+	}
+	if targetIP == "" {
+		targetIP = firstIP(node.IPs)
 	}
 	if targetIP == "" {
 		return false, nil

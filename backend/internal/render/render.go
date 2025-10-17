@@ -593,6 +593,20 @@ func (g *OpenRestyGenerator) Render() error {
 		}
 		localEdgeSet[ip] = struct{}{}
 	}
+	localControlSet := make(map[string]struct{}, len(localEdgeSet)+len(localInfo.NSIPs))
+	for ip := range localEdgeSet {
+		if ip == "" {
+			continue
+		}
+		localControlSet[ip] = struct{}{}
+	}
+	for _, raw := range localInfo.NSIPs {
+		ip := strings.TrimSpace(raw)
+		if ip == "" {
+			continue
+		}
+		localControlSet[ip] = struct{}{}
+	}
 	filteredLocal := filterHealthyEdges(localEdges, edgeHealth)
 	if len(filteredLocal) == 0 && len(localEdges) > 0 {
 		filteredLocal = append([]string{}, localEdges...)
@@ -1059,7 +1073,7 @@ func (g *OpenRestyGenerator) Render() error {
 		}
 	}
 
-	if err := g.renderControlPlaneServers(sitesDir, systemDomains, nodeByName, localEdgeSet, edgeUsage); err != nil {
+	if err := g.renderControlPlaneServers(sitesDir, systemDomains, nodeByName, localControlSet, edgeUsage); err != nil {
 		return err
 	}
 
@@ -1425,7 +1439,7 @@ func envBool(key string, def bool) bool {
 	}
 }
 
-func (g *OpenRestyGenerator) renderControlPlaneServers(sitesDir string, systemDomains map[string]models.DomainRecord, nodeByName map[string]models.Node, localEdgeSet map[string]struct{}, edgeUsage map[string]bool) error {
+func (g *OpenRestyGenerator) renderControlPlaneServers(sitesDir string, systemDomains map[string]models.DomainRecord, nodeByName map[string]models.Node, localControlSet map[string]struct{}, edgeUsage map[string]bool) error {
 	if len(systemDomains) == 0 {
 		return nil
 	}
@@ -1451,7 +1465,7 @@ func (g *OpenRestyGenerator) renderControlPlaneServers(sitesDir string, systemDo
 		if assignedIP == "" {
 			continue
 		}
-		if _, ok := localEdgeSet[assignedIP]; !ok {
+		if _, ok := localControlSet[assignedIP]; !ok {
 			continue
 		}
 
