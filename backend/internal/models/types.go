@@ -85,7 +85,7 @@ func (r *DomainRedirectRule) Normalize() {
 		}
 	}
 	r.Source = source
-	r.Target = strings.TrimSpace(r.Target)
+	r.Target = CanonicalRedirectTarget(r.Target)
 	if r.StatusCode == 0 {
 		r.StatusCode = 301
 	}
@@ -116,6 +116,32 @@ func (r DomainRedirectRule) TargetHost() string {
 		host = host[:idx]
 	}
 	return host
+}
+
+// CanonicalRedirectTarget ensures redirect targets include an explicit protocol when required.
+func CanonicalRedirectTarget(target string) string {
+	trimmed := strings.TrimSpace(target)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "/") {
+		return trimmed
+	}
+	lower := strings.ToLower(trimmed)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return trimmed
+	}
+	if strings.HasPrefix(trimmed, "//") {
+		return "https:" + trimmed
+	}
+	if strings.Contains(trimmed, "://") {
+		return trimmed
+	}
+	if idx := strings.Index(trimmed, ":"); idx > 0 && idx < strings.Index(trimmed+"#", "#") {
+		// Allow schemes like mailto:, ftp:, etc.
+		return trimmed
+	}
+	return "https://" + trimmed
 }
 
 // IsDomainRule reports whether the rule applies to the entire domain.

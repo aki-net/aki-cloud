@@ -81,7 +81,7 @@ type renderRedirect struct {
 }
 
 func buildRedirectReturn(rule models.DomainRedirectRule) string {
-	target := strings.TrimSpace(rule.Target)
+	target := models.CanonicalRedirectTarget(rule.Target)
 	if target == "" {
 		return ""
 	}
