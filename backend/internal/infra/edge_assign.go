@@ -67,6 +67,19 @@ func EnsureDomainEdgeAssignment(record *models.DomainRecord, endpoints []EdgeEnd
 			record.Edge.Normalize()
 			return mutated, nil
 		}
+		if record.IsSystemManaged() && strings.EqualFold(strings.TrimSpace(record.Owner), models.SystemOwnerID) {
+			if record.Edge.AssignedIP != pinnedIP {
+				record.Edge.AssignedIP = pinnedIP
+				record.Edge.AssignedAt = now
+				mutated = true
+			}
+			if record.Edge.AssignedAt.IsZero() {
+				record.Edge.AssignedAt = now
+				mutated = true
+			}
+			record.Edge.Normalize()
+			return mutated, nil
+		}
 		record.Edge.AssignmentSalt = defaultSalt
 		mutated = true
 	}
