@@ -2698,31 +2698,56 @@ function resolveRedirectTarget(target?: string | null): {
   }
 }
 
-function computeExpiryTimestamp(record: DomainLike): number {
+type ExpirySortKey = {
+  missing: boolean;
+  days: number;
+  timestamp: number;
+};
+
+function getExpirySortKey(record: DomainLike): ExpirySortKey {
   const expiresAt = record.whois?.expires_at;
   if (!expiresAt) {
-    return Number.POSITIVE_INFINITY;
+    return {
+      missing: true,
+      days: Number.NEGATIVE_INFINITY,
+      timestamp: Number.NEGATIVE_INFINITY,
+    };
   }
-  const ts = Date.parse(expiresAt);
-  if (Number.isNaN(ts)) {
-    return Number.POSITIVE_INFINITY;
+  const parsed = Date.parse(expiresAt);
+  if (Number.isNaN(parsed)) {
+    return {
+      missing: true,
+      days: Number.NEGATIVE_INFINITY,
+      timestamp: Number.NEGATIVE_INFINITY,
+    };
   }
-  return ts;
+  const expiryDate = new Date(parsed);
+  return {
+    missing: false,
+    days: differenceInCalendarDays(expiryDate, new Date()),
+    timestamp: parsed,
+  };
+}
+
+function compareExpiryKeys(a: ExpirySortKey, b: ExpirySortKey): number {
+  if (a.missing !== b.missing) {
+    return a.missing ? -1 : 1;
+  }
+  if (a.days !== b.days) {
+    return a.days - b.days;
+  }
+  if (a.timestamp !== b.timestamp) {
+    return a.timestamp - b.timestamp;
+  }
+  return 0;
 }
 
 function compareByExpiry(a: DomainLike, b: DomainLike): number {
-  const tsA = computeExpiryTimestamp(a);
-  const tsB = computeExpiryTimestamp(b);
-  if (tsA === tsB) {
-    return a.domain.localeCompare(b.domain);
+  const comparison = compareExpiryKeys(getExpirySortKey(a), getExpirySortKey(b));
+  if (comparison !== 0) {
+    return comparison;
   }
-  if (tsA === Number.POSITIVE_INFINITY) {
-    return 1;
-  }
-  if (tsB === Number.POSITIVE_INFINITY) {
-    return -1;
-  }
-  return tsA - tsB;
+  return a.domain.localeCompare(b.domain);
 }
 
 function buildDomainRows(records: DomainLike[]): DomainWithMeta[] {
@@ -2860,23 +2885,71 @@ function buildDomainRows(records: DomainLike[]): DomainWithMeta[] {
   });
 
   const familyList = Array.from(families.values());
+  const getFamilySortKey = (members: DomainLike[]): ExpirySortKey => {
+    if (members.length === 0) {
+      return {
+        missing: true,
+        days: Number.NEGATIVE_INFINITY,
+        timestamp: Number.NEGATIVE_INFINITY,
+      };
+    }
+
+    let hasMissing = false;
+    let minDays = Number.POSITIVE_INFINITY;
+    let minTimestamp = Number.POSITIVE_INFINITY;
+
+    members.forEach((member) => {
+      const key = getExpirySortKey(member);
+      if (key.missing) {
+        hasMissing = true;
+        return;
+      }
+      if (key.days < minDays) {
+        minDays = key.days;
+      }
+      if (key.timestamp < minTimestamp) {
+        minTimestamp = key.timestamp;
+      }
+    });
+
+    if (hasMissing) {
+      return {
+        missing: true,
+        days: Number.NEGATIVE_INFINITY,
+        timestamp: Number.NEGATIVE_INFINITY,
+      };
+    }
+
+    if (minDays === Number.POSITIVE_INFINITY || minTimestamp === Number.POSITIVE_INFINITY) {
+      return {
+        missing: false,
+        days: Number.POSITIVE_INFINITY,
+        timestamp: Number.POSITIVE_INFINITY,
+      };
+    }
+
+    return {
+      missing: false,
+      days: minDays,
+      timestamp: minTimestamp,
+    };
+  };
+
   familyList.sort((a, b) => {
     const aMembers = [a.parent, ...a.aliases, ...a.redirects].filter(Boolean) as DomainLike[];
     const bMembers = [b.parent, ...b.aliases, ...b.redirects].filter(Boolean) as DomainLike[];
-    const aExpiry = aMembers.length > 0 ? Math.min(...aMembers.map(computeExpiryTimestamp)) : Number.POSITIVE_INFINITY;
-    const bExpiry = bMembers.length > 0 ? Math.min(...bMembers.map(computeExpiryTimestamp)) : Number.POSITIVE_INFINITY;
-    if (aExpiry === bExpiry) {
-      const aName = a.parent?.domain ?? a.aliases[0]?.domain ?? a.redirects[0]?.domain ?? '';
-      const bName = b.parent?.domain ?? b.aliases[0]?.domain ?? b.redirects[0]?.domain ?? '';
-      return aName.localeCompare(bName);
+
+    const aKey = getFamilySortKey(aMembers);
+    const bKey = getFamilySortKey(bMembers);
+
+    const comparison = compareExpiryKeys(aKey, bKey);
+    if (comparison !== 0) {
+      return comparison;
     }
-    if (aExpiry === Number.POSITIVE_INFINITY) {
-      return 1;
-    }
-    if (bExpiry === Number.POSITIVE_INFINITY) {
-      return -1;
-    }
-    return aExpiry - bExpiry;
+
+    const aName = a.parent?.domain ?? a.aliases[0]?.domain ?? a.redirects[0]?.domain ?? '';
+    const bName = b.parent?.domain ?? b.aliases[0]?.domain ?? b.redirects[0]?.domain ?? '';
+    return aName.localeCompare(bName);
   });
 
   const rows: DomainWithMeta[] = [];
