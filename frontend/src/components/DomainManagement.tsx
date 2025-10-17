@@ -1918,56 +1918,49 @@ const resolveWhois = (
       callback();
     };
 
-    // Simple alias display for parents
+    // Alias display with hover actions for parents
     const aliasChips = isParent && meta.aliasChildren.length > 0 && (
-      <div className="domain-relations-simple">
+      <div className="domain-relations-chips">
         <span className="domain-icon-prefix">+</span>
-        <span className="domain-relations-list">
-          {meta.aliasChildren.map((child, idx) => (
-            <React.Fragment key={`alias-${child.domain}`}>
-              <span className="domain-relation-item">{child.domain}</span>
-              {idx < meta.aliasChildren.length - 1 && <span>,</span>}
-            </React.Fragment>
+        <div className="domain-chips-list">
+          {meta.aliasChildren.map((child) => (
+            <span key={`alias-${child.domain}`} className="domain-chip domain-chip-alias-compact">
+              <span className="domain-chip-label">{child.domain}</span>
+              <span className="domain-chip-actions">
+                <button type="button" onClick={(e) => handleAction(e, () => openRoleModal(child, 'primary'))} title="Remove alias">
+                  ×
+                </button>
+              </span>
+            </span>
           ))}
-        </span>
+        </div>
       </div>
     );
 
-    // Simple redirect display for parents
+    // Redirect display with hover actions for parents
     const redirectChips = isParent && meta.redirectChildren.length > 0 && (
-      <div className="domain-relations-simple">
-        <span className="domain-icon-prefix">↖</span>
-        <span className="domain-relations-list">
-          {meta.redirectChildren.map((child, idx) => (
-            <React.Fragment key={`redirect-${child.domain}`}>
-              <span className="domain-relation-item">{child.domain}</span>
-              {idx < meta.redirectChildren.length - 1 && <span>,</span>}
-            </React.Fragment>
+      <div className="domain-relations-chips">
+        <span className="domain-icon-prefix">↑</span>
+        <div className="domain-chips-list">
+          {meta.redirectChildren.map((child) => (
+            <span key={`redirect-${child.domain}`} className="domain-chip domain-chip-redirect-compact">
+              <span className="domain-chip-label">{child.domain}</span>
+              <span className="domain-chip-actions">
+                <button type="button" onClick={(e) => handleAction(e, () => handleOpenRedirectRulesModal(child))} title="Edit redirect">
+                  ✎
+                </button>
+                <button type="button" onClick={(e) => handleAction(e, () => openRoleModal(child, 'primary'))} title="Remove redirect">
+                  ×
+                </button>
+              </span>
+            </span>
           ))}
-        </span>
+        </div>
       </div>
     );
 
+    // Don't show subtitle for children (aliases and redirects)
     let subtitle: React.ReactNode = null;
-    if (isAlias) {
-      subtitle = (
-        <span className="domain-label domain-label-alias">
-          <span className="domain-icon-plus">+</span> {meta.parentDomain ?? 'unknown'}
-        </span>
-      );
-    } else if (isRedirect) {
-      // Check if redirecting to the parent domain
-      const redirectToParent = meta.parentDomain && 
-        (meta.redirectTarget === meta.parentDomain || 
-         meta.redirectTarget === `https://${meta.parentDomain}` ||
-         meta.redirectTarget === `http://${meta.parentDomain}`);
-      const redirectIcon = redirectToParent ? '↖' : '→';
-      subtitle = (
-        <span className="domain-label domain-label-redirect">
-          <span className="domain-icon-arrow">{redirectIcon}</span> {formatRedirectTarget(meta.redirectTarget, meta.redirectExternal)}
-        </span>
-      );
-    }
 
     // Only apply visual indicators if domain has relationships
     const cellClassName = hasChildren || isAlias || isRedirect

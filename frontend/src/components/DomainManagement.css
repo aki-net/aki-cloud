@@ -234,6 +234,29 @@
   align-items: center;
 }
 
+/* Relations display with hover actions */
+.domain-relations-chips {
+  display: flex;
+  align-items: baseline;
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 1.2;
+  color: var(--color-text-secondary);
+}
+
+.domain-chips-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: baseline;
+}
+
+.domain-relations-chips .domain-icon-prefix {
+  font-size: 14px;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
 /* Simple relations display */
 .domain-relations-simple {
   display: flex;
