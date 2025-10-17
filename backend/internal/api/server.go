@@ -1048,31 +1048,6 @@ func generateRedirectRuleID() string {
 	return strings.ReplaceAll(uuid.NewString(), "-", "")
 }
 
-func inheritAliasOrigin(alias *models.DomainRecord, primary *models.DomainRecord) bool {
-	if alias == nil || primary == nil {
-		return false
-	}
-	targetOrigin := strings.TrimSpace(primary.OriginIP)
-	changed := false
-	if alias.OriginIP != targetOrigin {
-		alias.OriginIP = targetOrigin
-		changed = true
-	}
-	if primary.CacheVersion > 0 {
-		if alias.CacheVersion != primary.CacheVersion {
-			alias.CacheVersion = primary.CacheVersion
-			changed = true
-		}
-	} else if changed {
-		alias.CacheVersion++
-		changed = true
-	}
-	if alias.CacheVersion <= 0 {
-		alias.CacheVersion = 1
-	}
-	return changed
-}
-
 func (s *Server) validateDomainLinkTargets(subject *models.DomainRecord, cache map[string]models.DomainRecord) (*models.DomainRecord, error) {
 	if subject == nil {
 		return nil, nil
@@ -1150,67 +1125,6 @@ func (s *Server) lookupDomainForLinks(name string, cache map[string]models.Domai
 		cache[domain] = *rec
 	}
 	return rec, nil
-}
-
-func (s *Server) syncAliasDependents(primary models.DomainRecord) {
-	if !primary.Role.Valid() || primary.Role != models.DomainRolePrimary {
-		return
-	}
-	primaryDomain := strings.ToLower(strings.TrimSpace(primary.Domain))
-	if primaryDomain == "" {
-		return
-	}
-	all, err := s.Store.GetDomains()
-	if err != nil {
-		log.Printf("domains: alias sync %s failed to list domains: %v", primary.Domain, err)
-		return
-	}
-	updatedAny := false
-	targetOrigin := strings.TrimSpace(primary.OriginIP)
-	for _, rec := range all {
-		if rec.Role != models.DomainRoleAlias || rec.Alias == nil {
-			continue
-		}
-		if rec.Alias.Target != primaryDomain {
-			continue
-		}
-		sameOrigin := strings.TrimSpace(rec.OriginIP) == targetOrigin
-		sameVersion := primary.CacheVersion <= 0 || rec.CacheVersion == primary.CacheVersion
-		if sameOrigin && sameVersion {
-			continue
-		}
-		_, err := s.Store.MutateDomain(rec.Domain, func(alias *models.DomainRecord) error {
-			if alias == nil {
-				return nil
-			}
-			if alias.Role != models.DomainRoleAlias || alias.Alias == nil || alias.Alias.Target != primaryDomain {
-				return nil
-			}
-			changed := inheritAliasOrigin(alias, &primary)
-			if !changed {
-				return nil
-			}
-			alias.EnsureCacheVersion()
-			now := time.Now().UTC()
-			alias.UpdatedAt = now
-			alias.Version.Counter++
-			if alias.Version.Counter <= 0 {
-				alias.Version.Counter = 1
-			}
-			alias.Version.NodeID = s.Config.NodeID
-			alias.Version.Updated = now.Unix()
-			return nil
-		})
-		if err != nil {
-			log.Printf("domains: alias sync %s -> %s failed: %v", rec.Domain, primary.Domain, err)
-			continue
-		}
-		updatedAny = true
-	}
-	if updatedAny {
-		s.triggerSyncBroadcast()
-		go s.Orchestrator.Trigger(context.Background())
-	}
 }
 
 func (s *Server) findDomainDependents(primary string) ([]string, error) {
@@ -1392,8 +1306,7 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	aliasPrimary, err := s.validateDomainLinkTargets(&record, nil)
-	if err != nil {
+	if _, err := s.validateDomainLinkTargets(&record, nil); err != nil {
 		if ve, ok := err.(models.ErrValidation); ok {
 			writeError(w, http.StatusBadRequest, ve.Error())
 			return
@@ -1401,7 +1314,6 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	_ = inheritAliasOrigin(&record, aliasPrimary)
 	if record.Proxied {
 		if _, err := s.ensureDomainEdgeAssignment(&record); err != nil {
 			if ve, ok := err.(models.ErrValidation); ok {
@@ -1519,8 +1431,7 @@ func (s *Server) handleBulkCreateDomains(w http.ResponseWriter, r *http.Request)
 			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: errMsg})
 			continue
 		}
-		aliasPrimary, err := s.validateDomainLinkTargets(&record, linkCache)
-		if err != nil {
+		if _, err := s.validateDomainLinkTargets(&record, linkCache); err != nil {
 			failed++
 			errMsg := err.Error()
 			if ve, ok := err.(models.ErrValidation); ok {
@@ -1529,7 +1440,6 @@ func (s *Server) handleBulkCreateDomains(w http.ResponseWriter, r *http.Request)
 			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: errMsg})
 			continue
 		}
-		_ = inheritAliasOrigin(&record, aliasPrimary)
 		if record.Proxied {
 			if _, err := s.ensureDomainEdgeAssignment(&record); err != nil {
 				failed++
@@ -1732,8 +1642,7 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 				results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: errMsg})
 				continue
 			}
-			aliasPrimary, err := s.validateDomainLinkTargets(existing, linkCache)
-			if err != nil {
+			if _, err := s.validateDomainLinkTargets(existing, linkCache); err != nil {
 				failed++
 				errMsg := err.Error()
 				if ve, ok := err.(models.ErrValidation); ok {
@@ -1742,7 +1651,6 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 				results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: errMsg})
 				continue
 			}
-			_ = inheritAliasOrigin(existing, aliasPrimary)
 		}
 		if existing.Proxied {
 			// Use mutex to prevent concurrent edge assignments
@@ -1788,7 +1696,6 @@ func (s *Server) handleBulkUpdateDomains(w http.ResponseWriter, r *http.Request)
 			results = append(results, bulkDomainResult{Domain: domain, Status: "failed", Error: err.Error()})
 			continue
 		}
-		s.syncAliasDependents(*existing)
 		success++
 		sanitized := existing.Sanitize()
 		recCopy := sanitized
@@ -1918,8 +1825,7 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		aliasPrimary, err := s.validateDomainLinkTargets(&updated, nil)
-		if err != nil {
+		if _, err := s.validateDomainLinkTargets(&updated, nil); err != nil {
 			if ve, ok := err.(models.ErrValidation); ok {
 				writeError(w, http.StatusBadRequest, ve.Error())
 			} else {
@@ -1927,7 +1833,6 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		_ = inheritAliasOrigin(&updated, aliasPrimary)
 	}
 	if updated.Proxied {
 		s.edgeReconcileMu.Lock()
@@ -1967,7 +1872,6 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.syncAliasDependents(updated)
 	s.triggerSyncBroadcast()
 	go s.Orchestrator.Trigger(r.Context())
 	writeJSON(w, http.StatusOK, updated.Sanitize())

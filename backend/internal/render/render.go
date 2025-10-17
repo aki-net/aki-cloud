@@ -857,6 +857,9 @@ func (g *OpenRestyGenerator) Render() error {
 		cacheActive := edgeCacheCfg.Enabled && !placeholderActive
 		cacheUseStale := strings.Join(edgeCacheCfg.UseStale, " ")
 		cacheVersion := domain.CacheVersion
+		if aliasPrimary != nil && aliasPrimary.CacheVersion > 0 {
+			cacheVersion = aliasPrimary.CacheVersion
+		}
 		if cacheVersion <= 0 {
 			cacheVersion = 1
 		}
