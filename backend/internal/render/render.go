@@ -1482,6 +1482,19 @@ func (g *OpenRestyGenerator) renderControlPlaneServers(sitesDir string, systemDo
 		certBase := sanitizeFileName(domain)
 		certPath := filepath.Join(g.OutputDir, "certs", fmt.Sprintf("%s.crt", certBase))
 		keyPath := filepath.Join(g.OutputDir, "certs", fmt.Sprintf("%s.key", certBase))
+
+		if cert := rec.TLS.Certificate; cert != nil && cert.CertChainPEM != "" && cert.PrivateKeyPEM != "" {
+			if err := os.WriteFile(certPath, []byte(cert.CertChainPEM), 0o644); err != nil {
+				return err
+			}
+			if err := os.WriteFile(keyPath, []byte(cert.PrivateKeyPEM), 0o600); err != nil {
+				return err
+			}
+		} else {
+			_ = os.Remove(certPath)
+			_ = os.Remove(keyPath)
+		}
+
 		if !fileExists(certPath) || !fileExists(keyPath) {
 			var err error
 			certPath, keyPath, err = ensurePlaceholderCertificate(g.DataDir, domain)
