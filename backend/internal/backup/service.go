@@ -18,6 +18,7 @@ import (
 	"aki-cloud/backend/internal/config"
 	"aki-cloud/backend/internal/extensions"
 	"aki-cloud/backend/internal/store"
+	syncsvc "aki-cloud/backend/internal/sync"
 )
 
 // Supported dataset names for backup/restore operations.
@@ -109,6 +110,7 @@ type Service struct {
 	cfg        *config.Config
 	store      *store.Store
 	extensions *extensions.Service
+	sync       *syncsvc.Service
 
 	localDir   string
 	statusPath string
@@ -121,8 +123,19 @@ type Service struct {
 	logger  *log.Logger
 }
 
+func (s *Service) nextVersionCounter(seed *int64) int64 {
+	if seed == nil {
+		return time.Now().UTC().UnixNano()
+	}
+	*seed++
+	if *seed <= 0 {
+		*seed = time.Now().UTC().UnixNano()
+	}
+	return *seed
+}
+
 // New constructs a backup service for the node.
-func New(cfg *config.Config, st *store.Store, ext *extensions.Service) (*Service, error) {
+func New(cfg *config.Config, st *store.Store, ext *extensions.Service, syncService *syncsvc.Service) (*Service, error) {
 	if cfg == nil || st == nil {
 		return nil, errors.New("backup: config and store required")
 	}
@@ -138,6 +151,7 @@ func New(cfg *config.Config, st *store.Store, ext *extensions.Service) (*Service
 		cfg:        cfg,
 		store:      st,
 		extensions: ext,
+		sync:       syncService,
 		localDir:   localDir,
 		statusPath: filepath.Join(statusDir, "status.json"),
 		loginFn:    loginToMega,
@@ -154,6 +168,17 @@ func (s *Service) Start(ctx context.Context) {
 		return
 	}
 	go s.scheduler(ctx)
+}
+
+func (s *Service) triggerSyncBroadcast(ctx context.Context) {
+	if s.sync == nil {
+		return
+	}
+	go func() {
+		if err := s.sync.Broadcast(ctx); err != nil {
+			s.logger.Printf("mega-backups: broadcast after restore failed: %v", err)
+		}
+	}()
 }
 
 // Trigger executes a backup immediately according to the request parameters.
@@ -220,7 +245,11 @@ func (s *Service) Restore(ctx context.Context, req RestoreRequest) (RestoreResul
 	}
 	defer cleanup()
 
-	return s.restoreFromRemote(ctx, client, req, includes)
+	result, err := s.restoreFromRemote(ctx, client, req, includes)
+	if err == nil {
+		s.triggerSyncBroadcast(ctx)
+	}
+	return result, err
 }
 
 // Upload ingests a backup archive provided by an operator and pushes it to Mega.nz.
@@ -285,7 +314,11 @@ func (s *Service) RestoreFromUpload(ctx context.Context, req RestoreRequest, rea
 	if len(req.Include) == 0 {
 		req.Include = bundle.Includes
 	}
-	return s.restoreFromPath(tempPath, req)
+	result, err := s.restoreFromPath(tempPath, req)
+	if err == nil {
+		s.triggerSyncBroadcast(ctx)
+	}
+	return result, err
 }
 
 // Status exposes scheduler metadata for UI consumption.

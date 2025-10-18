@@ -73,7 +73,7 @@ func main() {
 				log.Printf("searchbot: failed to apply runtime config: %v", err)
 			}
 		}
-		if svc, err := backup.New(cfg, st, extSvc); err != nil {
+    if svc, err := backup.New(cfg, st, extSvc, syncSvc); err != nil {
 			log.Printf("backup: unable to initialise service: %v", err)
 		} else {
 			backupSvc = svc

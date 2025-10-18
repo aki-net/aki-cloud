@@ -208,6 +208,8 @@ func (s *Service) restoreDatasets(bundle backupBundle, req RestoreRequest) (Rest
 	for _, item := range req.Include {
 		incSet[item] = struct{}{}
 	}
+	now := s.clock().UTC()
+	seed := now.UnixNano()
 	if _, ok := incSet[DatasetDomains]; ok {
 		if req.WipeDomains {
 			if err := wipeDirectory(filepath.Join(s.cfg.DataDir, "domains")); err != nil {
@@ -215,7 +217,12 @@ func (s *Service) restoreDatasets(bundle backupBundle, req RestoreRequest) (Rest
 			}
 		}
 		for _, domain := range bundle.Domains {
+			domain.EnsureTLSDefaults()
+			domain.EnsureCacheVersion()
 			domain.Version.NodeID = s.cfg.NodeID
+			domain.Version.Counter = s.nextVersionCounter(&seed)
+			domain.Version.Updated = now.Unix()
+			domain.UpdatedAt = now
 			if err := s.store.SaveDomain(domain); err != nil {
 				return result, fmt.Errorf("restore domain %s: %w", domain.Domain, err)
 			}
@@ -242,6 +249,9 @@ func (s *Service) restoreDatasets(bundle backupBundle, req RestoreRequest) (Rest
 				return result, fmt.Errorf("clear extensions: %w", err)
 			}
 		}
+		bundle.Extensions.Version.NodeID = s.cfg.NodeID
+		bundle.Extensions.Version.Counter = s.nextVersionCounter(&seed)
+		bundle.Extensions.Version.Updated = now.Unix()
 		if err := s.store.SaveExtensionsState(*bundle.Extensions); err != nil {
 			return result, fmt.Errorf("restore extensions: %w", err)
 		}
@@ -254,7 +264,18 @@ func (s *Service) restoreDatasets(bundle backupBundle, req RestoreRequest) (Rest
 				return result, fmt.Errorf("clear nodes: %w", err)
 			}
 		}
-		if err := s.store.SaveNodes(bundle.Nodes); err != nil {
+		nodes := make([]models.Node, 0, len(bundle.Nodes))
+		for _, node := range bundle.Nodes {
+			node.Version.NodeID = s.cfg.NodeID
+			node.Version.Counter = s.nextVersionCounter(&seed)
+			node.Version.Updated = now.Unix()
+			if node.UpdatedAt.IsZero() || node.UpdatedAt.Before(now) {
+				node.UpdatedAt = now
+			}
+			node.ComputeEdgeIPs()
+			nodes = append(nodes, node)
+		}
+		if err := s.store.SaveNodes(nodes); err != nil {
 			return result, fmt.Errorf("restore nodes: %w", err)
 		}
 		result.Nodes = len(bundle.Nodes)
@@ -266,7 +287,14 @@ func (s *Service) restoreDatasets(bundle backupBundle, req RestoreRequest) (Rest
 				return result, fmt.Errorf("clear edge health: %w", err)
 			}
 		}
-		if err := s.store.SaveEdgeHealth(bundle.EdgeHealth); err != nil {
+		health := make([]models.EdgeHealthStatus, 0, len(bundle.EdgeHealth))
+		for _, status := range bundle.EdgeHealth {
+			status.Version.NodeID = s.cfg.NodeID
+			status.Version.Counter = s.nextVersionCounter(&seed)
+			status.Version.Updated = now.Unix()
+			health = append(health, status)
+		}
+		if err := s.store.SaveEdgeHealth(health); err != nil {
 			return result, fmt.Errorf("restore edge health: %w", err)
 		}
 		result.EdgeHealth = len(bundle.EdgeHealth)
