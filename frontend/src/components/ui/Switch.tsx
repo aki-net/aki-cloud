@@ -7,7 +7,7 @@ interface SwitchProps {
   onChange: (checked: boolean) => void;
   label?: string;
   disabled?: boolean;
-  size?: 'sm' | 'md';
+  size?: 'xxs' | 'xs' | 'sm' | 'md';
   className?: string;
 }
 

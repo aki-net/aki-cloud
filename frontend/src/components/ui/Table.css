@@ -4,72 +4,40 @@
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
 }
 
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
-  table-layout: fixed;
-}
-
-.table-head {
+/* Header Row */
+.table-header-row {
+  display: flex;
+  align-items: stretch;
   background: var(--color-bg-tertiary);
   border-bottom: 1px solid var(--color-border);
+  gap: 0;
+  flex-shrink: 0;
 }
 
-.table-cell-header {
-  text-align: left;
-}
-
+/* Body Container */
 .table-body {
-  background: var(--color-bg-secondary);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
-.table-cell {
-  padding: 12px 16px;
-  text-align: left;
-  vertical-align: middle;
-  border-bottom: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-}
-
-.table-head .table-cell {
-  font-weight: 500;
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  color: var(--color-text-tertiary);
-}
-
-.table-body .table-cell {
-  color: var(--color-text-primary);
-}
-
-.table-align-center {
-  text-align: center;
-}
-
-.table-align-right {
-  text-align: right;
-}
-
-.table-header-content {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.table-sort-icon {
-  display: inline-flex;
-  cursor: pointer;
-}
-
+/* Table Row */
 .table-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  border-bottom: 1px solid var(--color-border);
   transition: background-color 0.1s ease;
+  min-height: 0;
 }
 
-.table-body .table-row:last-child .table-cell {
+.table-body .table-row:last-child {
   border-bottom: none;
 }
 
@@ -85,35 +53,96 @@
   background: rgba(88, 101, 242, 0.1) !important;
 }
 
+.table-row-empty,
+.table-row-loading {
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Table Cells */
+.table-cell {
+  padding: 12px 16px;
+  text-align: left;
+  vertical-align: middle;
+  color: var(--color-text-secondary);
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.table-header-row .table-cell {
+  font-weight: 500;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+  padding: 10px 16px;
+}
+
+.table-body .table-cell {
+  color: var(--color-text-primary);
+}
+
+.table-cell-header {
+  display: flex;
+  align-items: center;
+}
+
+/* Cell Alignment */
+.table-align-center {
+  justify-content: center;
+  text-align: center;
+}
+
+.table-align-right {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+/* Header Content */
+.table-header-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 500;
+}
+
+.table-sort-icon {
+  display: inline-flex;
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+/* Checkbox Cell */
 .table-cell-checkbox {
   width: 44px !important;
   max-width: 44px !important;
   min-width: 44px !important;
-  padding: 10px 10px;
+  padding: 10px 10px !important;
+  flex: 0 0 44px !important;
   box-sizing: border-box;
+  justify-content: center;
 }
 
 .table-cell-checkbox--header {
   width: 44px !important;
   max-width: 44px !important;
   min-width: 44px !important;
-  padding: 10px 10px;
-  box-sizing: border-box;
-}
-
-th.table-cell-checkbox,
-th.table-cell-checkbox--header,
-td.table-cell-checkbox {
-  width: 44px !important;
-  max-width: 44px !important;
-  min-width: 44px !important;
+  flex: 0 0 44px !important;
 }
 
 .table-selection-header {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  max-width: 24px;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
 }
 
 .table-selection-label {
@@ -129,14 +158,16 @@ td.table-cell-checkbox {
   height: 16px;
   cursor: pointer;
   accent-color: var(--color-accent);
+  flex-shrink: 0;
 }
 
+/* Empty/Loading States */
 .table-empty,
 .table-loading {
   text-align: center;
-  padding: 48px 16px;
   color: var(--color-text-tertiary);
   font-style: italic;
+  width: 100%;
 }
 
 .table-loader {
@@ -154,4 +185,76 @@ td.table-cell-checkbox {
   border-top-color: var(--color-accent);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Responsive improvements */
+@media (max-width: 768px) {
+  .table-cell {
+    padding: 10px 12px;
+    font-size: 13px;
+  }
+  
+  .table-header-row .table-cell {
+    padding: 8px 12px;
+    font-size: 11px;
+  }
+  
+  .table-header-row {
+    gap: 0;
+  }
+}
+
+/* Improve cell borders and gaps */
+.table-cell {
+  border-right: 1px solid var(--color-border);
+}
+
+.table-header-row .table-cell:last-child,
+.table-row .table-cell:last-child {
+  border-right: none;
+}
+
+/* Ensure proper overflow handling */
+.table-container {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-header-row,
+.table-row {
+  min-width: 100%;
+}
+
+/* Sticky header for better UX */
+.table-header-row {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+/* Better scrollbar styling */
+.table-container::-webkit-scrollbar {
+  height: 8px;
+}
+
+.table-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.table-container::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+
+.table-container::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
 }

@@ -6,9 +6,11 @@ interface Column<T> {
   key: string;
   header: string;
   accessor: (item: T) => React.ReactNode;
-  width?: string;
+  width?: string | number;
   align?: 'left' | 'center' | 'right';
   sortable?: boolean;
+  minWidth?: string;
+  flex?: number;
 }
 
 interface TableProps<T> {
@@ -52,108 +54,126 @@ export default function Table<T>({
     }
   }, [hasSelection, someSelected, allSelected]);
 
+  // Calculate column styles
+  const getColumnStyle = (column: Column<T>, index: number) => {
+    const style: React.CSSProperties = {};
+    
+    if (column.width !== undefined) {
+      if (typeof column.width === 'number') {
+        style.width = `${column.width}px`;
+      } else {
+        style.width = column.width;
+      }
+    } else if (column.flex !== undefined) {
+      style.flex = `${column.flex} 1`;
+    } else {
+      style.flex = '1 1 auto';
+    }
+    
+    if (column.minWidth) {
+      style.minWidth = column.minWidth;
+    }
+    
+    return style;
+  };
+
   return (
     <div className={clsx('table-container', className)}>
-      <table className="table">
-        <colgroup>
-          {hasSelection && <col style={{ width: '44px' }} />}
-          {columns.map((column) => (
-            <col key={column.key} style={{ width: column.width }} />
-          ))}
-        </colgroup>
-        <thead className="table-head">
-          <tr>
-            {hasSelection && (
-              <th className="table-cell table-cell-checkbox table-cell-checkbox--header">
-                <div className="table-selection-header">
-                  <input
-                    type="checkbox"
-                    className="checkbox"
-                    checked={allSelected}
-                    ref={selectAllRef}
-                    onChange={(e) => onSelectAll?.(e.target.checked)}
-                  />
-                </div>
-              </th>
-            )}
-            {columns.map((column) => (
-              <th
-                key={column.key}
-                className="table-cell table-cell-header"
-              >
-                <div className="table-header-content">
-                  {column.header}
-                  {column.sortable && (
-                    <span className="table-sort-icon">
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-                        <path d="M6 1L9 4H3L6 1Z" opacity="0.3" />
-                        <path d="M6 11L3 8H9L6 11Z" opacity="0.3" />
-                      </svg>
-                    </span>
-                  )}
-                </div>
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="table-body">
-          {loading ? (
-            <tr>
-              <td colSpan={columns.length + (hasSelection ? 1 : 0)} className="table-cell table-loading">
-                <div className="table-loader">
-                  <span className="loader-spinner" />
-                  Loading...
-                </div>
-              </td>
-            </tr>
-          ) : data.length === 0 ? (
-            <tr>
-              <td colSpan={columns.length + (hasSelection ? 1 : 0)} className="table-cell table-empty">
-                {emptyMessage}
-              </td>
-            </tr>
-          ) : (
-            data.map((item, index) => {
-              const key = keyExtractor(item);
-              const isSelected = hasSelection && selectedSet.has(key);
-              const extraRowClass = rowClassName?.(item, index);
+      {/* Header Row */}
+      <div className="table-header-row">
+        {hasSelection && (
+          <div className="table-cell table-cell-checkbox table-cell-checkbox--header">
+            <div className="table-selection-header">
+              <input
+                type="checkbox"
+                className="checkbox"
+                checked={allSelected}
+                ref={selectAllRef}
+                onChange={(e) => onSelectAll?.(e.target.checked)}
+              />
+            </div>
+          </div>
+        )}
+        {columns.map((column, index) => (
+          <div
+            key={column.key}
+            className="table-cell table-cell-header"
+            style={getColumnStyle(column, index)}
+          >
+            <div className="table-header-content">
+              {column.header}
+              {column.sortable && (
+                <span className="table-sort-icon">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                    <path d="M6 1L9 4H3L6 1Z" opacity="0.3" />
+                    <path d="M6 11L3 8H9L6 11Z" opacity="0.3" />
+                  </svg>
+                </span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
 
-              return (
-                <tr
-                  key={key}
-                  className={clsx('table-row', extraRowClass, {
-                    'table-row-clickable': onRowClick,
-                    'table-row-selected': isSelected,
-                  })}
-                  onClick={() => onRowClick?.(item)}
-                >
-                  {hasSelection && (
-                    <td className="table-cell table-cell-checkbox">
-                      <input
-                        type="checkbox"
-                        className="checkbox"
-                        checked={isSelected}
-                        onChange={(e) => {
-                          e.stopPropagation();
-                          onRowSelect(key, e.target.checked);
-                        }}
-                      />
-                    </td>
-                  )}
-                  {columns.map((column) => (
-                    <td
-                      key={column.key}
-                      className={clsx('table-cell', `table-align-${column.align || 'left'}`)}
-                    >
-                      {column.accessor(item)}
-                    </td>
-                  ))}
-                </tr>
-              );
-            })
-          )}
-        </tbody>
-      </table>
+      {/* Body Rows */}
+      <div className="table-body">
+        {loading ? (
+          <div className="table-row table-row-loading">
+            <div className="table-cell table-loading">
+              <div className="table-loader">
+                <span className="loader-spinner" />
+                Loading...
+              </div>
+            </div>
+          </div>
+        ) : data.length === 0 ? (
+          <div className="table-row table-row-empty">
+            <div className="table-cell table-empty">
+              {emptyMessage}
+            </div>
+          </div>
+        ) : (
+          data.map((item, index) => {
+            const key = keyExtractor(item);
+            const isSelected = hasSelection && selectedSet.has(key);
+            const extraRowClass = rowClassName?.(item, index);
+
+            return (
+              <div
+                key={key}
+                className={clsx('table-row', extraRowClass, {
+                  'table-row-clickable': onRowClick,
+                  'table-row-selected': isSelected,
+                })}
+                onClick={() => onRowClick?.(item)}
+              >
+                {hasSelection && (
+                  <div className="table-cell table-cell-checkbox">
+                    <input
+                      type="checkbox"
+                      className="checkbox"
+                      checked={isSelected}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        onRowSelect(key, e.target.checked);
+                      }}
+                    />
+                  </div>
+                )}
+                {columns.map((column, index) => (
+                  <div
+                    key={column.key}
+                    className={clsx('table-cell', `table-align-${column.align || 'left'}`)}
+                    style={getColumnStyle(column, index)}
+                  >
+                    {column.accessor(item)}
+                  </div>
+                ))}
+              </div>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }

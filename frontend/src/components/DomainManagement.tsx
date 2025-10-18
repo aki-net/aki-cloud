@@ -550,7 +550,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
               }}
               title="Copy to clipboard"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                 <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
               </svg>
@@ -1265,8 +1265,8 @@ const resolveWhois = (
           title="Manage DNS records"
         >
           <svg
-            width="16"
-            height="16"
+            width="12"
+            height="12"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -1298,8 +1298,8 @@ const resolveWhois = (
           {wafBusy ? (
             <svg
               className="action-spinner"
-              width="16"
-              height="16"
+              width="12"
+              height="12"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -1309,8 +1309,8 @@ const resolveWhois = (
             </svg>
           ) : (
             <svg
-              width="16"
-              height="16"
+              width="12"
+              height="12"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -1522,7 +1522,7 @@ const resolveWhois = (
               <path d="M21 12a9 9 0 11-6.219-8.56"/>
             </svg>
           ) : (
-            <svg width="16" height="16" viewBox="0 0 32 32" fill="currentColor">
+            <svg width="12" height="12" viewBox="0 0 32 32" fill="currentColor">
               <path d="M 28.28125 2.28125 L 18.28125 12.28125 L 17 11 L 17 10.96875 L 16.96875 10.9375 C 16.328125 10.367188 15.492188 10.09375 14.6875 10.09375 C 13.882813 10.09375 13.105469 10.394531 12.5 11 L 12.34375 11.125 L 11.84375 11.625 L 11.5 11.90625 L 2.375 19 L 1.5 19.71875 L 12.28125 30.5 L 13 29.625 L 20.0625 20.5625 L 20.09375 20.59375 L 21.09375 19.59375 L 21.125 19.59375 L 21.15625 19.5625 C 22.296875 18.277344 22.304688 16.304688 21.09375 15.09375 L 19.71875 13.71875 L 29.71875 3.71875 Z M 14.6875 12.09375 C 14.996094 12.085938 15.335938 12.191406 15.59375 12.40625 C 15.605469 12.414063 15.613281 12.429688 15.625 12.4375 L 19.6875 16.5 C 20.0625 16.875 20.097656 17.671875 19.6875 18.1875 C 19.671875 18.207031 19.671875 18.230469 19.65625 18.25 L 19.34375 18.53125 L 13.5625 12.75 L 13.90625 12.40625 C 14.097656 12.214844 14.378906 12.101563 14.6875 12.09375 Z M 12.03125 14.03125 L 17.96875 19.96875 L 12.09375 27.46875 L 10.65625 26.03125 L 12.8125 23.78125 L 11.375 22.40625 L 9.25 24.625 L 7.9375 23.3125 L 11.8125 19.40625 L 10.40625 18 L 6.5 21.875 L 4.53125 19.90625 Z"/>
             </svg>
           )}
@@ -2260,33 +2260,60 @@ const resolveWhois = (
   // Build unified columns array
   const columns: any[] = [];
 
-  // Domain column - always present
-  const domainColumnWidth = useMemo(() => {
-    if (!isAdmin) {
-      return "32%";
+  // Calculate column sizes based on view mode
+  // Using flex ratios to ensure proper proportional distribution
+  const columnConfig = useMemo(() => {
+    if (isAdmin && viewMode !== "my") {
+      // Admin view with all domains: domain, nameservers, owner, ip, whois, proxy, edge, tls, actions
+      return {
+        domain: { flex: 1.76, minWidth: '200px' },        // Reduced 1.25x (was 2.2)
+        nameservers: { flex: 0.65, minWidth: '80px' },
+        owner: { flex: 1, minWidth: '110px' },
+        originIP: { flex: 0.55, minWidth: '90px' },
+        whois: { flex: 0.35, minWidth: '60px' },          // Increased for 3-line issue
+        proxy: { flex: 0.3, minWidth: '45px' },
+        edge: { flex: 0.6, minWidth: '90px' },
+        tls: { flex: 0.7, minWidth: '70px' },
+        actions: { flex: 1.5, minWidth: '130px' },
+      };
+    } else if (isAdmin && viewMode === "my") {
+      // Admin personal: domain, nameservers, ip, whois, proxy, edge, tls, actions
+      return {
+        domain: { flex: 1.92, minWidth: '200px' },        // Reduced 1.25x (was 2.4)
+        nameservers: { flex: 0.7, minWidth: '80px' },
+        originIP: { flex: 0.65, minWidth: '90px' },
+        whois: { flex: 0.35, minWidth: '60px' },          // Increased
+        proxy: { flex: 0.3, minWidth: '45px' },
+        edge: { flex: 0.75, minWidth: '90px' },
+        tls: { flex: 0.7, minWidth: '70px' },
+        actions: { flex: 1.7, minWidth: '140px' },
+      };
+    } else {
+      // User view: domain, nameservers, ip, whois, proxy, tls, actions
+      return {
+        domain: { flex: 2.0, minWidth: '200px' },         // Reduced 1.25x (was 2.5)
+        nameservers: { flex: 0.8, minWidth: '80px' },
+        originIP: { flex: 0.75, minWidth: '90px' },
+        whois: { flex: 0.35, minWidth: '60px' },          // Increased
+        proxy: { flex: 0.3, minWidth: '45px' },
+        tls: { flex: 0.8, minWidth: '70px' },
+        actions: { flex: 1.6, minWidth: '140px' },
+      };
     }
-    return viewMode !== "my" ? "23%" : "25%";
-  }, [isAdmin, viewMode]);
-
-  const nameserverColumnWidth = useMemo(() => {
-    if (!isAdmin) {
-      return "17%";
-    }
-    return viewMode !== "my" ? "13%" : "14%";
   }, [isAdmin, viewMode]);
 
   columns.push({
     key: "domain",
     header: "Domain",
     accessor: (row: DomainWithMeta) => renderDomainCell(row),
-    width: domainColumnWidth,
+    ...columnConfig.domain,
   });
 
   columns.push({
     key: "nameservers",
     header: "Nameservers",
     accessor: (d: any) => renderNameserverCell(d),
-    width: nameserverColumnWidth,
+    ...columnConfig.nameservers,
   });
 
   // Owner column - only for admin in all/orphaned mode
@@ -2303,17 +2330,11 @@ const resolveWhois = (
           )}
         </div>
       ),
-      width: "10%",
+      ...columnConfig.owner,
     });
   }
 
   // Origin IP column - always present
-  const originIPWidth = useMemo(() => {
-    if (!isAdmin) {
-      return "16%";
-    }
-    return viewMode !== "my" ? "11%" : "13%";
-  }, [isAdmin, viewMode]);
   columns.push({
     key: "origin_ip",
     header: "Origin IP",
@@ -2370,14 +2391,14 @@ const resolveWhois = (
         </div>
       );
     },
-    width: originIPWidth,
+    ...columnConfig.originIP,
   });
 
   columns.push({
     key: "whois",
-    header: "Renewal",
+    header: "🕐",  // Clock icon instead of "Renewal"
     accessor: (d: any) => renderWhoisCell(d),
-    width: isAdmin ? (viewMode !== "my" ? "5%" : "5%") : "7%",
+    ...columnConfig.whois,
   });
 
   // Proxy column - always present
@@ -2388,10 +2409,10 @@ const resolveWhois = (
       <Switch
         checked={d.proxied}
         onChange={() => handleToggleProxy(d)}
-        size="sm"
+        size="xxs"  // Extra small toggle
       />
     ),
-    width: isAdmin ? "5%" : "5%",
+    ...columnConfig.proxy,
     align: "center" as const,
   });
 
@@ -2400,7 +2421,7 @@ const resolveWhois = (
       key: "edge-assignment",
       header: "Edge",
       accessor: (d: any) => renderEdgeCell(d),
-      width: viewMode !== "my" ? "12%" : "15%",
+      ...columnConfig.edge,
     });
   }
 
@@ -2409,7 +2430,7 @@ const resolveWhois = (
     key: "tls",
     header: "TLS",
     accessor: (d: any) => getTLSDisplay(d),
-    width: isAdmin ? (viewMode !== "my" ? "6%" : "6%") : "7%",
+    ...columnConfig.tls,
     align: "center" as const,
   });
 
@@ -2417,7 +2438,7 @@ const resolveWhois = (
     key: "actions",
     header: "Actions",
     accessor: (d: any) => renderDomainActions(d),
-    width: isAdmin ? (viewMode !== "my" ? "15%" : "17%") : "16%",
+    ...columnConfig.actions,
     align: "center" as const,
   });
 
@@ -2608,7 +2629,7 @@ const resolveWhois = (
                   onClick={() => copyToClipboard(ns.fqdn)}
                   title="Copy to clipboard"
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                     <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
                   </svg>

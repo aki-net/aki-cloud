@@ -17,6 +17,8 @@
   border: 1px solid var(--color-border);
   background: var(--color-bg-secondary);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
 }
 
 .domains-table-wrapper .table {
@@ -24,7 +26,7 @@
   width: 100%;
 }
 
-.domains-table-wrapper .table-head {
+.domains-table-wrapper .table-header-row {
   background: var(--color-bg-tertiary);
 }
 
@@ -94,11 +96,11 @@
   --family-border: rgba(236, 72, 153, 0.55);
 }
 
-.domains-table .table-row-family:not(.table-row-family-end) .table-cell {
+.domains-table .table-row-family:not(.table-row-family-end) {
   border-bottom-color: transparent;
 }
 
-.domains-table .table-row-family-end .table-cell {
+.domains-table .table-row-family-end {
   border-bottom-color: var(--color-border);
 }
 
@@ -132,6 +134,8 @@
 /* Domain cell styling */
 .domain-name {
   font-weight: 500;
+  font-size: 13px;
+  color: var(--color-text-primary);
 }
 
 .domain-cell {
@@ -308,7 +312,6 @@
 .domain-cell-alias .domain-name,
 .domain-cell-redirect .domain-name {
   font-size: 13px;
-  color: var(--color-text-secondary);
 }
 
 .ip-placeholder-hint {
@@ -441,7 +444,9 @@
 }
 
 .owner-email {
+  font-weight: 500;
   color: var(--color-text-primary);
+  font-size: 13px;
 }
 
 .owner-missing {
@@ -603,27 +608,32 @@
 
 .domain-actions {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   justify-content: center;
   align-items: center;
+  height: 22px;
 }
 
 .waf-toggle-btn {
-  width: 32px;
-  height: 32px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   border: 1px solid var(--color-border);
   background: var(--color-bg-tertiary);
   color: var(--color-text-secondary);
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.2s ease;
   cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
 }
 
 .waf-toggle-btn svg {
   pointer-events: none;
+  display: block;
+  flex-shrink: 0;
 }
 
 .waf-toggle-btn:hover:not(:disabled) {
@@ -649,14 +659,16 @@
 
 .searchbot-actions {
   display: flex;
-  gap: 8px;
+  gap: 4px;
   align-items: center;
+  height: 22px;
 }
 
 .searchbot-bot {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
+  height: 22px;
 }
 
 .searchbot-menu-container {
@@ -664,19 +676,21 @@
 }
 
 .searchbot-menu-trigger {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   border: 1px solid var(--color-border);
   background: var(--color-bg-tertiary);
   color: var(--color-text-secondary);
   cursor: pointer;
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 18px;
+  font-size: 14px;
   line-height: 1;
   transition: all 0.15s ease;
+  padding: 0;
+  flex-shrink: 0;
 }
 
 .searchbot-menu-trigger:hover {
@@ -753,18 +767,20 @@
 }
 
 .searchbot-menu-export {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   border: 1px solid var(--color-border);
   background: var(--color-bg-tertiary);
   color: var(--color-text-secondary);
   cursor: pointer;
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: 11px;
   transition: all 0.15s ease;
+  padding: 0;
+  flex-shrink: 0;
 }
 
 .searchbot-menu-export:hover:not(:disabled) {
@@ -779,18 +795,20 @@
 }
 
 .searchbot-counts {
-  display: grid;
-  grid-auto-flow: column;
-  gap: 8px;
-  padding: 4px 8px;
-  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 4px;
   border: 1px solid var(--color-border);
   background: var(--color-bg-tertiary);
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 10px;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease,
-    color 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  height: 22px;
+  box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 .searchbot-counts:hover:not(:disabled) {
@@ -813,8 +831,8 @@
 }
 
 .searchbot-count strong {
-  font-size: 13px;
-  font-weight: 600;
+  /* font-size: 13px; */
+  font-weight: 100;
   color: var(--color-text-primary);
 }
 
@@ -1011,8 +1029,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   border: 1px solid var(--color-border);
   border-radius: 50%;
   background: var(--color-bg-elevated);
@@ -2151,18 +2169,20 @@
 }
 
 .dns-manage-btn {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
   border: 1px solid var(--color-border);
   background: var(--color-bg-tertiary);
   color: var(--color-text-secondary);
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: 12px;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
+  padding: 0;
+  flex-shrink: 0;
 }
 
 .dns-manage-btn:hover {
@@ -2171,8 +2191,10 @@
 }
 
 .dns-manage-btn svg {
-  width: 16px;
-  height: 16px;
+  width: 12px;
+  height: 12px;
+  display: block;
+  flex-shrink: 0;
 }
 
 
@@ -2619,5 +2641,366 @@
 
   .domain-family-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Enhanced Table Styling */
+.domains-table-wrapper .table-cell {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.domains-table-wrapper .table-cell--center,
+.domains-table .table-cell.table-align-center {
+  justify-content: center;
+}
+
+.domains-table .table-row {
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.domains-table .table-row:hover {
+  background-color: var(--color-bg-hover) !important;
+}
+
+/* Domain cell improvements */
+.domains-table .domain-cell {
+  flex-direction: column;
+  gap: 4px;
+  word-break: break-word;
+}
+
+.domains-table .domain-name {
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+/* Owner cell */
+.owner-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.owner-email {
+  font-weight: 500;
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+
+/* IP cell improvements */
+.domains-table .domain-ip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  word-break: break-all;
+}
+
+.ip-display {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--color-bg-tertiary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.ip-display:hover {
+  background: var(--color-bg-elevated);
+  color: var(--color-accent);
+}
+
+.ip-display.ip-placeholder {
+  color: var(--color-text-secondary);
+  font-style: italic;
+  font-size: 11px;
+}
+
+.ip-edit-input {
+  padding: 6px 10px;
+  border: 1px solid var(--color-accent);
+  border-radius: 6px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  width: 100%;
+  max-width: 200px;
+}
+
+/* Actions column improvements */
+.domains-table .domain-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.domains-table .action-btn {
+  width: 22px;
+  height: 22px;
+  padding: 4px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+
+.domains-table .action-btn:hover {
+  background: var(--color-bg-elevated);
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.domains-table .action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Nameserver cell */
+.domains-table .nameserver-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.ns-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.ns-chip {
+  background: var(--color-bg-tertiary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  display: inline-block;
+}
+
+/* Whois/Renewal cell */
+.domains-table .whois-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.whois-trigger {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  transition: color 0.15s ease;
+  font-size: 12px;
+}
+
+.whois-trigger:hover {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+.whois-trigger--warning {
+  color: var(--color-warning);
+}
+
+.whois-trigger--critical {
+  color: var(--color-danger);
+}
+
+.whois-trigger--ok {
+  color: var(--color-success);
+}
+
+/* TLS cell */
+.tls-display {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.tls-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  transition: all 0.15s ease;
+}
+
+.tls-mode-badge:hover {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.tls-mode-select {
+  padding: 4px 8px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  min-width: 90px;
+}
+
+.tls-mode-select:hover:not(:disabled),
+.tls-mode-select:focus {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-accent);
+}
+
+.tls-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+}
+
+.tls-status-dot--active {
+  background: var(--color-success);
+}
+
+.tls-status-dot--pending {
+  background: var(--color-warning);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.tls-status-dot--errored {
+  background: var(--color-danger);
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* Proxy/Switch cell */
+.domains-table .switch-wrapper {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* Edge cell */
+.domains-table .edge-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  text-align: center;
+  width: 100%;
+}
+
+.edge-assignment {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+}
+
+.edge-ip {
+  font-weight: 600;
+  font-size: 12px;
+  text-align: center;
+}
+
+.edge-node-hint {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.edge-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+  width: 100%;
+}
+
+.edge-label {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  background: var(--color-bg-tertiary);
+  border-radius: 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+}
+
+/* Responsive improvements */
+@media (max-width: 1200px) {
+  .domains-table-wrapper .table-cell {
+    padding: 10px 12px;
+    font-size: 12px;
+  }
+  
+  .domains-table .action-btn {
+    width: 28px;
+    height: 28px;
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 768px) {
+  .domains-table-wrapper .table-container {
+    border-radius: var(--radius-md);
+  }
+  
+  .domains-table-wrapper .table-cell {
+    padding: 8px 10px;
+    font-size: 11px;
+    min-height: 36px;
+  }
+  
+  .domains-table-wrapper .table-header-row .table-cell {
+    padding: 8px 10px;
+    font-size: 10px;
+  }
+  
+  .domains-table .action-btn {
+    width: 26px;
+    height: 26px;
+    font-size: 11px;
+  }
+  
+  .ip-display {
+    font-size: 11px;
+  }
+  
+  .ns-chip {
+    font-size: 10px;
   }
 }

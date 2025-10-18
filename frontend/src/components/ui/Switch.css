@@ -29,6 +29,18 @@
   border-radius: 10px;
 }
 
+.switch-xs {
+  width: 28px;
+  height: 16px;
+  border-radius: 8px;
+}
+
+.switch-xxs {
+  width: 20px;
+  height: 12px;
+  border-radius: 6px;
+}
+
 .switch-thumb {
   position: absolute;
   top: 2px;
@@ -45,6 +57,20 @@
   height: 14px;
 }
 
+.switch-xs .switch-thumb {
+  width: 10px;
+  height: 10px;
+  top: 2px;
+  left: 2px;
+}
+
+.switch-xxs .switch-thumb {
+  width: 6px;
+  height: 6px;
+  top: 2px;
+  left: 2px;
+}
+
 .switch-input:checked + .switch {
   background: var(--color-accent);
   border-color: var(--color-accent);
@@ -55,8 +81,16 @@
   transform: translateX(20px);
 }
 
-.switch-sm.switch-input:checked + .switch .switch-thumb {
+.switch-sm .switch-input:checked + .switch .switch-thumb {
   transform: translateX(16px);
+}
+
+.switch-xs .switch-input:checked + .switch .switch-thumb {
+  transform: translateX(12px);
+}
+
+.switch-xxs .switch-input:checked + .switch .switch-thumb {
+  transform: translateX(8px);
 }
 
 .switch-input:focus-visible + .switch {
