@@ -112,6 +112,15 @@ const findApexARecord = (domain: DomainLike): DomainDNSRecord | undefined =>
 const countAdditionalRecords = (domain: DomainLike): number =>
   getDNSRecords(domain).filter((record) => !isApexRecord(record)).length;
 
+const shortenNameserverLabel = (value?: string): string => {
+  const text = (value ?? "").trim();
+  if (!text) {
+    return text;
+  }
+  const firstDot = text.indexOf(".");
+  return firstDot === -1 ? text : text.slice(0, firstDot);
+};
+
 export default function DomainManagement({ isAdmin = false }: Props) {
   const { user } = useAuth();
   const [domains, setDomains] = useState<Domain[]>([]);
@@ -524,7 +533,9 @@ export default function DomainManagement({ isAdmin = false }: Props) {
         {entries.map((entry) => (
           <div className="ns-row" key={`${header}-${entry.name}`}>
             <div className="ns-row-content">
-              <span className="ns-host">{entry.name}</span>
+              <span className="ns-host" title={entry.name}>
+                {shortenNameserverLabel(entry.name)}
+              </span>
               {showIPs && entry.ipv4 && <span className="ns-ip">{entry.ipv4}</span>}
             </div>
             <button
@@ -622,7 +633,7 @@ export default function DomainManagement({ isAdmin = false }: Props) {
               className="ns-chip mono"
               title={entry.name}
             >
-              {entry.name}
+              {shortenNameserverLabel(entry.name)}
             </span>
           ))}
           {remaining > 0 && (
@@ -767,8 +778,13 @@ const resolveWhois = (
       ? info.assigned_ip || "Pending assignment"
       : "Proxy disabled";
     const ipClass = info.proxied && info.assigned_ip ? "edge-ip-active" : "edge-ip-muted";
-    const nodeSuffix =
-      info.proxied && info.node_name ? ` (${info.node_name})` : "";
+    const nodeDisplay =
+      info.proxied && (info.node_name || info.node_id)
+        ? info.node_name || info.node_id
+        : null;
+    const nodeTitle = info.node_id
+      ? `Node ${info.node_name || info.node_id} (${info.node_id})`
+      : undefined;
     return (
       <div className="edge-cell">
         <button
@@ -776,16 +792,18 @@ const resolveWhois = (
           onClick={() => openEdgeModal(record)}
           type="button"
         >
-          <span
-            className={`edge-ip mono ${ipClass}`}
-            title={
-              info.node_id
-                ? `Node ${info.node_name || info.node_id} (${info.node_id})`
-                : undefined
-            }
-          >
-            {displayLabel}
-            {nodeSuffix}
+          <span className="edge-assignment">
+            <span
+              className={`edge-ip mono ${ipClass}`}
+              title={nodeTitle}
+            >
+              {displayLabel}
+            </span>
+            {nodeDisplay && (
+              <span className="edge-node-hint" title={nodeTitle}>
+                {nodeDisplay}
+              </span>
+            )}
           </span>
         </button>
         {info.labels.length > 0 && (
@@ -1978,46 +1996,87 @@ const resolveWhois = (
       callback();
     };
 
-    // Alias display with hover actions for parents
-    const aliasChips = isParent && meta.aliasChildren.length > 0 && (
-      <div className="domain-relations-chips">
-        <span className="domain-icon-prefix">+</span>
-        <div className="domain-chips-list">
-          {meta.aliasChildren.map((child) => (
-            <span key={`alias-${child.domain}`} className="domain-chip domain-chip-alias-compact">
-              <span className="domain-chip-label">{child.domain}</span>
-              <span className="domain-chip-actions">
-                <button type="button" onClick={(e) => handleAction(e, () => openRoleModal(child, 'primary'))} title="Remove alias">
-                  ×
-                </button>
+    const renderRelationList = (
+      children: DomainWithMeta[],
+      type: "alias" | "redirect",
+    ) => {
+      if (children.length === 0) {
+        return null;
+      }
+      const labelText = type === "alias" ? "Aliases:" : "Redirects:";
+      const icon = type === "alias" ? "+" : "↗";
+      return (
+        <div
+          className={`domain-relations-inline domain-relations-${type}`}
+        >
+          <span className="domain-relations-label">
+            <span className="domain-relations-icon">{icon}</span>
+            {labelText}
+          </span>
+          <span className="domain-relations-items">
+            {children.map((child, index) => (
+              <span
+                key={`${type}-${child.domain}`}
+                className="domain-relation-entry"
+              >
+                <span className="domain-relation-name mono">
+                  {child.domain}
+                </span>
+                <span className="domain-relation-actions">
+                  {type === "alias" ? (
+                    <button
+                      type="button"
+                      className="domain-relation-action"
+                      onClick={(event) =>
+                        handleAction(event, () => openRoleModal(child, "primary"))
+                      }
+                      title="Remove alias"
+                    >
+                      ×
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="domain-relation-action"
+                        onClick={(event) =>
+                          handleAction(event, () => handleOpenRedirectRulesModal(child))
+                        }
+                        title="Edit redirect"
+                      >
+                        ✎
+                      </button>
+                      <button
+                        type="button"
+                        className="domain-relation-action"
+                        onClick={(event) =>
+                          handleAction(event, () => openRoleModal(child, "primary"))
+                        }
+                        title="Remove redirect"
+                      >
+                        ×
+                      </button>
+                    </>
+                  )}
+                </span>
+                {index < children.length - 1 && (
+                  <span className="domain-relation-separator">,{"\u00A0"}</span>
+                )}
               </span>
-            </span>
-          ))}
+            ))}
+          </span>
         </div>
-      </div>
-    );
+      );
+    };
 
-    // Redirect display with hover actions for parents
-    const redirectChips = isParent && meta.redirectChildren.length > 0 && (
-      <div className="domain-relations-chips">
-        <span className="domain-icon-prefix">↑</span>
-        <div className="domain-chips-list">
-          {meta.redirectChildren.map((child) => (
-            <span key={`redirect-${child.domain}`} className="domain-chip domain-chip-redirect-compact">
-              <span className="domain-chip-label">{child.domain}</span>
-              <span className="domain-chip-actions">
-                <button type="button" onClick={(e) => handleAction(e, () => handleOpenRedirectRulesModal(child))} title="Edit redirect">
-                  ✎
-                </button>
-                <button type="button" onClick={(e) => handleAction(e, () => openRoleModal(child, 'primary'))} title="Remove redirect">
-                  ×
-                </button>
-              </span>
-            </span>
-          ))}
-        </div>
-      </div>
-    );
+    const aliasRelations =
+      isParent && meta.aliasChildren.length > 0
+        ? renderRelationList(meta.aliasChildren, "alias")
+        : null;
+    const redirectRelations =
+      isParent && meta.redirectChildren.length > 0
+        ? renderRelationList(meta.redirectChildren, "redirect")
+        : null;
 
     // Don't show subtitle for children (aliases and redirects)
     let subtitle: React.ReactNode = null;
@@ -2038,22 +2097,24 @@ const resolveWhois = (
               </Badge>
             )}
           </div>
-          {/* Only show action buttons for parent domains and standalone domains */}
-          {(isParent || (!isAlias && !isRedirect)) && (
+          {/* Only show action buttons for parent domains */}
+          {isParent && (
             <div className="domain-inline-actions">
               <button
                 type="button"
-                className="domain-inline-button"
+                className="domain-inline-action"
                 onClick={(e) => handleAction(e, () => openRoleModal(row, 'alias'))}
                 title="Configure alias"
+                aria-label="Configure alias"
               >
-                ＋
+                +
               </button>
               <button
                 type="button"
-                className="domain-inline-button"
+                className="domain-inline-action"
                 onClick={(e) => handleAction(e, () => handleOpenRedirectRulesModal(row))}
                 title="Manage redirect rules"
+                aria-label="Manage redirect rules"
               >
                 →
               </button>
@@ -2073,8 +2134,8 @@ const resolveWhois = (
             )}
           </div>
         )}
-        {aliasChips}
-        {redirectChips}
+        {aliasRelations}
+        {redirectRelations}
         {pathRules.length > 0 && (
           <div className={`path-redirect-list${pathRulesInactive ? ' inactive' : ''}`}>
             {pathRulesInactive && (
@@ -2583,7 +2644,9 @@ const resolveWhois = (
           <div className="nameservers-list">
             {nameservers.map((ns) => (
               <div key={ns.node_id} className="nameserver-item">
-                <span className="ns-fqdn mono">{ns.fqdn}</span>
+                <span className="ns-fqdn mono" title={ns.fqdn}>
+                  {shortenNameserverLabel(ns.fqdn)}
+                </span>
                 <button
                   className="ns-copy-btn"
                   type="button"
