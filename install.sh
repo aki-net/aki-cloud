@@ -550,18 +550,18 @@ ensure_data_permissions() {
   chown -R "$SYSTEM_USER":"$SYSTEM_USER" "$DATA_DIR"
 }
 
-seed_curl_common_args() {
-  local -a args=()
+build_seed_curl_args() {
+  local -n target_array=$1
+  target_array=()
   if [[ "$SEED_INSECURE" == "1" ]]; then
-    args+=(--insecure)
+    target_array+=(--insecure)
   fi
   if [[ -n "$SEED_CA_FILE" ]]; then
     if [[ ! -f "$SEED_CA_FILE" ]]; then
       abort "Provided --seed-ca-file '$SEED_CA_FILE' does not exist"
     fi
-    args+=(--cacert "$SEED_CA_FILE")
+    target_array+=(--cacert "$SEED_CA_FILE")
   fi
-  printf '%s\n' "${args[@]}"
 }
 
 check_ports() {
@@ -783,7 +783,7 @@ pull_snapshot() {
   local auth_header
   auth_header="Bearer $(python3 -c 'import binascii,sys; sys.stdout.write(binascii.hexlify(sys.stdin.buffer.read()).decode())' <<<"$secret")"
   local -a curl_args
-  mapfile -t curl_args < <(seed_curl_common_args)
+  build_seed_curl_args curl_args
   curl "${curl_args[@]}" -fsSL -X POST -H "Authorization: $auth_header" "$seed_url/api/v1/sync/pull" -o "$DATA_DIR/cluster/snapshot.json"
 }
 
@@ -831,7 +831,7 @@ check_seed_reachable() {
   fi
   require_command curl
   local -a curl_args
-  mapfile -t curl_args < <(seed_curl_common_args)
+  build_seed_curl_args curl_args
   if ! curl "${curl_args[@]}" -fsS --max-time 10 "$seed_url/healthz" >/dev/null; then
     abort "Unable to reach seed backend at $seed_url. Verify connectivity before retrying."
   fi
