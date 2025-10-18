@@ -78,6 +78,16 @@ abort() {
   exit 1
 }
 
+maybe_become_root() {
+  if [[ $EUID -eq 0 ]]; then
+    return
+  fi
+  if command -v sudo >/dev/null 2>&1; then
+    exec sudo -H -E bash "$SCRIPT_PATH" "$@"
+  fi
+  abort "Installer requires root privileges. Re-run with sudo or as root."
+}
+
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
     abort "Required command '$1' not found"
@@ -285,12 +295,17 @@ ensure_hostname_resolution() {
   fi
 
   local hosts_file="/etc/hosts"
-  local fqdn short ip
+  local fqdn short primary ip python_bin
 
   fqdn="$(hostname -f 2>/dev/null || true)"
   short="$(hostname -s 2>/dev/null || true)"
+  primary="${fqdn:-$short}"
 
-  if [[ -z "$fqdn" || ! -f "$hosts_file" ]]; then
+  if [[ -z "$primary" || ! -f "$hosts_file" ]]; then
+    return
+  fi
+
+  if getent hosts "$primary" >/dev/null 2>&1; then
     return
   fi
 
@@ -299,7 +314,14 @@ ensure_hostname_resolution() {
     ip="$(grep -E "^[[:space:]]*127\.0\.1\.1[[:space:]]" "$hosts_file" | awk 'NR==1 {print $1}')"
   fi
 
-  python3 - "$hosts_file" "$ip" "$fqdn" "$short" <<'PY'
+  if [[ -z "$fqdn" ]]; then
+    fqdn="$primary"
+  fi
+
+  python_bin="$(command -v python3 || true)"
+
+  if [[ -n "$python_bin" ]]; then
+    "$python_bin" - "$hosts_file" "$ip" "$fqdn" "$short" <<'PY'
 import sys
 from pathlib import Path
 
@@ -343,6 +365,32 @@ filtered.append(f"{ip_address} {' '.join(names)}")
 
 hosts_path.write_text("\n".join(filtered) + "\n")
 PY
+  else
+    if ! grep -Eq "^[[:space:]]*[^#]*[[:space:]]${primary}([[:space:]]|\$)" "$hosts_file"; then
+      {
+        printf '\n# Added by aki-cloud installer to satisfy sudo hostname lookup\n'
+        printf '%s %s' "$ip" "$primary"
+        if [[ -n "$short" && "$short" != "$primary" ]]; then
+          printf ' %s' "$short"
+        fi
+        printf '\n'
+      } >>"$hosts_file"
+    fi
+  fi
+}
+
+run_as_system_user() {
+  if [[ -z "${SYSTEM_USER:-}" ]]; then
+    abort "SYSTEM_USER is not set"
+  fi
+  if [[ "$(id -un)" == "$SYSTEM_USER" ]]; then
+    "$@"
+    return
+  fi
+  if ! command -v sudo >/dev/null 2>&1; then
+    abort "sudo is required to switch to $SYSTEM_USER"
+  fi
+  sudo -H -u "$SYSTEM_USER" -- "$@"
 }
 
 ensure_system_user() {
@@ -372,25 +420,11 @@ clone_or_update_repo() {
 }
 
 maybe_bootstrap() {
+  local -a bootstrap_args=("$@")
   if [[ "$SKIP_BOOTSTRAP" == "1" ]]; then
-    return
-  fi
-
-  local repo_present="0"
-  if [[ -f "$PROJECT_DIR/docker-compose.yml" && -d "$PROJECT_DIR/backend" ]]; then
-    repo_present="1"
-  fi
-
-  if command -v docker >/dev/null 2>&1 && [[ "$repo_present" == "1" ]]; then
-    if [[ $EUID -eq 0 && "$(id -un)" != "$SYSTEM_USER" ]]; then
-      ensure_system_user
-      ensure_hostname_resolution
-      log "Re-executing installer as $SYSTEM_USER"
-      exec sudo -H -u "$SYSTEM_USER" env \
-        SKIP_BOOTSTRAP=1 \
-        INSTALL_DIR="$INSTALL_DIR" \
-        SYSTEM_USER="$SYSTEM_USER" \
-        "$INSTALL_DIR/install.sh" "${RERUN_ARGS[@]}"
+    if [[ "$PROJECT_DIR" != "$INSTALL_DIR" ]]; then
+      PROJECT_DIR="$INSTALL_DIR"
+      DATA_DIR="$PROJECT_DIR/data"
     fi
     return
   fi
@@ -404,13 +438,20 @@ maybe_bootstrap() {
   ensure_system_user
   ensure_hostname_resolution
   clone_or_update_repo
+  PROJECT_DIR="$INSTALL_DIR"
+  DATA_DIR="$PROJECT_DIR/data"
 
-  log "Re-executing installer as $SYSTEM_USER"
-  exec sudo -H -u "$SYSTEM_USER" env \
-    SKIP_BOOTSTRAP=1 \
-    INSTALL_DIR="$INSTALL_DIR" \
-    SYSTEM_USER="$SYSTEM_USER" \
-    "$INSTALL_DIR/install.sh" "${RERUN_ARGS[@]}"
+  local repo_script="$PROJECT_DIR/install.sh"
+  if [[ "$SCRIPT_PATH" != "$repo_script" && -f "$repo_script" ]]; then
+    log "Switching to repository installer at $repo_script"
+    exec env \
+      SKIP_BOOTSTRAP=1 \
+      INSTALL_DIR="$INSTALL_DIR" \
+      SYSTEM_USER="$SYSTEM_USER" \
+      REPO_URL="$REPO_URL" \
+      AUTO_FIREWALL="$AUTO_FIREWALL" \
+      "$repo_script" "${bootstrap_args[@]}"
+  fi
 }
 
 prompt_if_empty() {
@@ -475,7 +516,24 @@ write_file_atomic() {
 }
 
 ensure_directories() {
-  mkdir -p "$DATA_DIR"/cluster "$DATA_DIR"/users "$DATA_DIR"/infra "$DATA_DIR"/domains "$DATA_DIR"/dns/zones "$DATA_DIR"/openresty
+  local -a dirs=(
+    "$DATA_DIR"
+    "$DATA_DIR/cluster"
+    "$DATA_DIR/users"
+    "$DATA_DIR/infra"
+    "$DATA_DIR/domains"
+    "$DATA_DIR/dns"
+    "$DATA_DIR/dns/zones"
+    "$DATA_DIR/openresty"
+  )
+  local dir
+  for dir in "${dirs[@]}"; do
+    install -d -m 0755 -o "$SYSTEM_USER" -g "$SYSTEM_USER" "$dir"
+  done
+}
+
+ensure_data_permissions() {
+  chown -R "$SYSTEM_USER":"$SYSTEM_USER" "$DATA_DIR"
 }
 
 check_ports() {
@@ -507,8 +565,9 @@ create_admin_user() {
   local timestamp
   timestamp="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   require_command docker
-  local hash
-  hash="$(docker run --rm httpd:2.4-alpine htpasswd -nbB admin "$password" | cut -d: -f2)"
+  local htpasswd_output hash
+  htpasswd_output="$(run_as_system_user docker run --rm httpd:2.4-alpine htpasswd -nbB admin "$password")"
+  hash="${htpasswd_output#admin:}"
   local payload="[
   {
     \"id\": \"$user_id\",
@@ -662,20 +721,20 @@ SSL_ACME_LOCK_TTL_SECONDS=$acme_lock
 SSL_ACME_RENEW_BEFORE_DAYS=$acme_renew
 SSL_RECOMMENDER_ENABLED=$tls_recommender
 EOF
+  chown "$SYSTEM_USER":"$SYSTEM_USER" "$PROJECT_DIR/.env"
 }
 
 render_configs() {
-  (cd "$PROJECT_DIR" && docker compose run --rm --entrypoint /app/bin/generate backend \
-    --data-dir /data \
-    --coredns-template /app/coredns/Corefile.tmpl \
-    --nginx-template /app/openresty/nginx.conf.tmpl \
-    --sites-template /app/openresty/sites.tmpl \
-    --openresty-output /data/openresty \
-    all) || true
+  local cmd
+  printf -v cmd 'cd %q && docker compose run --rm --entrypoint %q backend --data-dir %q --coredns-template %q --nginx-template %q --sites-template %q --openresty-output %q all' \
+    "$PROJECT_DIR" "/app/bin/generate" "/data" "/app/coredns/Corefile.tmpl" "/app/openresty/nginx.conf.tmpl" "/app/openresty/sites.tmpl" "/data/openresty"
+  run_as_system_user bash -lc "$cmd" || true
 }
 
 bring_up_compose() {
-  (cd "$PROJECT_DIR" && docker compose up -d)
+  local cmd
+  printf -v cmd 'cd %q && docker compose up -d' "$PROJECT_DIR"
+  run_as_system_user bash -lc "$cmd"
 }
 
 write_secret_files() {
@@ -683,8 +742,10 @@ write_secret_files() {
   local jwt_secret="$2"
   echo "$cluster_secret" > "$DATA_DIR/cluster/secret"
   chmod 600 "$DATA_DIR/cluster/secret"
+  chown "$SYSTEM_USER":"$SYSTEM_USER" "$DATA_DIR/cluster/secret"
   echo "$jwt_secret" > "$DATA_DIR/cluster/jwt_secret"
   chmod 600 "$DATA_DIR/cluster/jwt_secret"
+  chown "$SYSTEM_USER":"$SYSTEM_USER" "$DATA_DIR/cluster/jwt_secret"
 }
 
 pull_snapshot() {
@@ -872,9 +933,11 @@ configure_firewall() {
 }
 
 main() {
-  parse_args "$@"
+  local -a original_args=("$@")
+  maybe_become_root "${original_args[@]}"
+  parse_args "${original_args[@]}"
 
-  maybe_bootstrap
+  maybe_bootstrap "${original_args[@]}"
 
   require_command python3
   require_command openssl
@@ -1084,6 +1147,7 @@ PY
     check_ports "$EDGE_IPS" "80,443" || true
   fi
 
+  ensure_data_permissions
   render_configs
   bring_up_compose
 
