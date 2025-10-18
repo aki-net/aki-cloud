@@ -572,17 +572,17 @@ export default function DomainManagement({ isAdmin = false }: Props) {
     ) {
       return <span className="text-secondary">—</span>;
     }
-    const hasAnycast = Array.isArray(nsSet.anycast) && nsSet.anycast.length > 0;
-    const primary =
-      hasAnycast && nsSet.anycast
-        ? nsSet.anycast
-        : nsSet.vanity && nsSet.vanity.length > 0
-          ? nsSet.vanity
-          : [];
+    const hasAnycast =
+      Array.isArray(nsSet.anycast) && nsSet.anycast.length > 0;
+    const primary = hasAnycast && nsSet.anycast
+      ? nsSet.anycast
+      : nsSet.vanity && nsSet.vanity.length > 0
+        ? nsSet.vanity
+        : [];
     if (!primary.length) {
       return <span className="text-secondary">—</span>;
     }
-    const visible = primary.slice(0, 4);
+    const visible = primary.slice(0, 2);
     const remaining = Math.max(primary.length - visible.length, 0);
     const anycastSection = renderNameserverCategory(
       "Anycast",
@@ -627,17 +627,28 @@ export default function DomainManagement({ isAdmin = false }: Props) {
             }
           }}
         >
-          {visible.map((entry) => (
-            <span
-              key={`${domainName}-${entry.name}`}
-              className="ns-chip mono"
-              title={entry.name}
-            >
-              {shortenNameserverLabel(entry.name)}
-            </span>
+          {visible.map((entry, index) => (
+            <div key={`${domainName}-${entry.name}`} className="ns-line">
+              <span className="ns-chip mono" title={entry.name}>
+                {shortenNameserverLabel(entry.name)}
+              </span>
+              {index === visible.length - 1 && remaining > 0 && (
+                <span className="ns-more" title={`+${remaining} more`}>
+                  +{remaining} more
+                </span>
+              )}
+            </div>
           ))}
-          {remaining > 0 && (
-            <span className="ns-more" title={`+${remaining} more`}>+{remaining} more</span>
+          {visible.length === 1 && (
+            <div className="ns-line ns-line-placeholder">
+              {remaining > 0 ? (
+                <span className="ns-more" title={`+${remaining} more`}>
+                  +{remaining} more
+                </span>
+              ) : (
+                <span className="ns-placeholder">—</span>
+              )}
+            </div>
           )}
         </div>
         {isOpen && hasDetails && (
@@ -2250,18 +2261,32 @@ const resolveWhois = (
   const columns: any[] = [];
 
   // Domain column - always present
+  const domainColumnWidth = useMemo(() => {
+    if (!isAdmin) {
+      return "32%";
+    }
+    return viewMode !== "my" ? "23%" : "25%";
+  }, [isAdmin, viewMode]);
+
+  const nameserverColumnWidth = useMemo(() => {
+    if (!isAdmin) {
+      return "17%";
+    }
+    return viewMode !== "my" ? "13%" : "14%";
+  }, [isAdmin, viewMode]);
+
   columns.push({
     key: "domain",
     header: "Domain",
     accessor: (row: DomainWithMeta) => renderDomainCell(row),
-    width: isAdmin ? (viewMode !== "my" ? "21%" : "24%") : "27%",
+    width: domainColumnWidth,
   });
 
   columns.push({
     key: "nameservers",
     header: "Nameservers",
     accessor: (d: any) => renderNameserverCell(d),
-    width: isAdmin ? (viewMode !== "my" ? "17%" : "20%") : "22%",
+    width: nameserverColumnWidth,
   });
 
   // Owner column - only for admin in all/orphaned mode
@@ -2278,12 +2303,17 @@ const resolveWhois = (
           )}
         </div>
       ),
-      width: "11%",
+      width: "10%",
     });
   }
 
   // Origin IP column - always present
-  const originIPWidth = isAdmin ? (viewMode !== "my" ? "13%" : "15%") : "17%";
+  const originIPWidth = useMemo(() => {
+    if (!isAdmin) {
+      return "16%";
+    }
+    return viewMode !== "my" ? "11%" : "13%";
+  }, [isAdmin, viewMode]);
   columns.push({
     key: "origin_ip",
     header: "Origin IP",
@@ -2347,7 +2377,7 @@ const resolveWhois = (
     key: "whois",
     header: "Renewal",
     accessor: (d: any) => renderWhoisCell(d),
-    width: isAdmin ? "7%" : "8%",
+    width: isAdmin ? (viewMode !== "my" ? "5%" : "5%") : "7%",
   });
 
   // Proxy column - always present
@@ -2361,7 +2391,7 @@ const resolveWhois = (
         size="sm"
       />
     ),
-    width: isAdmin ? "6%" : "7%",
+    width: isAdmin ? "5%" : "5%",
     align: "center" as const,
   });
 
@@ -2370,7 +2400,7 @@ const resolveWhois = (
       key: "edge-assignment",
       header: "Edge",
       accessor: (d: any) => renderEdgeCell(d),
-      width: "11%",
+      width: viewMode !== "my" ? "12%" : "15%",
     });
   }
 
@@ -2379,7 +2409,7 @@ const resolveWhois = (
     key: "tls",
     header: "TLS",
     accessor: (d: any) => getTLSDisplay(d),
-    width: isAdmin ? (viewMode !== "my" ? "7%" : "8%") : "8%",
+    width: isAdmin ? (viewMode !== "my" ? "6%" : "6%") : "7%",
     align: "center" as const,
   });
 
@@ -2387,7 +2417,7 @@ const resolveWhois = (
     key: "actions",
     header: "Actions",
     accessor: (d: any) => renderDomainActions(d),
-    width: isAdmin ? (viewMode !== "my" ? "6%" : "7%") : "7%",
+    width: isAdmin ? (viewMode !== "my" ? "15%" : "17%") : "16%",
     align: "center" as const,
   });
 

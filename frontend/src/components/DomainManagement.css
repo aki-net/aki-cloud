@@ -30,6 +30,7 @@
 
 .domains-table-wrapper .table-cell {
   line-height: 1.35;
+  padding: 10px 12px;
   overflow-wrap: anywhere;
 }
 
@@ -1146,19 +1147,22 @@
 .nameserver-cell {
   position: relative;
   display: flex;
-  align-items: center;
-  min-height: 32px;
+  align-items: stretch;
+  min-height: 36px;
 }
 
 .ns-primary {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+  flex-direction: column;
+  gap: 6px;
   max-width: 100%;
-  padding: 2px 4px;
-  cursor: pointer;
+  padding: 4px 6px;
   border-radius: 6px;
   transition: background-color 0.15s ease;
+}
+
+.ns-primary[role="button"] {
+  cursor: pointer;
 }
 
 .ns-primary:focus {
@@ -1175,6 +1179,18 @@
   background: var(--color-bg-tertiary);
 }
 
+.ns-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 18px;
+}
+
+.ns-line-placeholder {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
 .ns-chip {
   background: var(--color-bg-tertiary);
   padding: 2px 6px;
@@ -1185,10 +1201,18 @@
   white-space: nowrap;
 }
 
+.ns-placeholder {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
 .ns-more {
   font-size: 12px;
   color: var(--color-text-tertiary);
   align-self: center;
+  background: rgba(88, 101, 242, 0.12);
+  border-radius: 999px;
+  padding: 1px 6px 0;
 }
 
 .ns-popover {

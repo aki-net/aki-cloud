@@ -56,7 +56,7 @@ export default function Table<T>({
     <div className={clsx('table-container', className)}>
       <table className="table">
         <colgroup>
-          {hasSelection && <col style={{ width: '40px' }} />}
+          {hasSelection && <col style={{ width: '44px' }} />}
           {columns.map((column) => (
             <col key={column.key} style={{ width: column.width }} />
           ))}
