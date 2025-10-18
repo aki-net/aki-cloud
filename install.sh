@@ -1148,6 +1148,42 @@ PY
       NS_BASE_DOMAIN="$(read_env_value NS_BASE_DOMAIN "$PROJECT_DIR/.env" || true)"
     fi
     if [[ -z "$NS_LABEL" || -z "$NS_BASE_DOMAIN" ]]; then
+      read -r derived_label derived_base <<<"$(python3 - <<'PY'
+import os
+from urllib.parse import urlparse
+
+seed = os.environ.get("SEED", "")
+label = ""
+base = ""
+
+if seed:
+    parsed = urlparse(seed if "://" in seed else f"http://{seed}")
+    host = parsed.hostname or ""
+    if host:
+        host = host.strip(".")
+        parts = [p for p in host.split(".") if p]
+        if len(parts) >= 2:
+            base = ".".join(parts[-2:])
+            prefix_parts = parts[:-2]
+            if prefix_parts:
+                if "ns" in prefix_parts:
+                    label = "ns"
+                else:
+                    label = prefix_parts[-1]
+if not label:
+    label = ""
+print(label)
+print(base)
+PY
+)"
+      if [[ -z "$NS_LABEL" && -n "$derived_label" ]]; then
+        NS_LABEL="$derived_label"
+      fi
+      if [[ -z "$NS_BASE_DOMAIN" && -n "$derived_base" ]]; then
+        NS_BASE_DOMAIN="$derived_base"
+      fi
+    fi
+    if [[ -z "$NS_LABEL" || -z "$NS_BASE_DOMAIN" ]]; then
       abort "Unable to determine NS label/base domain from cluster snapshot. Provide --ns-label/--ns-base-domain explicitly."
     fi
     write_node_files "$NODE_ID" "$NODE_NAME" "$IPS" "$NS_IPS" "$EDGE_IPS" "$NODE_LABELS" "$NS_LABEL" "$NS_BASE_DOMAIN" "$API_ENDPOINT"
