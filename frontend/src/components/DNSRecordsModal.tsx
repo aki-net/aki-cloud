@@ -419,7 +419,7 @@ export default function DNSRecordsModal({
                             <Badge variant="neutral">DNS only</Badge>
                           )}
                         </td>
-                        <td className="dns-records-actions">
+                        <td>
                           <button
                             type="button"
                             className="dns-record-edit"

@@ -2109,6 +2109,7 @@
   font-size: 13px;
   cursor: pointer;
   padding: 0;
+  margin-left: 12px;
 }
 
 .dns-record-delete {
@@ -2146,6 +2147,24 @@
 .dns-type-select {
   min-width: 140px;
   width: 160px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.dns-type-select:hover {
+  border-color: var(--color-accent);
+}
+
+.dns-type-select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  background: var(--color-bg-primary);
 }
 
 .dns-records-row-inputs {

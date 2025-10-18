@@ -2461,81 +2461,6 @@ const resolveWhois = (
         searchValue={searchQuery}
         onSearchChange={setSearchQuery}
       >
-        {selectedDomains.size > 0 && selectionEnabled && (
-          <>
-            <div className="batch-actions">
-              <div className="batch-toggle-group">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => handleBulkProxyToggle(true)}
-                >
-                  Enable Proxy
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => handleBulkProxyToggle(false)}
-                >
-                  Disable Proxy
-                </Button>
-                <select
-                  className="batch-tls-select"
-                  onChange={(e) =>
-                    e.target.value && handleBulkTLSUpdate(e.target.value)
-                  }
-                  defaultValue=""
-                >
-                  <option value="" disabled>
-                    TLS Mode...
-                  </option>
-                  <option value="off">TLS Off</option>
-                  <option value="flexible">Flexible</option>
-                  <option value="full">Full</option>
-                  <option value="full_strict">Full Strict</option>
-                  <option value="auto">Auto</option>
-                </select>
-              </div>
-              <div className="batch-input-group">
-                <input
-                  className="batch-input"
-                  placeholder="New origin IP"
-                  value={bulkIP}
-                  onChange={(e) => setBulkIP(e.target.value)}
-                />
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleBulkIPUpdate}
-                  disabled={!bulkIP.trim()}
-                >
-                  Update IP
-                </Button>
-              </div>
-              {isAdmin && (
-                <div className="batch-input-group">
-                  <input
-                    className="batch-input"
-                    placeholder="Owner email or ID"
-                    value={bulkOwner}
-                    onChange={(e) => setBulkOwner(e.target.value)}
-                  />
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={handleBulkOwnerUpdate}
-                    disabled={!bulkOwner.trim()}
-                  >
-                    Update Owner
-                  </Button>
-                </div>
-              )}
-            </div>
-            <Button variant="danger" onClick={handleDeleteSelected}>
-              Delete {selectedDomains.size}
-            </Button>
-          </>
-        )}
         {isAdmin && availableLabels.length > 0 && (
           <div className="label-filter">
             <select
@@ -2565,6 +2490,85 @@ const resolveWhois = (
           Add Domain
         </Button>
       </PageHeader>
+
+      {selectedDomains.size > 0 && selectionEnabled && (
+        <Card className="batch-actions-card">
+          <div className="batch-actions">
+            <div className="batch-selection-info">
+              {selectedDomains.size} domain{selectedDomains.size !== 1 ? "s" : ""} selected
+            </div>
+            <div className="batch-actions-group">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => handleBulkProxyToggle(true)}
+              >
+                Enable Proxy
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => handleBulkProxyToggle(false)}
+              >
+                Disable Proxy
+              </Button>
+              <select
+                className="batch-tls-select"
+                onChange={(e) =>
+                  e.target.value && handleBulkTLSUpdate(e.target.value)
+                }
+                defaultValue=""
+              >
+                <option value="" disabled>
+                  TLS Mode...
+                </option>
+                <option value="off">TLS Off</option>
+                <option value="flexible">Flexible</option>
+                <option value="full">Full</option>
+                <option value="full_strict">Full Strict</option>
+                <option value="auto">Auto</option>
+              </select>
+            </div>
+            <div className="batch-input-group">
+              <input
+                className="batch-input"
+                placeholder="New origin IP"
+                value={bulkIP}
+                onChange={(e) => setBulkIP(e.target.value)}
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleBulkIPUpdate}
+                disabled={!bulkIP.trim()}
+              >
+                Update IP
+              </Button>
+            </div>
+            {isAdmin && (
+              <div className="batch-input-group">
+                <input
+                  className="batch-input"
+                  placeholder="Owner email or ID"
+                  value={bulkOwner}
+                  onChange={(e) => setBulkOwner(e.target.value)}
+                />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleBulkOwnerUpdate}
+                  disabled={!bulkOwner.trim()}
+                >
+                  Update Owner
+                </Button>
+              </div>
+            )}
+            <Button variant="danger" onClick={handleDeleteSelected}>
+              Delete {selectedDomains.size}
+            </Button>
+          </div>
+        </Card>
+      )}
 
       {isAdmin && (
         <div className="filter-tabs">
