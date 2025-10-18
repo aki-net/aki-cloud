@@ -266,28 +266,6 @@ configure_passwordless_sudo() {
   if ! command -v sudo >/dev/null 2>&1; then
     return
   fi
-  local -a binaries=(
-    systemctl
-    ufw
-    iptables
-    nft
-    true
-    mv
-    mkdir
-    chmod
-    sysctl
-  )
-  declare -A dedup=()
-  local bin path
-  for bin in "${binaries[@]}"; do
-    path="$(type -P "$bin" 2>/dev/null || command -v "$bin" 2>/dev/null || true)"
-    if [[ -n "$path" ]]; then
-      dedup["$path"]=1
-    fi
-  done
-  if ((${#dedup[@]} == 0)); then
-    return
-  fi
   local sudoers_dir="/etc/sudoers.d"
   local sudoers_file="$sudoers_dir/${user}-aki-cloud"
   mkdir -p "$sudoers_dir"
@@ -295,18 +273,7 @@ configure_passwordless_sudo() {
   tmp_file="$(mktemp)"
   {
     printf 'Defaults:%s !requiretty\n' "$user"
-    printf '%s ALL=(root) NOPASSWD: ' "$user"
-    local first=1
-    local -a sorted_paths=()
-    mapfile -t sorted_paths < <(printf '%s\n' "${!dedup[@]}" | sort)
-    for path in "${sorted_paths[@]}"; do
-      if [[ $first -eq 0 ]]; then
-        printf ', '
-      fi
-      printf '%s' "$path"
-      first=0
-    done
-    printf '\n'
+    printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$user"
   } >"$tmp_file"
   chmod 440 "$tmp_file"
   mv "$tmp_file" "$sudoers_file"
@@ -318,23 +285,12 @@ ensure_hostname_resolution() {
   fi
 
   local hosts_file="/etc/hosts"
-  local fqdn short primary ip
+  local fqdn short ip
 
   fqdn="$(hostname -f 2>/dev/null || true)"
   short="$(hostname -s 2>/dev/null || true)"
-  primary="${fqdn:-$short}"
 
-  if [[ -z "$primary" || ! -f "$hosts_file" ]]; then
-    return
-  fi
-
-  if getent hosts "$primary" >/dev/null 2>&1; then
-    return
-  fi
-  if [[ -n "$short" && "$short" != "$primary" ]] && getent hosts "$short" >/dev/null 2>&1; then
-    return
-  fi
-  if grep -Eq "^[[:space:]]*[^#]*[[:space:]]${primary}([[:space:]]|\$)" "$hosts_file"; then
+  if [[ -z "$fqdn" || ! -f "$hosts_file" ]]; then
     return
   fi
 
@@ -343,19 +299,50 @@ ensure_hostname_resolution() {
     ip="$(grep -E "^[[:space:]]*127\.0\.1\.1[[:space:]]" "$hosts_file" | awk 'NR==1 {print $1}')"
   fi
 
-  local -a names=("$primary")
-  if [[ -n "$short" && "$short" != "$primary" ]]; then
-    names+=("$short")
-  fi
-  local line="$ip"
-  local name
-  for name in "${names[@]}"; do
-    line+=" $name"
-  done
-  {
-    printf '\n# Added by aki-cloud installer to satisfy sudo hostname lookup\n'
-    printf '%s\n' "$line"
-  } >>"$hosts_file"
+  python3 - "$hosts_file" "$ip" "$fqdn" "$short" <<'PY'
+import sys
+from pathlib import Path
+
+hosts_path = Path(sys.argv[1])
+ip_address = sys.argv[2]
+fqdn = sys.argv[3].strip()
+short = sys.argv[4].strip()
+
+if not fqdn:
+    sys.exit(0)
+
+names = []
+seen = set()
+for candidate in (fqdn, short):
+    lc = candidate.lower()
+    if candidate and lc not in seen:
+        names.append(candidate)
+        seen.add(lc)
+
+if not names:
+    sys.exit(0)
+
+lines = hosts_path.read_text().splitlines()
+filtered = []
+for line in lines:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        filtered.append(line)
+        continue
+    tokens = stripped.split()
+    host_tokens = [token for token in tokens[1:] if not token.startswith("#")]
+    if any(token.lower() in seen for token in host_tokens):
+        continue
+    filtered.append(line)
+
+if filtered and filtered[-1].strip():
+    filtered.append("")
+
+filtered.append("# Added by aki-cloud installer to satisfy sudo hostname lookup")
+filtered.append(f"{ip_address} {' '.join(names)}")
+
+hosts_path.write_text("\n".join(filtered) + "\n")
+PY
 }
 
 ensure_system_user() {
