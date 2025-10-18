@@ -5588,19 +5588,12 @@ func (s *Server) handleNodeJoinCommand(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) seedURLFromRequest(r *http.Request) string {
+	host := s.resolveSeedHost(r.Host)
+	port := portFromHost(host, s.Config.Port)
 	scheme := "http"
-	if r.TLS != nil {
+	if isTLSPort(port) {
 		scheme = "https"
 	}
-	if forwarded := r.Header.Get("X-Forwarded-Proto"); forwarded != "" {
-		parts := strings.Split(forwarded, ",")
-		if len(parts) > 0 {
-			if val := strings.TrimSpace(parts[0]); val != "" {
-				scheme = val
-			}
-		}
-	}
-	host := s.resolveSeedHost(r.Host)
 	return fmt.Sprintf("%s://%s", scheme, host)
 }
 
@@ -5609,6 +5602,38 @@ func escapeSingleQuotes(input string) string {
 		return ""
 	}
 	return strings.ReplaceAll(input, "'", `'"'"'`)
+}
+
+func portFromHost(host string, fallback int) int {
+	if host == "" {
+		return fallback
+	}
+	// IPv6 with port formatted as [::1]:8080
+	if strings.HasPrefix(host, "[") {
+		if _, p, err := net.SplitHostPort(host); err == nil {
+			if parsed, err := strconv.Atoi(p); err == nil {
+				return parsed
+			}
+		}
+		return fallback
+	}
+	if strings.Count(host, ":") == 1 {
+		if _, p, err := net.SplitHostPort(host); err == nil {
+			if parsed, err := strconv.Atoi(p); err == nil {
+				return parsed
+			}
+		}
+	}
+	return fallback
+}
+
+func isTLSPort(port int) bool {
+	switch port {
+	case 443, 8443, 9443:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) resolveSeedHost(requestHost string) string {
