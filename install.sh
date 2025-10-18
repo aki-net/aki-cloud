@@ -273,6 +273,9 @@ configure_passwordless_sudo() {
     nft
     true
     mv
+    mkdir
+    chmod
+    sysctl
   )
   declare -A dedup=()
   local bin path
@@ -307,6 +310,52 @@ configure_passwordless_sudo() {
   } >"$tmp_file"
   chmod 440 "$tmp_file"
   mv "$tmp_file" "$sudoers_file"
+}
+
+ensure_hostname_resolution() {
+  if [[ $EUID -ne 0 ]]; then
+    return
+  fi
+
+  local hosts_file="/etc/hosts"
+  local fqdn short primary ip
+
+  fqdn="$(hostname -f 2>/dev/null || true)"
+  short="$(hostname -s 2>/dev/null || true)"
+  primary="${fqdn:-$short}"
+
+  if [[ -z "$primary" || ! -f "$hosts_file" ]]; then
+    return
+  fi
+
+  if getent hosts "$primary" >/dev/null 2>&1; then
+    return
+  fi
+  if [[ -n "$short" && "$short" != "$primary" ]] && getent hosts "$short" >/dev/null 2>&1; then
+    return
+  fi
+  if grep -Eq "^[[:space:]]*[^#]*[[:space:]]${primary}([[:space:]]|\$)" "$hosts_file"; then
+    return
+  fi
+
+  ip="127.0.1.1"
+  if grep -Eq "^[[:space:]]*127\.0\.1\.1[[:space:]]" "$hosts_file"; then
+    ip="$(grep -E "^[[:space:]]*127\.0\.1\.1[[:space:]]" "$hosts_file" | awk 'NR==1 {print $1}')"
+  fi
+
+  local -a names=("$primary")
+  if [[ -n "$short" && "$short" != "$primary" ]]; then
+    names+=("$short")
+  fi
+  local line="$ip"
+  local name
+  for name in "${names[@]}"; do
+    line+=" $name"
+  done
+  {
+    printf '\n# Added by aki-cloud installer to satisfy sudo hostname lookup\n'
+    printf '%s\n' "$line"
+  } >>"$hosts_file"
 }
 
 ensure_system_user() {
@@ -348,6 +397,7 @@ maybe_bootstrap() {
   if command -v docker >/dev/null 2>&1 && [[ "$repo_present" == "1" ]]; then
     if [[ $EUID -eq 0 && "$(id -un)" != "$SYSTEM_USER" ]]; then
       ensure_system_user
+      ensure_hostname_resolution
       log "Re-executing installer as $SYSTEM_USER"
       exec sudo -H -u "$SYSTEM_USER" env \
         SKIP_BOOTSTRAP=1 \
@@ -365,6 +415,7 @@ maybe_bootstrap() {
   install_base_packages
   install_docker_packages
   ensure_system_user
+  ensure_hostname_resolution
   clone_or_update_repo
 
   log "Re-executing installer as $SYSTEM_USER"
