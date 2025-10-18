@@ -1148,7 +1148,7 @@ PY
       NS_BASE_DOMAIN="$(read_env_value NS_BASE_DOMAIN "$PROJECT_DIR/.env" || true)"
     fi
     if [[ -z "$NS_LABEL" || -z "$NS_BASE_DOMAIN" ]]; then
-      read -r derived_label derived_base <<<"$(python3 - <<'PY'
+      mapfile -t derived_ns < <(SEED="$SEED" python3 - <<'PY'
 import os
 from urllib.parse import urlparse
 
@@ -1175,12 +1175,14 @@ if not label:
 print(label)
 print(base)
 PY
-)"
-      if [[ -z "$NS_LABEL" && -n "$derived_label" ]]; then
-        NS_LABEL="$derived_label"
-      fi
-      if [[ -z "$NS_BASE_DOMAIN" && -n "$derived_base" ]]; then
-        NS_BASE_DOMAIN="$derived_base"
+)
+      if (( ${#derived_ns[@]} >= 2 )); then
+        if [[ -z "$NS_LABEL" && -n "${derived_ns[0]}" ]]; then
+          NS_LABEL="${derived_ns[0]}"
+        fi
+        if [[ -z "$NS_BASE_DOMAIN" && -n "${derived_ns[1]}" ]]; then
+          NS_BASE_DOMAIN="${derived_ns[1]}"
+        fi
       fi
     fi
     if [[ -z "$NS_LABEL" || -z "$NS_BASE_DOMAIN" ]]; then
