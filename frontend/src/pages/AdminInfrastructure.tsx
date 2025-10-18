@@ -770,6 +770,11 @@ interface NodeFormState {
           Run this command on the new node (adjust name and IP arguments as
           needed).
         </p>
+        <p className="join-description">
+          For self-signed HTTPS on the seed, append{" "}
+          <code>--seed-ca-file /path/to/ca.pem</code> or{" "}
+          <code>--seed-insecure</code>.
+        </p>
         <textarea
           className="join-command"
           rows={3}

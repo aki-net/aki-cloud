@@ -26,6 +26,8 @@ BACKEND_PORT="8080"
 SECRETS_SUPPLIED=""
 JWT_SECRET_INPUT=""
 AUTO_FIREWALL="auto"
+SEED_CA_FILE=""
+SEED_INSECURE="0"
 
 REPO_URL="${REPO_URL:-https://github.com/aki-net/aki-cloud.git}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/aki-cloud}"
@@ -59,6 +61,8 @@ Options:
   --admin-email EMAIL        Initial admin email (fresh)
   --admin-pass PASS          Initial admin password (fresh)
   --admin-pass-file PATH     Read admin password from file (fresh)
+  --seed-ca-file PATH        Additional CA bundle for seed HTTPS validation
+  --seed-insecure            Skip TLS verification when talking to seed
   --enable-coredns true|false  Force CoreDNS service state
   --enable-openresty true|false Force OpenResty service state
   --backend-port PORT        Backend API port (default 8080)
@@ -173,6 +177,14 @@ parse_args() {
         ADMIN_PASS_FILE="$2"
         RERUN_ARGS+=(--admin-pass-file "$2")
         shift 2 ;;
+      --seed-ca-file)
+        SEED_CA_FILE="$2"
+        RERUN_ARGS+=(--seed-ca-file "$2")
+        shift 2 ;;
+      --seed-insecure)
+        SEED_INSECURE="1"
+        RERUN_ARGS+=(--seed-insecure)
+        shift 1 ;;
       --enable-coredns)
         ENABLE_COREDNS="$2"
         RERUN_ARGS+=(--enable-coredns "$2")
@@ -450,6 +462,8 @@ maybe_bootstrap() {
       SYSTEM_USER="$SYSTEM_USER" \
       REPO_URL="$REPO_URL" \
       AUTO_FIREWALL="$AUTO_FIREWALL" \
+      SEED_CA_FILE="$SEED_CA_FILE" \
+      SEED_INSECURE="$SEED_INSECURE" \
       "$repo_script" "${bootstrap_args[@]}"
   fi
 }
@@ -534,6 +548,20 @@ ensure_directories() {
 
 ensure_data_permissions() {
   chown -R "$SYSTEM_USER":"$SYSTEM_USER" "$DATA_DIR"
+}
+
+seed_curl_common_args() {
+  local -a args=()
+  if [[ "$SEED_INSECURE" == "1" ]]; then
+    args+=(--insecure)
+  fi
+  if [[ -n "$SEED_CA_FILE" ]]; then
+    if [[ ! -f "$SEED_CA_FILE" ]]; then
+      abort "Provided --seed-ca-file '$SEED_CA_FILE' does not exist"
+    fi
+    args+=(--cacert "$SEED_CA_FILE")
+  fi
+  printf '%s\n' "${args[@]}"
 }
 
 check_ports() {
@@ -754,7 +782,9 @@ pull_snapshot() {
   require_command curl
   local auth_header
   auth_header="Bearer $(python3 -c 'import binascii,sys; sys.stdout.write(binascii.hexlify(sys.stdin.buffer.read()).decode())' <<<"$secret")"
-  curl -fsSL -X POST -H "Authorization: $auth_header" "$seed_url/api/v1/sync/pull" -o "$DATA_DIR/cluster/snapshot.json"
+  local -a curl_args
+  mapfile -t curl_args < <(seed_curl_common_args)
+  curl "${curl_args[@]}" -fsSL -X POST -H "Authorization: $auth_header" "$seed_url/api/v1/sync/pull" -o "$DATA_DIR/cluster/snapshot.json"
 }
 
 apply_snapshot() {
@@ -800,7 +830,9 @@ check_seed_reachable() {
     return
   fi
   require_command curl
-  if ! curl -fsS --max-time 10 "$seed_url/healthz" >/dev/null; then
+  local -a curl_args
+  mapfile -t curl_args < <(seed_curl_common_args)
+  if ! curl "${curl_args[@]}" -fsS --max-time 10 "$seed_url/healthz" >/dev/null; then
     abort "Unable to reach seed backend at $seed_url. Verify connectivity before retrying."
   fi
 }
