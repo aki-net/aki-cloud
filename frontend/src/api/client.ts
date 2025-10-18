@@ -23,6 +23,10 @@ import {
   DomainDNSRecord,
   CreateDNSRecordPayload,
   UpdateDNSRecordPayload,
+  BackupStatus,
+  BackupDescriptor,
+  BackupRunResult,
+  BackupRestoreResult,
 } from "../types";
 
 const resolveApiBase = (): string => {
@@ -310,6 +314,94 @@ export const extensionsApi = {
       "/admin/searchbots/usage",
     );
     return res.data;
+  },
+};
+
+export const backups = {
+  status: async (): Promise<BackupStatus> => {
+    const res = await client.get("/admin/backups/status");
+    const data = res.data as any;
+    return {
+      enabled: Boolean(data?.enabled),
+      hasCredentials: Boolean(data?.has_credentials),
+      running: Boolean(data?.running),
+      lastRunStartedAt: data?.last_run_started_at || undefined,
+      lastRunCompletedAt: data?.last_run_completed_at || undefined,
+      lastResult: data?.last_result || undefined,
+      lastError: data?.last_error || undefined,
+      lastBackupName: data?.last_backup_name || undefined,
+      nextRunAt: data?.next_run_at || undefined,
+      frequency: data?.frequency ?? "",
+      include: Array.isArray(data?.include)
+        ? (data.include as unknown[])
+            .map((item) => (typeof item === "string" ? item : String(item)))
+        : [],
+    };
+  },
+
+  list: async (): Promise<BackupDescriptor[]> => {
+    const res = await client.get<any[]>("/admin/backups");
+    return (res.data || []).map((item) => ({
+      name: item?.name ?? "",
+      sizeBytes: Number(item?.size_bytes ?? 0),
+      createdAt: item?.created_at ?? "",
+      includes: Array.isArray(item?.includes)
+        ? (item.includes as unknown[]).map((entry) =>
+            typeof entry === "string" ? entry : String(entry),
+          )
+        : undefined,
+    }));
+  },
+
+  run: async (payload: {
+    include?: string[];
+    force?: boolean;
+    reason?: string;
+  }): Promise<BackupRunResult> => {
+    const res = await client.post<any>("/admin/backups/run", payload ?? {});
+    const data = res.data ?? {};
+    return {
+      name: data.name ?? "",
+      uploaded: Boolean(data.uploaded),
+      includes: Array.isArray(data.includes)
+        ? (data.includes as unknown[]).map((entry) =>
+            typeof entry === "string" ? entry : String(entry),
+          )
+        : [],
+      sizeBytes: Number(data.size_bytes ?? 0),
+      startedAt: data.started_at || undefined,
+      completedAt: data.completed_at || undefined,
+    };
+  },
+
+  restore: async (payload: {
+    name: string;
+    include?: string[];
+    wipe?: {
+      domains?: boolean;
+      users?: boolean;
+      extensions?: boolean;
+      nodes?: boolean;
+      edge_health?: boolean;
+    };
+  }): Promise<BackupRestoreResult> => {
+    const res = await client.post<any>("/admin/backups/restore", payload);
+    const data = res.data ?? {};
+    return {
+      name: data.name ?? payload.name,
+      includes: Array.isArray(data.includes)
+        ? (data.includes as unknown[]).map((entry) =>
+            typeof entry === "string" ? entry : String(entry),
+          )
+        : [],
+      domains: Number(data.domains ?? 0),
+      users: Number(data.users ?? 0),
+      extensions: Boolean(data.extensions),
+      nodes: Number(data.nodes ?? 0),
+      edgeHealth: Number(data.edge_health ?? 0),
+      startedAt: data.started_at ?? "",
+      completedAt: data.completed_at ?? "",
+    };
   },
 };
 

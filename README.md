@@ -9,6 +9,7 @@ aki-cloud is a self-hostable, multi-node DNS + HTTP proxy control plane inspired
 - **HTTP proxy**: OpenResty with templated vhosts for proxied zones (`openresty/`).
 - **Frontend**: React + Vite single-page app (`frontend/`).
 - **Runtime**: Docker Compose; host networking for CoreDNS/OpenResty; persistent state in `./data`.
+- **Disaster recovery**: Per-node backup scheduler + Mega.nz uploader (`backend/internal/backup`).
 
 ## Repository layout
 
@@ -140,6 +141,14 @@ Data persistence: All state lives under `./data`. Keep regular backups of this d
 - **CoreDNS** listens only on declared NS IPs using host networking; config resides in `data/dns/Corefile` and zone files under `data/dns/zones/`.
 - **OpenResty** listens on non-NS IPs, with config in `data/openresty`. An inotify loop reloads NGINX when configs change. Auto-issued edge certificates live under `data/openresty/certs`, ACME challenges under `data/openresty/challenges`, and origin-pull client material under `data/openresty/origin-pull`.
 - **Frontend** is served by `nginx` (static build) on the host port specified in `.env`.
+
+## Disaster recovery backups
+
+- Configure the **Mega Backups** extension from the admin UI (`/extensions` → “Disaster Recovery Backups”). Per-node settings accept Mega.nz credentials, dataset toggles, retention, and schedule overrides. Credentials live alongside other extension state on disk; the API/UI only surface a “password set” hint for safety.
+- The backend scheduler (`backend/internal/backup`) produces gzipped JSON bundles containing at least domain state, TLS material, and optional datasets (users, extensions, infra, edge health). Bundles are uploaded to Mega under `/<ns_base_domain>/<ns_label>/<node_name>/`.
+- Manual `Run backup now` and `Restore` actions are available from the extension card. Restores default to wiping and repopulating domain state so a fresh node can be refilled without conflicts.
+- Status and history endpoints live under `/api/v1/admin/backups/*` (`GET /status`, `GET /`, `POST /run`, `POST /restore`). CLI operators can trigger a run with `curl -X POST /api/v1/admin/backups/run` using the admin JWT.
+- Local staging artefacts live under `data/backups/` and the scheduler tracks last-run metadata via `data/cluster/backups/status.json`. Retention limits are enforced on Mega after each successful upload.
 
 ## TLS automation
 

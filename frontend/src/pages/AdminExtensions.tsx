@@ -6,8 +6,15 @@ import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import Switch from '../components/ui/Switch';
 import PageHeader from '../components/PageHeader';
-import { Extension, SearchBotMetrics, WAFDefinition } from '../types';
-import { extensionsApi, waf as wafApi } from '../api/client';
+import {
+  Extension,
+  SearchBotMetrics,
+  WAFDefinition,
+  BackupStatus,
+  BackupDescriptor,
+  BackupRunResult,
+} from '../types';
+import { extensionsApi, waf as wafApi, backups as backupApi } from '../api/client';
 import './AdminExtensions.css';
 
 const EXTENSION_ICONS: Record<string, string> = {
@@ -15,6 +22,7 @@ const EXTENSION_ICONS: Record<string, string> = {
   random_server_headers: '🎲',
   placeholder_pages: '🪧',
   searchbot_logs: '🤖',
+  mega_backups: '💾',
 };
 
 const getExtensionIcon = (key: string) => EXTENSION_ICONS[key] ?? '🧩';
@@ -38,6 +46,513 @@ const formatUpdated = (value?: string) => {
   }
   return date.toLocaleString();
 };
+
+const BACKUP_DATASETS = [
+  { value: 'domains', label: 'Domains', required: true },
+  { value: 'users', label: 'Users' },
+  { value: 'extensions', label: 'Extensions' },
+  { value: 'nodes', label: 'Nodes' },
+  { value: 'edge_health', label: 'Edge health' },
+];
+
+type MegaNodeForm = {
+  name: string;
+  enabled: boolean;
+  username: string;
+  password: string;
+  passwordSet: boolean;
+  schedule: string;
+  include: string[];
+  retention: number;
+};
+
+type MegaConfigForm = {
+  include: string[];
+  scheduleDefault: string;
+  nodes: MegaNodeForm[];
+};
+
+function ensureDomains(list: string[]): string[] {
+  const set = new Set(list.map((item) => item.trim()).filter(Boolean));
+  set.add('domains');
+  return Array.from(set);
+}
+
+function parseMegaConfig(extension: Extension): MegaConfigForm {
+  const raw = (extension.config ?? {}) as Record<string, any>;
+  const include = ensureDomains(
+    Array.isArray(raw.include)
+      ? (raw.include as unknown[])
+          .map((item) => (typeof item === 'string' ? item : String(item)))
+      : ['domains'],
+  );
+  const scheduleDefault =
+    typeof raw.schedule_default === 'string' && raw.schedule_default.trim() !== ''
+      ? raw.schedule_default.trim()
+      : '24h';
+  const nodesRaw = (raw.nodes as Record<string, any>) ?? {};
+  const nodes: MegaNodeForm[] = Object.entries(nodesRaw).map(([name, value]) => {
+    const nodeConfig = (value ?? {}) as Record<string, any>;
+    const includeOverride = Array.isArray(nodeConfig.include)
+      ? (nodeConfig.include as unknown[])
+          .map((item) => (typeof item === 'string' ? item : String(item)))
+      : include;
+    let retention = 14;
+    if (typeof nodeConfig.retention === 'number') {
+      retention = nodeConfig.retention;
+    } else if (
+      typeof nodeConfig.retention === 'string' &&
+      Number.isFinite(Number.parseInt(nodeConfig.retention, 10))
+    ) {
+      retention = Number.parseInt(nodeConfig.retention, 10);
+    }
+    return {
+      name,
+      enabled:
+        typeof nodeConfig.enabled === 'boolean' ? nodeConfig.enabled : extension.enabled,
+      username:
+        typeof nodeConfig.username === 'string' ? nodeConfig.username : '',
+      password: '',
+      passwordSet: Boolean(nodeConfig.password_set),
+      schedule:
+        typeof nodeConfig.schedule === 'string' ? nodeConfig.schedule.trim() : '',
+      include: ensureDomains(includeOverride),
+      retention: retention > 0 ? retention : 14,
+    };
+  });
+  if (nodes.length === 0) {
+    nodes.push({
+      name: 'node-1',
+      enabled: extension.enabled,
+      username: '',
+      password: '',
+      passwordSet: false,
+      schedule: '',
+      include,
+      retention: 14,
+    });
+  }
+  return {
+    include,
+    scheduleDefault,
+    nodes,
+  };
+}
+
+function MegaBackupControls({
+  extension,
+  onReload,
+}: {
+  extension: Extension;
+  onReload: () => void;
+}) {
+  const [form, setForm] = useState<MegaConfigForm>(() => parseMegaConfig(extension));
+  const [status, setStatus] = useState<BackupStatus | null>(null);
+  const [history, setHistory] = useState<BackupDescriptor[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [runLoading, setRunLoading] = useState(false);
+  const [restoreLoading, setRestoreLoading] = useState<string | null>(null);
+  const [newNode, setNewNode] = useState('');
+
+  const refreshStatus = useCallback(async () => {
+    try {
+      setLoading(true);
+      const [statusRes, listRes] = await Promise.all([
+        backupApi.status(),
+        backupApi.list(),
+      ]);
+      setStatus(statusRes);
+      setHistory(listRes);
+    } catch (err: any) {
+      console.error('failed to load backup info', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    setForm(parseMegaConfig(extension));
+  }, [extension]);
+
+  useEffect(() => {
+    refreshStatus();
+  }, [refreshStatus]);
+
+  const updateNode = useCallback(
+    (name: string, patch: Partial<MegaNodeForm>) => {
+      setForm((prev) => ({
+        ...prev,
+        nodes: prev.nodes.map((node) =>
+          node.name === name ? { ...node, ...patch } : node,
+        ),
+      }));
+    },
+    [],
+  );
+
+  const toggleDataset = useCallback(
+    (target: 'global' | string, dataset: string, checked: boolean) => {
+      setForm((prev) => {
+        if (target === 'global') {
+          const include = new Set(prev.include);
+          if (checked) {
+            include.add(dataset);
+          } else if (dataset !== 'domains') {
+            include.delete(dataset);
+          }
+          return { ...prev, include: ensureDomains(Array.from(include)) };
+        }
+        return {
+          ...prev,
+          nodes: prev.nodes.map((node) => {
+            if (node.name !== target) {
+              return node;
+            }
+            const include = new Set(node.include);
+            if (checked) {
+              include.add(dataset);
+            } else if (dataset !== 'domains') {
+              include.delete(dataset);
+            }
+            return { ...node, include: ensureDomains(Array.from(include)) };
+          }),
+        };
+      });
+    },
+    [],
+  );
+
+  const handleSave = useCallback(async () => {
+    try {
+      setSaving(true);
+      const payload: Record<string, unknown> = {
+        include: ensureDomains(form.include),
+        schedule_default: form.scheduleDefault.trim() || '24h',
+      };
+      const nodePayload: Record<string, unknown> = {};
+      form.nodes.forEach((node) => {
+        const nodeConfig: Record<string, unknown> = {
+          enabled: node.enabled,
+          username: node.username.trim(),
+          include: ensureDomains(node.include),
+          retention: node.retention,
+        };
+        if (node.schedule.trim() !== '') {
+          nodeConfig.schedule = node.schedule.trim();
+        }
+        if (node.password.trim() !== '') {
+          nodeConfig.password = node.password.trim();
+        }
+        nodePayload[node.name] = nodeConfig;
+      });
+      payload.nodes = nodePayload;
+      await extensionsApi.update(extension.key, { config: payload });
+      toast.success('Backup settings saved');
+      onReload();
+      // Clear password fields after successful save
+      setForm((prev) => ({
+        ...prev,
+        nodes: prev.nodes.map((node) => ({ ...node, password: '' })),
+      }));
+    } catch (err: any) {
+      console.error('failed to save backup settings', err);
+      toast.error(err?.response?.data?.error || 'Failed to save backup settings');
+    } finally {
+      setSaving(false);
+    }
+  }, [extension.key, form, onReload]);
+
+  const handleRunBackup = useCallback(async () => {
+    try {
+      setRunLoading(true);
+      const result: BackupRunResult = await backupApi.run({});
+      toast.success(`Backup ${result.name || 'completed'}`);
+      await refreshStatus();
+    } catch (err: any) {
+      console.error('backup run failed', err);
+      toast.error(err?.response?.data?.error || 'Backup run failed');
+    } finally {
+      setRunLoading(false);
+    }
+  }, [refreshStatus]);
+
+  const handleRestore = useCallback(
+    async (name: string) => {
+      if (!window.confirm(`Restore backup ${name}? This will overwrite datasets on this node.`)) {
+        return;
+      }
+      try {
+        setRestoreLoading(name);
+        await backupApi.restore({
+          name,
+          include: ['domains'],
+          wipe: { domains: true },
+        });
+        toast.success('Backup restored');
+        await refreshStatus();
+      } catch (err: any) {
+        console.error('restore failed', err);
+        toast.error(err?.response?.data?.error || 'Restore failed');
+      } finally {
+        setRestoreLoading(null);
+      }
+    },
+    [refreshStatus],
+  );
+
+  const addNode = useCallback(() => {
+    const trimmed = newNode.trim();
+    if (!trimmed) {
+      return;
+    }
+    if (form.nodes.some((node) => node.name === trimmed)) {
+      toast.error('Node already configured');
+      return;
+    }
+    setForm((prev) => ({
+      ...prev,
+      nodes: [
+        ...prev.nodes,
+        {
+          name: trimmed,
+          enabled: true,
+          username: '',
+          password: '',
+          passwordSet: false,
+          schedule: '',
+          include: ensureDomains(prev.include),
+          retention: 14,
+        },
+      ],
+    }));
+    setNewNode('');
+  }, [form.nodes, form.include, newNode]);
+
+  return (
+    <div className="backup-panel">
+      <div className="backup-status">
+        <div className="backup-status-row">
+          <span className="backup-status-label">Service status</span>
+          <span className="backup-status-value">
+            {status?.enabled ? 'Enabled' : 'Disabled'}
+            {status?.running && ' · running'}
+          </span>
+        </div>
+        <div className="backup-status-row">
+          <span className="backup-status-label">Last backup</span>
+          <span className="backup-status-value">
+            {status?.lastBackupName
+              ? `${status.lastBackupName} · ${formatUpdated(status.lastRunCompletedAt)}`
+              : 'Never'}
+          </span>
+        </div>
+        <div className="backup-status-row">
+          <span className="backup-status-label">Next run</span>
+          <span className="backup-status-value">
+            {status?.nextRunAt ? formatUpdated(status.nextRunAt) : 'Not scheduled'}
+          </span>
+        </div>
+        {status?.lastError && (
+          <div className="backup-status-row error">
+            <span className="backup-status-label">Last error</span>
+            <span className="backup-status-value">{status.lastError}</span>
+          </div>
+        )}
+        <div className="backup-status-actions">
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={runLoading}
+            onClick={handleRunBackup}
+          >
+            {runLoading ? 'Running…' : 'Run backup now'}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={refreshStatus}
+            disabled={loading}
+          >
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      <div className="backup-history">
+        <h4>Recent backups</h4>
+        {history.length === 0 ? (
+          <p className="backup-history-empty">No backups uploaded yet.</p>
+        ) : (
+          <ul>
+            {history.slice(0, 5).map((item) => (
+              <li key={item.name} className="backup-history-item">
+                <div>
+                  <strong>{item.name}</strong>
+                  <div className="backup-history-meta">
+                    {formatUpdated(item.createdAt)} ·{' '}
+                    {item.sizeBytes ? `${(item.sizeBytes / (1024 * 1024)).toFixed(1)} MB` : 'unknown size'}
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleRestore(item.name)}
+                  disabled={restoreLoading === item.name}
+                >
+                  {restoreLoading === item.name ? 'Restoring…' : 'Restore'}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="backup-config">
+        <h4>Backup configuration</h4>
+        <div className="backup-config-grid">
+          <label>
+            Default schedule
+            <input
+              type="text"
+              value={form.scheduleDefault}
+              onChange={(event) =>
+                setForm((prev) => ({
+                  ...prev,
+                  scheduleDefault: event.target.value,
+                }))
+              }
+              placeholder="24h"
+            />
+          </label>
+          <div className="backup-datasets">
+            <span>Default datasets</span>
+            <div className="backup-dataset-list">
+              {BACKUP_DATASETS.map((dataset) => (
+                <label key={`global-${dataset.value}`} className="backup-dataset-item">
+                  <input
+                    type="checkbox"
+                    checked={form.include.includes(dataset.value)}
+                    onChange={(event) =>
+                      toggleDataset('global', dataset.value, event.target.checked)
+                    }
+                    disabled={dataset.required}
+                  />
+                  {dataset.label}
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="backup-nodes">
+          <div className="backup-nodes-header">
+            <h5>Per-node overrides</h5>
+            <div className="backup-add-node">
+              <input
+                type="text"
+                placeholder="node name"
+                value={newNode}
+                onChange={(event) => setNewNode(event.target.value)}
+              />
+              <Button variant="ghost" size="sm" onClick={addNode}>
+                Add node
+              </Button>
+            </div>
+          </div>
+          {form.nodes.map((node) => (
+            <Card key={node.name} className="backup-node-card">
+              <div className="backup-node-header">
+                <div>
+                  <strong>{node.name}</strong>
+                  {node.passwordSet && <span className="backup-password-flag">Password set</span>}
+                </div>
+                <div>
+                  <Switch
+                    checked={node.enabled}
+                    onChange={(checked) => updateNode(node.name, { enabled: checked })}
+                  />
+                </div>
+              </div>
+              <div className="backup-node-grid">
+                <label>
+                  Username
+                  <input
+                    type="text"
+                    value={node.username}
+                    onChange={(event) =>
+                      updateNode(node.name, { username: event.target.value })
+                    }
+                    placeholder="mega@example.com"
+                  />
+                </label>
+                <label>
+                  Password
+                  <input
+                    type="password"
+                    value={node.password}
+                    onChange={(event) =>
+                      updateNode(node.name, { password: event.target.value })
+                    }
+                    placeholder={node.passwordSet ? 'Update to rotate secret' : 'Required'}
+                  />
+                </label>
+                <label>
+                  Schedule override
+                  <input
+                    type="text"
+                    value={node.schedule}
+                    onChange={(event) =>
+                      updateNode(node.name, { schedule: event.target.value })
+                    }
+                    placeholder={form.scheduleDefault}
+                  />
+                </label>
+                <label>
+                  Retention (backups to keep)
+                  <input
+                    type="number"
+                    min={1}
+                    value={node.retention}
+                    onChange={(event) =>
+                      updateNode(node.name, {
+                        retention: Number.parseInt(event.target.value, 10) || 1,
+                      })
+                    }
+                  />
+                </label>
+              </div>
+              <div className="backup-datasets">
+                <span>Datasets</span>
+                <div className="backup-dataset-list">
+                  {BACKUP_DATASETS.map((dataset) => (
+                    <label key={`${node.name}-${dataset.value}`} className="backup-dataset-item">
+                      <input
+                        type="checkbox"
+                        checked={node.include.includes(dataset.value)}
+                        onChange={(event) =>
+                          toggleDataset(node.name, dataset.value, event.target.checked)
+                        }
+                        disabled={dataset.required}
+                      />
+                      {dataset.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+
+        <div className="backup-config-actions">
+          <Button variant="primary" size="sm" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving…' : 'Save settings'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function ExtensionsHub() {
   const [extensions] = useState([
@@ -127,6 +642,32 @@ function ExtensionsHub() {
 function renderExtensionMeta(ext: Extension) {
   const config = ext.config || {};
   switch (ext.key) {
+    case 'mega_backups': {
+      const include = Array.isArray(config.include)
+        ? (config.include as unknown[])
+            .map((item) => (typeof item === 'string' ? item : String(item)))
+            .join(', ')
+        : 'domains';
+      const schedule =
+        typeof config.schedule_default === 'string'
+          ? config.schedule_default
+          : '24h';
+      const nodes = config.nodes as Record<string, any> | undefined;
+      return (
+        <ul className="extension-meta">
+          <li>
+            <strong>Default schedule:</strong> {schedule}
+          </li>
+          <li>
+            <strong>Default datasets:</strong> {include || 'domains'}
+          </li>
+          <li>
+            <strong>Configured nodes:</strong>{' '}
+            {nodes ? Object.keys(nodes).length : 0}
+          </li>
+        </ul>
+      );
+    }
     case 'edge_cache': {
       const path = typeof config.path === 'string' ? config.path : '—';
       const zone = typeof config.zone_name === 'string' ? config.zone_name : '—';
@@ -359,7 +900,14 @@ function SystemExtensions() {
 
               <p className="extension-description">{ext.description}</p>
 
-              {meta}
+              {ext.key === 'mega_backups' ? (
+                <>
+                  {meta}
+                  <MegaBackupControls extension={ext} onReload={loadExtensions} />
+                </>
+              ) : (
+                meta
+              )}
 
               <div className="extension-footer">
                 <div className="extension-updated">

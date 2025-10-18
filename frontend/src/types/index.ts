@@ -380,6 +380,48 @@ export interface Extension {
   metrics?: Record<string, unknown> | SearchBotMetrics;
 }
 
+export interface BackupStatus {
+  enabled: boolean;
+  hasCredentials: boolean;
+  running: boolean;
+  lastRunStartedAt?: string;
+  lastRunCompletedAt?: string;
+  lastResult?: string;
+  lastError?: string;
+  lastBackupName?: string;
+  nextRunAt?: string;
+  frequency: string;
+  include: string[];
+}
+
+export interface BackupDescriptor {
+  name: string;
+  sizeBytes: number;
+  createdAt: string;
+  includes?: string[];
+}
+
+export interface BackupRunResult {
+  name: string;
+  uploaded: boolean;
+  includes: string[];
+  sizeBytes: number;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface BackupRestoreResult {
+  name: string;
+  includes: string[];
+  domains: number;
+  users: number;
+  extensions: boolean;
+  nodes: number;
+  edgeHealth: number;
+  startedAt: string;
+  completedAt: string;
+}
+
 export interface DomainOverview {
   domain: string;
   owner_id: string;

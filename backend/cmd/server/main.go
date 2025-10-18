@@ -12,6 +12,7 @@ import (
 
 	"aki-cloud/backend/internal/api"
 	"aki-cloud/backend/internal/auth"
+	"aki-cloud/backend/internal/backup"
 	"aki-cloud/backend/internal/config"
 	"aki-cloud/backend/internal/extensions"
 	"aki-cloud/backend/internal/health"
@@ -48,6 +49,7 @@ func main() {
 	extSvc := extensions.New(st, cfg.NodeID)
 	whoisSvc := whois.New(15 * time.Second)
 	searchBotSvc := searchbot.New(cfg.NodeID)
+	var backupSvc *backup.Service
 	if extSvc != nil {
 		if extCfg, err := extSvc.SearchBotConfig(); err != nil {
 			log.Printf("searchbot: failed to load runtime config: %v", err)
@@ -71,6 +73,11 @@ func main() {
 				log.Printf("searchbot: failed to apply runtime config: %v", err)
 			}
 		}
+		if svc, err := backup.New(cfg, st, extSvc); err != nil {
+			log.Printf("backup: unable to initialise service: %v", err)
+		} else {
+			backupSvc = svc
+		}
 	}
 
 	healthMonitor := health.New(st, infraCtl, orch, cfg.NodeID, cfg.HealthInterval, cfg.HealthDialTimeout, cfg.HealthFailureThreshold, cfg.HealthFailureDecay)
@@ -86,6 +93,7 @@ func main() {
 		Extensions:   extSvc,
 		Whois:        whoisSvc,
 		SearchBot:    searchBotSvc,
+		Backups:      backupSvc,
 	}
 
 	server.RefreshSearchBotConfig()
@@ -121,6 +129,9 @@ func main() {
 	defer stop()
 
 	searchBotSvc.StartGoogleRangeUpdater(ctx, 24*time.Hour)
+	if backupSvc != nil {
+		backupSvc.Start(ctx)
+	}
 
 	go func(ctx context.Context) {
 		if server.SyncLocalNodeCapabilities(context.Background()) {

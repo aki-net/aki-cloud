@@ -325,6 +325,26 @@ func New(st *store.Store, nodeID string) *Service {
 				},
 			},
 		},
+		models.ExtensionMegaBackups: {
+			Key:            models.ExtensionMegaBackups,
+			Name:           "Disaster Recovery Backups",
+			Description:    "Upload per-node backups to Mega.nz for rapid rebuilds and cold standby scenarios.",
+			Category:       "Resilience",
+			Scope:          models.ExtensionScopeGlobal,
+			DefaultEnabled: false,
+			DefaultConfig: map[string]interface{}{
+				"include":          []interface{}{"domains"},
+				"schedule_default": "24h",
+				"nodes":            map[string]interface{}{},
+			},
+			Actions: []Action{
+				{
+					Key:         "run_now",
+					Label:       "Run Backup",
+					Description: "Generate and upload a backup for this node immediately.",
+				},
+			},
+		},
 	}
 	return &Service{
 		store:       st,
@@ -382,7 +402,11 @@ func (s *Service) UpdateGlobal(key string, enabled *bool, config map[string]inte
 			updatedState.Enabled = *enabled
 		}
 		if config != nil {
-			updatedState.Config = mergeConfig(def.DefaultConfig, config)
+			if def.Key == models.ExtensionMegaBackups {
+				updatedState.Config = mergeMegaBackupConfig(updatedState.Config, config, def.DefaultConfig)
+			} else {
+				updatedState.Config = mergeConfig(def.DefaultConfig, config)
+			}
 		}
 		updatedState.UpdatedAt = time.Now().UTC()
 		updatedState.UpdatedBy = updatedBy
@@ -874,6 +898,161 @@ func mergeConfig(defaults, overrides map[string]interface{}) map[string]interfac
 	for k, v := range overrides {
 		out[k] = v
 	}
+	return out
+}
+
+func mergeMegaBackupConfig(current, updates, defaults map[string]interface{}) map[string]interface{} {
+	base := make(map[string]interface{})
+	mergeGenericMap(base, defaults)
+	mergeGenericMap(base, current)
+	if updates == nil {
+		return base
+	}
+	if inc, ok := updates["include"]; ok {
+		base["include"] = mergeStringSet(inc, base["include"])
+	}
+	if sched, ok := updates["schedule_default"].(string); ok {
+		base["schedule_default"] = strings.TrimSpace(sched)
+	}
+	if nodesRaw, ok := updates["nodes"].(map[string]interface{}); ok {
+		existing := make(map[string]interface{})
+		if prev, ok := base["nodes"].(map[string]interface{}); ok {
+			existing = cloneGenericMap(prev)
+		}
+		for node, payload := range nodesRaw {
+			nodeUpdate, ok := payload.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			existingNode := map[string]interface{}{}
+			if prevNode, ok := existing[node].(map[string]interface{}); ok {
+				existingNode = cloneGenericMap(prevNode)
+			}
+			existing[node] = mergeMegaBackupNode(existingNode, nodeUpdate)
+		}
+		base["nodes"] = existing
+	}
+	return base
+}
+
+func mergeMegaBackupNode(current, updates map[string]interface{}) map[string]interface{} {
+	out := cloneGenericMap(current)
+	passwordProvided := false
+	for key, value := range updates {
+		switch strings.ToLower(key) {
+		case "password":
+			passwordProvided = true
+			if str, ok := value.(string); ok {
+				trimmed := strings.TrimSpace(str)
+				if trimmed == "" {
+					delete(out, "password")
+				} else {
+					out["password"] = trimmed
+				}
+			}
+		case "include":
+			out["include"] = mergeStringSet(value, out["include"])
+		case "schedule":
+			if str, ok := value.(string); ok {
+				out[key] = strings.TrimSpace(str)
+			}
+		default:
+			out[key] = value
+		}
+	}
+	if !passwordProvided {
+		if pwd, ok := current["password"]; ok {
+			out["password"] = pwd
+		}
+	}
+	return out
+}
+
+func mergeGenericMap(dst map[string]interface{}, src map[string]interface{}) {
+	if src == nil {
+		return
+	}
+	for k, v := range src {
+		dst[k] = cloneValue(v)
+	}
+}
+
+func cloneGenericMap(src map[string]interface{}) map[string]interface{} {
+	if src == nil {
+		return map[string]interface{}{}
+	}
+	dup := make(map[string]interface{}, len(src))
+	for k, v := range src {
+		dup[k] = cloneValue(v)
+	}
+	return dup
+}
+
+func cloneValue(v interface{}) interface{} {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		return cloneGenericMap(val)
+	case []interface{}:
+		dup := make([]interface{}, len(val))
+		for i := range val {
+			dup[i] = cloneValue(val[i])
+		}
+		return dup
+	case []string:
+		dup := make([]string, len(val))
+		copy(dup, val)
+		return dup
+	default:
+		return val
+	}
+}
+
+func mergeStringSet(value interface{}, existing interface{}) []string {
+	var base []string
+	if existing != nil {
+		switch cur := existing.(type) {
+		case []string:
+			base = append(base, cur...)
+		case []interface{}:
+			for _, item := range cur {
+				if str, ok := item.(string); ok {
+					base = append(base, strings.TrimSpace(str))
+				}
+			}
+		}
+	}
+	set := make(map[string]struct{}, len(base))
+	for _, item := range base {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			set[trimmed] = struct{}{}
+		}
+	}
+	appendFrom := func(vals []string) {
+		for _, item := range vals {
+			if trimmed := strings.TrimSpace(item); trimmed != "" {
+				set[trimmed] = struct{}{}
+			}
+		}
+	}
+	switch vals := value.(type) {
+	case []string:
+		appendFrom(vals)
+	case []interface{}:
+		temp := make([]string, 0, len(vals))
+		for _, item := range vals {
+			if str, ok := item.(string); ok {
+				temp = append(temp, str)
+			}
+		}
+		appendFrom(temp)
+	case string:
+		appendFrom([]string{vals})
+	}
+	out := make([]string, 0, len(set))
+	for item := range set {
+		out = append(out, item)
+	}
+	sort.Strings(out)
 	return out
 }
 

@@ -21,6 +21,7 @@ const (
 	ExtensionPlaceholderPages  = "placeholder_pages"
 	ExtensionVanityNameServers = "vanity_nameservers"
 	ExtensionSearchBotLogs     = "searchbot_logs"
+	ExtensionMegaBackups       = "mega_backups"
 )
 
 // ExtensionState persists runtime configuration for an extension.

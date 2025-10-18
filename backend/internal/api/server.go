@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"aki-cloud/backend/internal/auth"
+	"aki-cloud/backend/internal/backup"
 	"aki-cloud/backend/internal/config"
 	"aki-cloud/backend/internal/extensions"
 	"aki-cloud/backend/internal/infra"
@@ -55,6 +56,7 @@ type Server struct {
 	Extensions      *extensions.Service
 	Whois           *whois.Service
 	SearchBot       *searchbot.Service
+	Backups         *backup.Service
 	edgeReconcileMu sync.Mutex
 }
 
@@ -558,6 +560,13 @@ func (s *Server) Routes() http.Handler {
 				r.Put("/extensions/{key}", s.handleUpdateExtension)
 				r.Post("/extensions/{key}/actions/{action}", s.handleExtensionAction)
 				r.Get("/searchbots/usage", s.handleAdminSearchBotUsage)
+
+				r.Route("/backups", func(r chi.Router) {
+					r.Get("/status", s.handleBackupStatus)
+					r.Get("/", s.handleListBackups)
+					r.Post("/run", s.handleRunBackup)
+					r.Post("/restore", s.handleRestoreBackup)
+				})
 
 				r.Post("/ops/rebuild", s.handleRebuild)
 			})
@@ -2931,8 +2940,209 @@ func (s *Server) handleExtensionAction(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusAccepted, map[string]string{"status": "cleared"})
 			return
 		}
+	case models.ExtensionMegaBackups:
+		if action == "run_now" {
+			if s.Backups == nil {
+				writeError(w, http.StatusNotImplemented, "backup service unavailable")
+				return
+			}
+			result, err := s.Backups.Trigger(r.Context(), backup.RunRequest{
+				Force: true,
+			})
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusAccepted, runResultDTO(result))
+			return
+		}
 	}
 	writeError(w, http.StatusNotImplemented, "action handler not implemented")
+}
+
+type backupRunPayload struct {
+	Include []string `json:"include,omitempty"`
+	Force   bool     `json:"force,omitempty"`
+	Reason  string   `json:"reason,omitempty"`
+}
+
+type backupRestorePayload struct {
+	Name    string   `json:"name"`
+	Include []string `json:"include,omitempty"`
+	Wipe    struct {
+		Domains    bool `json:"domains,omitempty"`
+		Users      bool `json:"users,omitempty"`
+		Extensions bool `json:"extensions,omitempty"`
+		Nodes      bool `json:"nodes,omitempty"`
+		Edge       bool `json:"edge_health,omitempty"`
+	} `json:"wipe,omitempty"`
+}
+
+type backupStatusDTO struct {
+	Enabled        bool     `json:"enabled"`
+	HasCredentials bool     `json:"has_credentials"`
+	Running        bool     `json:"running"`
+	LastRunStarted string   `json:"last_run_started_at,omitempty"`
+	LastRunEnded   string   `json:"last_run_completed_at,omitempty"`
+	LastResult     string   `json:"last_result,omitempty"`
+	LastError      string   `json:"last_error,omitempty"`
+	LastBackup     string   `json:"last_backup_name,omitempty"`
+	NextRunDue     string   `json:"next_run_at,omitempty"`
+	Frequency      string   `json:"frequency"`
+	Include        []string `json:"include"`
+}
+
+type backupRunDTO struct {
+	Name        string   `json:"name"`
+	Uploaded    bool     `json:"uploaded"`
+	Includes    []string `json:"includes"`
+	SizeBytes   int64    `json:"size_bytes"`
+	StartedAt   string   `json:"started_at"`
+	CompletedAt string   `json:"completed_at"`
+}
+
+type backupRestoreDTO struct {
+	Name        string   `json:"name"`
+	Includes    []string `json:"includes"`
+	Domains     int      `json:"domains"`
+	Users       int      `json:"users"`
+	Extensions  bool     `json:"extensions"`
+	Nodes       int      `json:"nodes"`
+	EdgeHealth  int      `json:"edge_health"`
+	StartedAt   string   `json:"started_at"`
+	CompletedAt string   `json:"completed_at"`
+}
+
+func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
+	if s.Backups == nil {
+		writeError(w, http.StatusNotImplemented, "backup service unavailable")
+		return
+	}
+	status, err := s.Backups.Status()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	dto := backupStatusDTO{
+		Enabled:        status.Enabled,
+		HasCredentials: status.HasCredentials,
+		Running:        status.Running,
+		LastResult:     status.LastResult,
+		LastError:      status.LastError,
+		LastBackup:     status.LastBackupName,
+		NextRunDue:     formatTimePtr(status.NextRunDue),
+		Frequency:      status.Frequency,
+		Include:        status.Include,
+	}
+	if status.LastRunStarted != nil {
+		dto.LastRunStarted = status.LastRunStarted.UTC().Format(time.RFC3339)
+	}
+	if status.LastRunFinished != nil {
+		dto.LastRunEnded = status.LastRunFinished.UTC().Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusOK, dto)
+}
+
+func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
+	if s.Backups == nil {
+		writeError(w, http.StatusNotImplemented, "backup service unavailable")
+		return
+	}
+	list, err := s.Backups.List(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) handleRunBackup(w http.ResponseWriter, r *http.Request) {
+	if s.Backups == nil {
+		writeError(w, http.StatusNotImplemented, "backup service unavailable")
+		return
+	}
+	var payload backupRunPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil && err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	result, err := s.Backups.Trigger(r.Context(), backup.RunRequest{
+		Include: payload.Include,
+		Force:   payload.Force,
+		Reason:  payload.Reason,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, runResultDTO(result))
+}
+
+func (s *Server) handleRestoreBackup(w http.ResponseWriter, r *http.Request) {
+	if s.Backups == nil {
+		writeError(w, http.StatusNotImplemented, "backup service unavailable")
+		return
+	}
+	var payload backupRestorePayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	if strings.TrimSpace(payload.Name) == "" {
+		writeError(w, http.StatusBadRequest, "name required")
+		return
+	}
+	result, err := s.Backups.Restore(r.Context(), backup.RestoreRequest{
+		BackupName:  payload.Name,
+		Include:     payload.Include,
+		WipeDomains: payload.Wipe.Domains,
+		WipeUsers:   payload.Wipe.Users,
+		WipeExt:     payload.Wipe.Extensions,
+		WipeNodes:   payload.Wipe.Nodes,
+		WipeEdge:    payload.Wipe.Edge,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, restoreResultDTO(payload.Name, result))
+}
+
+func runResultDTO(res backup.RunResult) backupRunDTO {
+	dto := backupRunDTO{
+		Name:      res.BackupName,
+		Uploaded:  res.Uploaded,
+		Includes:  res.Includes,
+		SizeBytes: res.Bytes,
+	}
+	if !res.StartedAt.IsZero() {
+		dto.StartedAt = res.StartedAt.UTC().Format(time.RFC3339)
+	}
+	if !res.CompletedAt.IsZero() {
+		dto.CompletedAt = res.CompletedAt.UTC().Format(time.RFC3339)
+	}
+	return dto
+}
+
+func restoreResultDTO(name string, res backup.RestoreResult) backupRestoreDTO {
+	return backupRestoreDTO{
+		Name:        name,
+		Includes:    res.RestoredDatasets,
+		Domains:     res.Domains,
+		Users:       res.Users,
+		Extensions:  res.Extensions,
+		Nodes:       res.Nodes,
+		EdgeHealth:  res.EdgeHealth,
+		StartedAt:   res.StartedAt.UTC().Format(time.RFC3339),
+		CompletedAt: res.CompletedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func formatTimePtr(t *time.Time) string {
+	if t == nil || t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 // RefreshSearchBotConfig synchronises the runtime search bot logger configuration.
@@ -2977,6 +3187,9 @@ func (s *Server) RefreshSearchBotConfig() {
 
 func extensionToDTO(ext extensions.Extension) extensionDTO {
 	clone := cloneConfig(ext.State.Config)
+	if ext.Definition.Key == models.ExtensionMegaBackups {
+		clone = sanitizeMegaBackupConfig(clone)
+	}
 	dto := extensionDTO{
 		Key:         ext.Definition.Key,
 		Name:        ext.Definition.Name,
@@ -3502,6 +3715,40 @@ func cloneConfig(src map[string]interface{}) map[string]interface{} {
 		dup[k] = v
 	}
 	return dup
+}
+
+func sanitizeMegaBackupConfig(src map[string]interface{}) map[string]interface{} {
+	if src == nil {
+		return nil
+	}
+	out := cloneConfig(src)
+	nodesRaw, ok := src["nodes"].(map[string]interface{})
+	if !ok {
+		return out
+	}
+	clean := make(map[string]interface{}, len(nodesRaw))
+	for node, payload := range nodesRaw {
+		nodeMap, ok := payload.(map[string]interface{})
+		if !ok {
+			clean[node] = payload
+			continue
+		}
+		copyMap := make(map[string]interface{}, len(nodeMap)+1)
+		passwordSet := false
+		for key, value := range nodeMap {
+			if strings.EqualFold(key, "password") {
+				if str, ok := value.(string); ok && strings.TrimSpace(str) != "" {
+					passwordSet = true
+				}
+				continue
+			}
+			copyMap[key] = value
+		}
+		copyMap["password_set"] = passwordSet
+		clean[node] = copyMap
+	}
+	out["nodes"] = clean
+	return out
 }
 
 func (s *Server) handleReassignDomainEdge(w http.ResponseWriter, r *http.Request) {
