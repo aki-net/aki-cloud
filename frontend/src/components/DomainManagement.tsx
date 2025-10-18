@@ -2621,7 +2621,7 @@ const resolveWhois = (
             {nameservers.map((ns) => (
               <div key={ns.node_id} className="nameserver-item">
                 <span className="ns-fqdn mono" title={ns.fqdn}>
-                  {shortenNameserverLabel(ns.fqdn)}
+                  {ns.fqdn}
                 </span>
                 <button
                   className="ns-copy-btn"
