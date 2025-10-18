@@ -86,19 +86,34 @@
 }
 
 .table-cell-checkbox {
-  width: 40px;
-  padding: 12px 8px 12px 16px;
+  width: 40px !important;
+  max-width: 40px !important;
+  min-width: 40px !important;
+  padding: 12px 8px;
+  box-sizing: border-box;
 }
 
 .table-cell-checkbox--header {
-  width: auto;
-  padding-right: 16px;
+  width: 40px !important;
+  max-width: 40px !important;
+  min-width: 40px !important;
+  padding: 12px 8px;
+  box-sizing: border-box;
+}
+
+th.table-cell-checkbox,
+th.table-cell-checkbox--header,
+td.table-cell-checkbox {
+  width: 40px !important;
+  max-width: 40px !important;
+  min-width: 40px !important;
 }
 
 .table-selection-header {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  max-width: 24px;
 }
 
 .table-selection-label {

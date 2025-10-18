@@ -139,7 +139,6 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  width: 100%;
 }
 
 .domain-title {
@@ -178,6 +177,8 @@
 
 .table-row-parent:hover .domain-inline-actions,
 .domain-cell-parent:hover .domain-inline-actions,
+.domain-cell:hover .domain-inline-actions,
+.domain-header:hover .domain-inline-actions,
 .domain-inline-actions:focus-within {
   opacity: 1;
   pointer-events: auto;
@@ -203,7 +204,7 @@
   background: none;
   border: none;
   color: var(--color-text-tertiary);
-  font-size: 16px;
+  font-size: 12px;
   font-weight: 600;
   padding: 0;
   cursor: pointer;
@@ -274,15 +275,13 @@
 }
 
 .domain-relation-actions {
-  display: inline-flex;
+  display: none;
   gap: 4px;
-  opacity: 0;
-  transition: opacity 0.15s ease;
 }
 
 .domain-relation-entry:hover .domain-relation-actions,
 .domain-relation-entry:focus-within .domain-relation-actions {
-  opacity: 1;
+  display: inline-flex;
 }
 
 .domain-relation-action {
@@ -815,8 +814,8 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  min-width: 36px;
-  gap: 2px;
+  /* min-width: 36px; */
+  /* gap: 2px; */
 }
 
 .searchbot-count strong {

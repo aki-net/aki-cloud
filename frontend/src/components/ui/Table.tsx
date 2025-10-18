@@ -55,6 +55,12 @@ export default function Table<T>({
   return (
     <div className={clsx('table-container', className)}>
       <table className="table">
+        <colgroup>
+          {hasSelection && <col style={{ width: '40px' }} />}
+          {columns.map((column) => (
+            <col key={column.key} style={{ width: column.width }} />
+          ))}
+        </colgroup>
         <thead className="table-head">
           <tr>
             {hasSelection && (
@@ -74,7 +80,6 @@ export default function Table<T>({
               <th
                 key={column.key}
                 className="table-cell table-cell-header"
-                style={{ width: column.width }}
               >
                 <div className="table-header-content">
                   {column.header}

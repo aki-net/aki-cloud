@@ -2012,7 +2012,7 @@ const resolveWhois = (
       }
       const isAliasType = type === "alias";
       const labelText = isAliasType ? null : "Redirects:";
-      const icon = isAliasType ? null : "↗";
+      const icon = isAliasType ? null : "↑";
       return (
         <div
           className={`domain-relations-inline domain-relations-${type}`}
@@ -2020,7 +2020,6 @@ const resolveWhois = (
           {!isAliasType && (
             <span className="domain-relations-label">
               <span className="domain-relations-icon">{icon}</span>
-              {labelText}
             </span>
           )}
           <span className="domain-relations-items">
@@ -2029,7 +2028,7 @@ const resolveWhois = (
                 key={`${type}-${child.domain}`}
                 className="domain-relation-entry"
               >
-                {isAliasType && (
+                {isAliasType && index === 0 && (
                   <span className="domain-relation-prefix">+</span>
                 )}
                 <span className="domain-relation-name mono">
@@ -2182,14 +2181,14 @@ const resolveWhois = (
     key: "domain",
     header: "Domain",
     accessor: (row: DomainWithMeta) => renderDomainCell(row),
-    width: "21%",
+    width: isAdmin ? (viewMode !== "my" ? "21%" : "24%") : "27%",
   });
 
   columns.push({
     key: "nameservers",
     header: "Nameservers",
     accessor: (d: any) => renderNameserverCell(d),
-    width: "17%",
+    width: isAdmin ? (viewMode !== "my" ? "17%" : "20%") : "22%",
   });
 
   // Owner column - only for admin in all/orphaned mode
@@ -2211,6 +2210,7 @@ const resolveWhois = (
   }
 
   // Origin IP column - always present
+  const originIPWidth = isAdmin ? (viewMode !== "my" ? "13%" : "15%") : "17%";
   columns.push({
     key: "origin_ip",
     header: "Origin IP",
@@ -2267,14 +2267,14 @@ const resolveWhois = (
         </div>
       );
     },
-    width: "13%",
+    width: originIPWidth,
   });
 
   columns.push({
     key: "whois",
     header: "Renewal",
     accessor: (d: any) => renderWhoisCell(d),
-    width: "7%",
+    width: isAdmin ? "7%" : "8%",
   });
 
   // Proxy column - always present
@@ -2288,7 +2288,7 @@ const resolveWhois = (
         size="sm"
       />
     ),
-    width: "100px",
+    width: isAdmin ? "6%" : "7%",
     align: "center" as const,
   });
 
@@ -2306,7 +2306,7 @@ const resolveWhois = (
     key: "tls",
     header: "TLS",
     accessor: (d: any) => getTLSDisplay(d),
-    width: "7%",
+    width: isAdmin ? (viewMode !== "my" ? "7%" : "8%") : "8%",
     align: "center" as const,
   });
 
@@ -2314,7 +2314,7 @@ const resolveWhois = (
     key: "actions",
     header: "Actions",
     accessor: (d: any) => renderDomainActions(d),
-    width: "6%",
+    width: isAdmin ? (viewMode !== "my" ? "6%" : "7%") : "7%",
     align: "center" as const,
   });
 
