@@ -1993,6 +1993,8 @@ const resolveWhois = (
     const isAlias = meta.position === 'alias';
     const isRedirect = meta.position === 'redirect';
     const isParent = meta.position === 'parent';
+    const domainRole: DomainRole = (row.role ?? "primary") as DomainRole;
+    const canManageRelations = !isAlias && !isRedirect && domainRole === "primary";
     const hasChildren = (meta.aliasChildren.length > 0) || (meta.redirectChildren.length > 0);
     const domainRule = meta.domainRule;
     const pathRules = meta.pathRules ?? [];
@@ -2109,8 +2111,8 @@ const resolveWhois = (
               </Badge>
             )}
           </div>
-          {/* Only show action buttons for parent domains */}
-          {isParent && (
+          {/* Allow configuring relationships for every primary domain */}
+          {canManageRelations && (
             <div className="domain-inline-actions">
               <button
                 type="button"
@@ -2172,6 +2174,77 @@ const resolveWhois = (
   const selectionEnabled =
     viewMode === "my" ||
     (isAdmin && (viewMode === "all" || viewMode === "orphaned"));
+
+  const handleRowSelect = useCallback(
+    (id: string, selected: boolean) => {
+      if (!selectionEnabled) {
+        return;
+      }
+      setSelectedDomains((current) => {
+        const next = new Set(current);
+        if (selected) {
+          next.add(id);
+        } else {
+          next.delete(id);
+        }
+        return next;
+      });
+    },
+    [selectionEnabled],
+  );
+
+  const handleSelectAll = useCallback(
+    (selected: boolean) => {
+      if (!selectionEnabled) {
+        return;
+      }
+      if (selected) {
+        setSelectedDomains(new Set(tableData.map((d) => d.domain)));
+        return;
+      }
+      setSelectedDomains(new Set());
+    },
+    [selectionEnabled, tableData],
+  );
+
+  const rowClassName = useCallback(
+    (row: DomainWithMeta, index: number) => {
+      const meta = row.__meta;
+      const classes: string[] = [];
+
+      if (meta.position === "parent") {
+        classes.push("table-row-parent");
+      } else if (meta.position === "alias") {
+        classes.push("table-row-alias");
+      } else if (meta.position === "redirect") {
+        classes.push("table-row-redirect");
+      }
+
+      if (meta.familyId) {
+        classes.push("table-row-family");
+        if (typeof meta.familyIndex === "number") {
+          classes.push(`table-row-family-${meta.familyIndex}`);
+        }
+        if (meta.familyPosition) {
+          classes.push(`table-row-family-${meta.familyPosition}`);
+        }
+
+        const previous = index > 0 ? tableData[index - 1] : undefined;
+        const nextRow =
+          index + 1 < tableData.length ? tableData[index + 1] : undefined;
+
+        if (!previous || previous.__meta.familyId !== meta.familyId) {
+          classes.push("table-row-family-start");
+        }
+        if (!nextRow || nextRow.__meta.familyId !== meta.familyId) {
+          classes.push("table-row-family-end");
+        }
+      }
+
+      return classes.length > 0 ? classes.join(" ") : undefined;
+    },
+    [tableData],
+  );
 
   // Build unified columns array
   const columns: any[] = [];
@@ -2464,186 +2537,33 @@ const resolveWhois = (
             All Domains
             <span className="tab-count">{allDomains.length}</span>
           </button>
-      <button
-        className={`filter-tab ${viewMode === "orphaned" ? "active" : ""}`}
-        onClick={() => {
-          setViewMode("orphaned");
-          setSelectedDomains(new Set());
-        }}
-      >
-        Orphaned
-        <span className="tab-count">{orphanedCount}</span>
-      </button>
-    </div>
-  )}
+          <button
+            className={`filter-tab ${viewMode === "orphaned" ? "active" : ""}`}
+            onClick={() => {
+              setViewMode("orphaned");
+              setSelectedDomains(new Set());
+            }}
+          >
+            Orphaned
+            <span className="tab-count">{orphanedCount}</span>
+          </button>
+        </div>
+      )}
 
-      <div className="domains-table-group">
-        {(() => {
-          // Group table data by families
-          const familyGroups: DomainWithMeta[][] = [];
-          const processedDomains = new Set<string>();
-          
-          tableData.forEach((domain) => {
-            if (processedDomains.has(domain.domain)) return;
-            
-            const group: DomainWithMeta[] = [];
-            
-            // If it's a parent with children
-            if (domain.__meta.aliasChildren.length > 0 || domain.__meta.redirectChildren.length > 0) {
-              group.push(domain);
-              processedDomains.add(domain.domain);
-              
-              [...domain.__meta.aliasChildren, ...domain.__meta.redirectChildren].forEach(child => {
-                if (tableData.find(d => d.domain === child.domain)) {
-                  group.push(child);
-                  processedDomains.add(child.domain);
-                }
-              });
-            }
-            // If it's an alias or redirect that wasn't processed yet
-            else if (domain.__meta.position === 'alias' || domain.__meta.position === 'redirect') {
-              // Find its parent if exists in tableData
-              const parent = tableData.find(d => d.domain === domain.__meta.parentDomain);
-              if (parent && !processedDomains.has(parent.domain)) {
-                group.push(parent);
-                processedDomains.add(parent.domain);
-                
-                [...parent.__meta.aliasChildren, ...parent.__meta.redirectChildren].forEach(child => {
-                  if (tableData.find(d => d.domain === child.domain)) {
-                    group.push(child);
-                    processedDomains.add(child.domain);
-                  }
-                });
-              } else if (!parent || processedDomains.has(parent.domain)) {
-                // Orphaned alias/redirect or parent already processed
-                if (!processedDomains.has(domain.domain)) {
-                  group.push(domain);
-                  processedDomains.add(domain.domain);
-                }
-              }
-            }
-            // Standalone domain
-            else if (domain.__meta.position === 'standalone' || domain.__meta.position === 'parent') {
-              group.push(domain);
-              processedDomains.add(domain.domain);
-            }
-            
-            if (group.length > 0) {
-              familyGroups.push(group);
-            }
-          });
-          
-          if (loading) {
-            return (
-              <Card className="domains-card" padding="none">
-                <Table
-                  columns={columns}
-                  data={[]}
-                  keyExtractor={(d: DomainWithMeta) => d.domain}
-                  loading={true}
-                  emptyMessage="Loading domains..."
-                />
-              </Card>
-            );
-          }
-
-          if (familyGroups.length === 0) {
-            return (
-              <Card className="domains-card" padding="none">
-                <Table
-                  columns={columns}
-                  data={[]}
-                  keyExtractor={(d: DomainWithMeta) => d.domain}
-                  loading={false}
-                  emptyMessage="No domains found"
-                />
-              </Card>
-            );
-          }
-
-          return (
-            <>
-              {/* Main table header */}
-              <Card className="domains-card domains-header-card" padding="none">
-                <Table
-                  columns={columns}
-                  data={tableData}
-                  keyExtractor={(d: DomainWithMeta) => d.domain}
-                  selectedRows={selectionEnabled ? selectedDomains : undefined}
-                  onRowSelect={selectionEnabled ? () => {} : undefined}
-                  onSelectAll={
-                    selectionEnabled
-                      ? (selected) => {
-                          if (selected) {
-                            setSelectedDomains(new Set(tableData.map(d => d.domain)));
-                          } else {
-                            setSelectedDomains(new Set());
-                          }
-                        }
-                      : undefined
-                  }
-                  loading={false}
-                  emptyMessage=""
-                  selectionHeader="Checkbox"
-                />
-              </Card>
-              
-              {/* Domain groups without headers */}
-              {familyGroups.map((group, index) => (
-                <Card key={`group-${index}-${group[0]?.domain}`} className="domains-card domain-group-card domain-group-no-header" padding="none">
-                <Table
-                  columns={columns}
-                  data={group}
-                  keyExtractor={(d: DomainWithMeta) => d.domain}
-                  selectedRows={selectionEnabled ? selectedDomains : undefined}
-                  onRowSelect={
-                    selectionEnabled
-                      ? (id, selected) => {
-                          const newSelected = new Set(selectedDomains);
-                          if (selected) {
-                            newSelected.add(id);
-                          } else {
-                            newSelected.delete(id);
-                          }
-                          setSelectedDomains(newSelected);
-                        }
-                      : undefined
-                  }
-                  rowClassName={(row) => {
-                    const meta = row.__meta;
-                    const classes: string[] = [];
-
-                      // Add family color class only for parent rows
-                      const isParent = meta.position === 'parent';
-                      if (isParent && meta.familyIndex !== undefined) {
-                        classes.push(`table-row-family-${meta.familyIndex % 6}`);
-                        classes.push('table-row-parent');
-                      }
-
-                      // Add family member class for all related domains
-                      const isInFamily = meta.familyId && (
-                        meta.position === 'alias' ||
-                        meta.position === 'redirect' ||
-                        meta.aliasChildren.length > 0 ||
-                        meta.redirectChildren.length > 0
-                      );
-                      if (isInFamily) {
-                        classes.push('table-row-family-member');
-                      }
-
-                      return classes.length > 0 ? classes.join(' ') : undefined;
-                  }}
-                  loading={false}
-                  emptyMessage=""
-                  selectionHeader="Checkbox"
-                />
-                </Card>
-              ))}
-            </>
-          );
-        })()}
+      <div className="domains-table-wrapper">
+        <Table
+          columns={columns}
+          data={tableData}
+          keyExtractor={(d: DomainWithMeta) => d.domain}
+          selectedRows={selectionEnabled ? selectedDomains : undefined}
+          onRowSelect={selectionEnabled ? handleRowSelect : undefined}
+          onSelectAll={selectionEnabled ? handleSelectAll : undefined}
+          rowClassName={rowClassName}
+          loading={loading}
+          emptyMessage="No domains found"
+          className="domains-table"
+        />
       </div>
-
       {nameservers.length > 0 && (
         <Card className="nameservers-card" title="Nameservers">
           <div className="nameservers-list">

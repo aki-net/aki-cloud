@@ -4,122 +4,128 @@
   gap: 16px;
 }
 
-/* Group of domain tables */
-.domains-table-group {
+/* Unified domains table */
+.domains-table-wrapper {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
-/* Header card with just the table header */
-.domains-header-card {
-  background: var(--color-bg-secondary);
+.domains-table-wrapper .table-container {
+  overflow: hidden;
+  border-radius: var(--radius-xl);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  overflow: visible;
-}
-
-/* Hide tbody for header-only table */
-.domains-header-card tbody,
-.domains-header-card .table-body {
-  display: none !important;
-}
-
-/* Each domain group card */
-.domain-group-card {
   background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  overflow: visible;
-  position: relative;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
 }
 
-/* Hide header for group tables */
-.domain-group-no-header thead,
-.domain-group-no-header .table-header {
-  display: none !important;
-}
-
-/* Ensure consistent column widths across all tables */
-.domains-table-group table {
+.domains-table-wrapper .table {
   table-layout: fixed;
   width: 100%;
 }
 
-/* Column 1 - Checkbox */
-.domains-table-group th:nth-child(1),
-.domains-table-group td:nth-child(1) {
-  width: 5px !important;
-  max-width: 5px !important;
+.domains-table-wrapper .table-head {
+  background: var(--color-bg-tertiary);
 }
 
-/* Column 2 - Domain */
-.domains-table-group th:nth-child(2),
-.domains-table-group td:nth-child(2) {
-  width: 15% !important;
-  min-width: 150px;
+.domains-table-wrapper .table-cell {
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
-/* Column 3 - Nameservers */
-.domains-table-group th:nth-child(3),
-.domains-table-group td:nth-child(3) {
-  width: 10% !important;
-  min-width: 80px;
+.domains-table .table-row-family {
+  position: relative;
+  background-color: var(--family-tint-child, var(--color-bg-secondary));
+  --family-tint-parent: rgba(88, 101, 242, 0.16);
+  --family-tint-child: rgba(88, 101, 242, 0.08);
+  --family-border: rgba(88, 101, 242, 0.55);
 }
 
-/* Column 4 - Origin IP */
-.domains-table-group th:nth-child(4),
-.domains-table-group td:nth-child(4) {
-  width: 11% !important;
-  min-width: 110px;
+.domains-table .table-row-family.table-row-parent {
+  background-color: var(--family-tint-parent, var(--color-bg-secondary));
 }
 
-/* Column 5 - Renewal */
-.domains-table-group th:nth-child(5),
-.domains-table-group td:nth-child(5) {
-  width: 6% !important;
-  min-width: 60px;
+.domains-table .table-row-family.table-row-alias,
+.domains-table .table-row-family.table-row-redirect {
+  background-color: var(--family-tint-child, var(--color-bg-secondary));
 }
 
-/* Column 6 - Proxy */
-.domains-table-group th:nth-child(6),
-.domains-table-group td:nth-child(6) {
-  width: 7% !important;
-  min-width: 60px;
+.domains-table .table-row-family.table-row-family-single {
+  --family-tint-parent: transparent;
+  --family-tint-child: transparent;
+  --family-border: transparent;
+  background-color: var(--color-bg-secondary);
 }
 
-/* Column 7 - Edge */
-.domains-table-group th:nth-child(7),
-.domains-table-group td:nth-child(7) {
-  width: 10% !important;
-  min-width: 100px;
+.domains-table .table-row-family-0 {
+  --family-tint-parent: rgba(88, 101, 242, 0.16);
+  --family-tint-child: rgba(88, 101, 242, 0.08);
+  --family-border: rgba(88, 101, 242, 0.55);
 }
 
-/* Column 8 - TLS */
-.domains-table-group th:nth-child(8),
-.domains-table-group td:nth-child(8) {
-  width: 10% !important;
-  min-width: 90px;
+.domains-table .table-row-family-1 {
+  --family-tint-parent: rgba(56, 161, 105, 0.16);
+  --family-tint-child: rgba(56, 161, 105, 0.08);
+  --family-border: rgba(56, 161, 105, 0.5);
 }
 
-/* Column 9 - Actions */
-.domains-table-group th:nth-child(9),
-.domains-table-group td:nth-child(9) {
-  width: 150px !important;
-  max-width: 150px !important;
+.domains-table .table-row-family-2 {
+  --family-tint-parent: rgba(244, 114, 36, 0.18);
+  --family-tint-child: rgba(244, 114, 36, 0.09);
+  --family-border: rgba(244, 114, 36, 0.55);
 }
 
-/* Reset the overrides from previous attempts */
-.domains-card .table-container {
-  /* Use default styling from Table.css */
+.domains-table .table-row-family-3 {
+  --family-tint-parent: rgba(217, 70, 239, 0.16);
+  --family-tint-child: rgba(217, 70, 239, 0.08);
+  --family-border: rgba(217, 70, 239, 0.55);
 }
 
-.domains-card .table {
-  /* Use default styling from Table.css */
+.domains-table .table-row-family-4 {
+  --family-tint-parent: rgba(14, 165, 233, 0.16);
+  --family-tint-child: rgba(14, 165, 233, 0.08);
+  --family-border: rgba(14, 165, 233, 0.55);
 }
 
-.domains-card .table-body {
-  /* Use default styling from Table.css */
+.domains-table .table-row-family-5 {
+  --family-tint-parent: rgba(236, 72, 153, 0.16);
+  --family-tint-child: rgba(236, 72, 153, 0.08);
+  --family-border: rgba(236, 72, 153, 0.55);
+}
+
+.domains-table .table-row-family:not(.table-row-family-end) .table-cell {
+  border-bottom-color: transparent;
+}
+
+.domains-table .table-row-family-end .table-cell {
+  border-bottom-color: var(--color-border);
+}
+
+.domains-table .table-row-family .domain-cell {
+  position: relative;
+  z-index: 1;
+}
+
+.domains-table .table-row-family .domain-cell::before {
+  content: "";
+  position: absolute;
+  left: -16px;
+  top: -10px;
+  bottom: -10px;
+  width: 4px;
+  border-radius: 999px;
+  background: var(--family-border, transparent);
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+.domains-table .table-row-family.table-row-alias .domain-cell::before,
+.domains-table .table-row-family.table-row-redirect .domain-cell::before {
+  opacity: 0.45;
+}
+
+.domains-table .table-row-family-single .domain-cell::before {
+  display: none;
 }
 
 /* Domain cell styling */
@@ -132,6 +138,8 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 4px;
+  position: relative;
+  z-index: 1;
 }
 
 .domain-header {
@@ -183,21 +191,6 @@
   opacity: 1;
   pointer-events: auto;
   max-width: 320px;
-}
-
-.domains-header-card .table-container,
-.domain-group-card .table-container {
-  overflow: visible;
-}
-
-.domain-group-card .table-row,
-.domain-group-card .table-cell,
-.domain-group-card .nameserver-cell,
-.domain-group-card .domain-actions,
-.domains-header-card .table-row,
-.domains-header-card .table-cell {
-  overflow: visible;
-  position: relative;
 }
 
 .domain-inline-action {
