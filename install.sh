@@ -1116,7 +1116,7 @@ main() {
     pull_snapshot "$SEED" "$SECRETS_SUPPLIED"
     apply_snapshot
     if [[ -z "$NS_LABEL" || -z "$NS_BASE_DOMAIN" ]]; then
-      readarray -t cluster_ns <<<"$(python3 - <<'PY'
+      mapfile -t cluster_ns < <(python3 - <<'PY'
 import json
 import os
 
@@ -1137,9 +1137,11 @@ except FileNotFoundError:
 print(label or '')
 print(base or '')
 PY
-)"
-      NS_LABEL="${cluster_ns[0]}"
-      NS_BASE_DOMAIN="${cluster_ns[1]}"
+)
+      if (( ${#cluster_ns[@]} >= 2 )); then
+        NS_LABEL="${cluster_ns[0]}"
+        NS_BASE_DOMAIN="${cluster_ns[1]}"
+      fi
     fi
     if [[ -z "$NS_LABEL" || -z "$NS_BASE_DOMAIN" ]]; then
       NS_LABEL="$(read_env_value NS_LABEL "$PROJECT_DIR/.env" || true)"
