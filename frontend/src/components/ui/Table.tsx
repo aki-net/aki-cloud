@@ -23,6 +23,7 @@ interface TableProps<T> {
   emptyMessage?: string;
   className?: string;
   rowClassName?: (item: T, index: number) => string | undefined;
+  selectionHeader?: React.ReactNode;
 }
 
 export default function Table<T>({
@@ -37,6 +38,7 @@ export default function Table<T>({
   emptyMessage = 'No data available',
   className,
   rowClassName,
+  selectionHeader,
 }: TableProps<T>) {
   const selectedSet = selectedRows ?? new Set<string>();
   const hasSelection = selectedRows !== undefined && onRowSelect !== undefined;
@@ -56,20 +58,22 @@ export default function Table<T>({
         <thead className="table-head">
           <tr>
             {hasSelection && (
-              <th className="table-cell table-cell-checkbox">
-                <input
-                  type="checkbox"
-                  className="checkbox"
-                  checked={allSelected}
-                  ref={selectAllRef}
-                  onChange={(e) => onSelectAll?.(e.target.checked)}
-                />
+              <th className="table-cell table-cell-checkbox table-cell-checkbox--header">
+                <div className="table-selection-header">
+                  <input
+                    type="checkbox"
+                    className="checkbox"
+                    checked={allSelected}
+                    ref={selectAllRef}
+                    onChange={(e) => onSelectAll?.(e.target.checked)}
+                  />
+                </div>
               </th>
             )}
             {columns.map((column) => (
               <th
                 key={column.key}
-                className={clsx('table-cell', `table-align-${column.align || 'left'}`)}
+                className="table-cell table-cell-header"
                 style={{ width: column.width }}
               >
                 <div className="table-header-content">

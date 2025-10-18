@@ -107,7 +107,7 @@ h6 { font-size: 0.875rem; }
 /* Utility Classes */
 .mono {
   font-family: var(--font-mono);
-  font-size: 0.875rem;
+  /* font-size: 0.875rem; */
 }
 
 .truncate {

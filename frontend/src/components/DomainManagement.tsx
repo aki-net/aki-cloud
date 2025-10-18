@@ -1216,13 +1216,18 @@ const resolveWhois = (
     const primaryBots = botEntries.filter(({ definition }) =>
       SEARCHBOT_PRIMARY_KEYS.includes(definition.key),
     );
+    const secondaryBots = botEntries.filter(
+      ({ definition }) => !SEARCHBOT_PRIMARY_KEYS.includes(definition.key),
+    );
     const showSearchBots =
       searchBotAvailable !== false && primaryBots.length > 0;
+    const showSearchBotMenu = secondaryBots.length > 0;
     const isRefreshingBots = !!searchBotRefreshing[domainKey];
     const generatedAt = stats?.generated_at
       ? new Date(stats.generated_at).toLocaleString()
       : undefined;
-    const isMenuOpen = searchBotMenuDomain === domainName;
+    const isMenuOpen =
+      showSearchBotMenu && searchBotMenuDomain === domainName;
     const googlebotEnabled = isGooglebotOnlyEnabled(record);
     const wafBusy = wafUpdatingDomains.has(domainKey);
     const canUseWAF = record.proxied;
@@ -1396,27 +1401,28 @@ const resolveWhois = (
                 </div>
               );
             })}
-            <div className="searchbot-menu-container">
-              <button
-                type="button"
-                className="searchbot-menu-trigger"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setSearchBotMenuDomain((prev) =>
-                    prev === domainName ? null : domainName,
-                  );
-                }}
-                title="View crawler details"
-              >
-                ⋯
-              </button>
-              {isMenuOpen && (
-                <div className="searchbot-menu" ref={searchBotMenuRef}>
-                  <div className="searchbot-menu-list">
-                    {botEntries.map(({ definition, stats: botStats }) => {
-                      const exportKey = `${domainName}|${definition.key}`;
-                      const exporting = searchBotExporting === exportKey;
-                      const canExport = hasStats && !exporting;
+            {showSearchBotMenu && (
+              <div className="searchbot-menu-container">
+                <button
+                  type="button"
+                  className="searchbot-menu-trigger"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setSearchBotMenuDomain((prev) =>
+                      prev === domainName ? null : domainName,
+                    );
+                  }}
+                  title="View crawler details"
+                >
+                  ⋯
+                </button>
+                {isMenuOpen && (
+                  <div className="searchbot-menu" ref={searchBotMenuRef}>
+                    <div className="searchbot-menu-list">
+                      {secondaryBots.map(({ definition, stats: botStats }) => {
+                        const exportKey = `${domainName}|${definition.key}`;
+                        const exporting = searchBotExporting === exportKey;
+                        const canExport = hasStats && !exporting;
                       return (
                         <div className="searchbot-menu-item" key={definition.key}>
                           <div className="searchbot-menu-item-info">
@@ -1477,11 +1483,12 @@ const resolveWhois = (
                           </button>
                         </div>
                       );
-                    })}
+                      })}
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
           </div>
         )}
         <button
@@ -2003,22 +2010,28 @@ const resolveWhois = (
       if (children.length === 0) {
         return null;
       }
-      const labelText = type === "alias" ? "Aliases:" : "Redirects:";
-      const icon = type === "alias" ? "+" : "↗";
+      const isAliasType = type === "alias";
+      const labelText = isAliasType ? null : "Redirects:";
+      const icon = isAliasType ? null : "↗";
       return (
         <div
           className={`domain-relations-inline domain-relations-${type}`}
         >
-          <span className="domain-relations-label">
-            <span className="domain-relations-icon">{icon}</span>
-            {labelText}
-          </span>
+          {!isAliasType && (
+            <span className="domain-relations-label">
+              <span className="domain-relations-icon">{icon}</span>
+              {labelText}
+            </span>
+          )}
           <span className="domain-relations-items">
             {children.map((child, index) => (
               <span
                 key={`${type}-${child.domain}`}
                 className="domain-relation-entry"
               >
+                {isAliasType && (
+                  <span className="domain-relation-prefix">+</span>
+                )}
                 <span className="domain-relation-name mono">
                   {child.domain}
                 </span>
@@ -2169,13 +2182,14 @@ const resolveWhois = (
     key: "domain",
     header: "Domain",
     accessor: (row: DomainWithMeta) => renderDomainCell(row),
+    width: "21%",
   });
 
   columns.push({
     key: "nameservers",
     header: "Nameservers",
     accessor: (d: any) => renderNameserverCell(d),
-    width: "320px",
+    width: "17%",
   });
 
   // Owner column - only for admin in all/orphaned mode
@@ -2192,7 +2206,7 @@ const resolveWhois = (
           )}
         </div>
       ),
-      width: "180px",
+      width: "11%",
     });
   }
 
@@ -2244,18 +2258,6 @@ const resolveWhois = (
             title={isPlaceholder ? placeholderLabel : displayValue}
           >
             {isPlaceholder ? placeholderLabel : displayValue}
-            <svg
-              className="edit-icon"
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
-              <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
-            </svg>
           </span>
           {isPlaceholder && extraRecords > 0 && (
             <span className="ip-placeholder-hint">
@@ -2265,14 +2267,14 @@ const resolveWhois = (
         </div>
       );
     },
-    width: "170px",
+    width: "13%",
   });
 
   columns.push({
     key: "whois",
     header: "Renewal",
     accessor: (d: any) => renderWhoisCell(d),
-    width: "100px",
+    width: "7%",
   });
 
   // Proxy column - always present
@@ -2295,7 +2297,7 @@ const resolveWhois = (
       key: "edge-assignment",
       header: "Edge",
       accessor: (d: any) => renderEdgeCell(d),
-      width: "220px",
+      width: "11%",
     });
   }
 
@@ -2304,14 +2306,15 @@ const resolveWhois = (
     key: "tls",
     header: "TLS",
     accessor: (d: any) => getTLSDisplay(d),
-    width: "140px",
+    width: "7%",
+    align: "center" as const,
   });
 
   columns.push({
     key: "actions",
-    header: "",
+    header: "Actions",
     accessor: (d: any) => renderDomainActions(d),
-    width: "50px",
+    width: "6%",
     align: "center" as const,
   });
 
@@ -2581,33 +2584,34 @@ const resolveWhois = (
                   }
                   loading={false}
                   emptyMessage=""
+                  selectionHeader="Checkbox"
                 />
               </Card>
               
               {/* Domain groups without headers */}
               {familyGroups.map((group, index) => (
                 <Card key={`group-${index}-${group[0]?.domain}`} className="domains-card domain-group-card domain-group-no-header" padding="none">
-                  <Table
-                    columns={columns}
-                    data={group}
-                    keyExtractor={(d: DomainWithMeta) => d.domain}
-                    selectedRows={selectionEnabled ? selectedDomains : undefined}
-                    onRowSelect={
-                      selectionEnabled
-                        ? (id, selected) => {
-                            const newSelected = new Set(selectedDomains);
-                            if (selected) {
-                              newSelected.add(id);
-                            } else {
-                              newSelected.delete(id);
-                            }
-                            setSelectedDomains(newSelected);
+                <Table
+                  columns={columns}
+                  data={group}
+                  keyExtractor={(d: DomainWithMeta) => d.domain}
+                  selectedRows={selectionEnabled ? selectedDomains : undefined}
+                  onRowSelect={
+                    selectionEnabled
+                      ? (id, selected) => {
+                          const newSelected = new Set(selectedDomains);
+                          if (selected) {
+                            newSelected.add(id);
+                          } else {
+                            newSelected.delete(id);
                           }
-                        : undefined
-                    }
-                    rowClassName={(row) => {
-                      const meta = row.__meta;
-                      const classes: string[] = [];
+                          setSelectedDomains(newSelected);
+                        }
+                      : undefined
+                  }
+                  rowClassName={(row) => {
+                    const meta = row.__meta;
+                    const classes: string[] = [];
 
                       // Add family color class only for parent rows
                       const isParent = meta.position === 'parent';
@@ -2628,10 +2632,11 @@ const resolveWhois = (
                       }
 
                       return classes.length > 0 ? classes.join(' ') : undefined;
-                    }}
-                    loading={false}
-                    emptyMessage=""
-                  />
+                  }}
+                  loading={false}
+                  emptyMessage=""
+                  selectionHeader="Checkbox"
+                />
                 </Card>
               ))}
             </>

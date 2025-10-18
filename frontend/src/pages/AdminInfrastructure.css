@@ -523,7 +523,7 @@
 .edge-ip {
   color: var(--color-text-primary);
   font-weight: 500;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .edge-tags {
