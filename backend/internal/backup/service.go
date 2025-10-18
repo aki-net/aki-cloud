@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -221,6 +223,71 @@ func (s *Service) Restore(ctx context.Context, req RestoreRequest) (RestoreResul
 	return s.restoreFromRemote(ctx, client, req, includes)
 }
 
+// Upload ingests a backup archive provided by an operator and pushes it to Mega.nz.
+func (s *Service) Upload(ctx context.Context, name string, reader io.Reader) (BackupDescriptor, error) {
+	settings, _, err := s.loadConfig()
+	if err != nil {
+		return BackupDescriptor{}, err
+	}
+	if !settings.HasCredentials() {
+		return BackupDescriptor{}, ErrCredentialsMissing
+	}
+
+	tempPath, err := s.writeIncomingBundle(reader)
+	if err != nil {
+		return BackupDescriptor{}, err
+	}
+	defer func() { _ = os.Remove(tempPath) }()
+
+	bundle, err := readBundle(tempPath)
+	if err != nil {
+		return BackupDescriptor{}, err
+	}
+	finalName := sanitizeBackupFilename(name, bundle)
+
+	client, cleanup, err := s.login(ctx, settings)
+	if err != nil {
+		return BackupDescriptor{}, err
+	}
+	defer cleanup()
+
+	remoteName, err := s.uploadToMega(client, tempPath, finalName)
+	if err != nil {
+		return BackupDescriptor{}, err
+	}
+	if err := s.enforceRetention(client, settings); err != nil {
+		s.logger.Printf("mega-backups: retention after upload failed: %v", err)
+	}
+	info, err := os.Stat(tempPath)
+	if err != nil {
+		return BackupDescriptor{}, err
+	}
+	return BackupDescriptor{
+		Name:      remoteName,
+		SizeBytes: info.Size(),
+		CreatedAt: bundle.CreatedAt,
+		Includes:  bundle.Includes,
+	}, nil
+}
+
+// RestoreFromUpload restores a bundle provided via upload without persisting it to Mega.nz.
+func (s *Service) RestoreFromUpload(ctx context.Context, req RestoreRequest, reader io.Reader) (RestoreResult, error) {
+	tempPath, err := s.writeIncomingBundle(reader)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	defer func() { _ = os.Remove(tempPath) }()
+
+	bundle, err := readBundle(tempPath)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	if len(req.Include) == 0 {
+		req.Include = bundle.Includes
+	}
+	return s.restoreFromPath(tempPath, req)
+}
+
 // Status exposes scheduler metadata for UI consumption.
 func (s *Service) Status() (NodeStatus, error) {
 	settings, status, err := s.loadConfig()
@@ -228,6 +295,71 @@ func (s *Service) Status() (NodeStatus, error) {
 		return NodeStatus{}, err
 	}
 	return s.buildStatus(settings, status), nil
+}
+
+func (s *Service) writeIncomingBundle(reader io.Reader) (string, error) {
+	if reader == nil {
+		return "", errors.New("no data provided")
+	}
+	tempFile, err := os.CreateTemp(s.localDir, "upload-*.bundle")
+	if err != nil {
+		return "", err
+	}
+	name := tempFile.Name()
+	if _, err := io.Copy(tempFile, reader); err != nil {
+		_ = tempFile.Close()
+		_ = os.Remove(name)
+		return "", err
+	}
+	if err := tempFile.Close(); err != nil {
+		_ = os.Remove(name)
+		return "", err
+	}
+	return name, nil
+}
+
+func sanitizeBackupFilename(name string, bundle backupBundle) string {
+	base := strings.TrimSpace(name)
+	if base == "" {
+		if !bundle.CreatedAt.IsZero() {
+			base = fmt.Sprintf("backup-%s", bundle.CreatedAt.UTC().Format("20060102T150405Z"))
+		} else {
+			base = fmt.Sprintf("backup-%d", time.Now().UTC().Unix())
+		}
+	}
+	base = strings.ReplaceAll(base, "\\", "_")
+	base = strings.ReplaceAll(base, "/", "_")
+	base = strings.ReplaceAll(base, "..", "_")
+	base = strings.ReplaceAll(base, " ", "_")
+	base = strings.Trim(base, "._-")
+	if base == "" {
+		base = fmt.Sprintf("backup-%d", time.Now().UTC().Unix())
+	}
+	if !strings.HasSuffix(strings.ToLower(base), ".json.gz") {
+		if strings.HasSuffix(strings.ToLower(base), ".gz") {
+			base = strings.TrimSuffix(base, ".gz")
+		}
+		if strings.HasSuffix(strings.ToLower(base), ".json") {
+			base = strings.TrimSuffix(base, ".json")
+		}
+		base = base + ".json.gz"
+	}
+	return base
+}
+
+func (s *Service) restoreFromPath(path string, req RestoreRequest) (RestoreResult, error) {
+	bundle, err := readBundle(path)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("read backup bundle: %w", err)
+	}
+	if len(req.Include) == 0 {
+		req.Include = bundle.Includes
+	}
+	result, err := s.restoreDatasets(bundle, req)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	return result, nil
 }
 
 // scheduler wakes periodically and launches backups when due.
@@ -308,7 +440,7 @@ func (s *Service) executeBackup(ctx context.Context, settings nodeSettings, doc 
 	}
 	defer cleanup()
 
-	remoteName, err := s.uploadToMega(client, localPath)
+	remoteName, err := s.uploadToMega(client, localPath, "")
 	if err != nil {
 		execErr = err
 		return result, err
@@ -370,16 +502,8 @@ func (s *Service) restoreFromRemote(ctx context.Context, client *mega.Mega, req 
 	if err := client.DownloadFile(target, tempPath, nil); err != nil {
 		return RestoreResult{}, fmt.Errorf("download %s: %w", target.GetName(), err)
 	}
-	bundle, err := readBundle(tempPath)
-	if err != nil {
-		return RestoreResult{}, fmt.Errorf("read backup bundle: %w", err)
-	}
 	req.Include = includes
-	result, err := s.restoreDatasets(bundle, req)
-	if err != nil {
-		return RestoreResult{}, err
-	}
-	return result, nil
+	return s.restoreFromPath(tempPath, req)
 }
 
 func (s *Service) tryScheduled(ctx context.Context) error {

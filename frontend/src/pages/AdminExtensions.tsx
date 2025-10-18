@@ -27,6 +27,11 @@ const EXTENSION_ICONS: Record<string, string> = {
 
 const getExtensionIcon = (key: string) => EXTENSION_ICONS[key] ?? '🧩';
 
+const sortExtensionsList = (items: Extension[]) =>
+  items
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name) || a.key.localeCompare(b.key));
+
 const formatBytes = (bytes?: number): string => {
   if (!bytes || Number.isNaN(bytes) || bytes <= 0) {
     return '0 B';
@@ -153,7 +158,36 @@ function MegaBackupControls({
   const [saving, setSaving] = useState(false);
   const [runLoading, setRunLoading] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [fileUploading, setFileUploading] = useState<File | null>(null);
+  const [fileRestoring, setFileRestoring] = useState<File | null>(null);
+  const [restoreSettings, setRestoreSettings] = useState({
+    wipeDomains: true,
+    wipeUsers: false,
+    wipeExtensions: false,
+    wipeNodes: false,
+    wipeEdge: false,
+    includeUsers: false,
+    includeExtensions: false,
+    includeNodes: false,
+    includeEdge: false,
+  });
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => new Set<string>());
+  const [removedNodes, setRemovedNodes] = useState<string[]>([]);
   const [newNode, setNewNode] = useState('');
+
+  useEffect(() => {
+    const parsed = parseMegaConfig(extension);
+    setForm(parsed);
+    setRemovedNodes([]);
+    setExpandedNodes(() => {
+      const next = new Set<string>();
+      if (parsed.nodes.length === 1) {
+        next.add(parsed.nodes[0].name);
+      }
+      return next;
+    });
+  }, [extension]);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -163,17 +197,19 @@ function MegaBackupControls({
         backupApi.list(),
       ]);
       setStatus(statusRes);
-      setHistory(listRes);
+      const sorted = (listRes || []).slice().sort((a, b) => {
+        const at = new Date(a.createdAt ?? 0).getTime();
+        const bt = new Date(b.createdAt ?? 0).getTime();
+        return bt - at;
+      });
+      setHistory(sorted);
     } catch (err: any) {
       console.error('failed to load backup info', err);
+      toast.error(err?.response?.data?.error || 'Failed to load backup status');
     } finally {
       setLoading(false);
     }
   }, []);
-
-  useEffect(() => {
-    setForm(parseMegaConfig(extension));
-  }, [extension]);
 
   useEffect(() => {
     refreshStatus();
@@ -223,6 +259,65 @@ function MegaBackupControls({
     [],
   );
 
+  const toggleNodePanel = useCallback((name: string) => {
+    setExpandedNodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) {
+        next.delete(name);
+      } else {
+        next.add(name);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleRemoveNode = useCallback((name: string) => {
+    setForm((prev) => ({
+      ...prev,
+      nodes: prev.nodes.filter((node) => node.name !== name),
+    }));
+    setRemovedNodes((prev) => (prev.includes(name) ? prev : [...prev, name]));
+    setExpandedNodes((prev) => {
+      const next = new Set(prev);
+      next.delete(name);
+      return next;
+    });
+  }, []);
+
+  const addNode = useCallback(() => {
+    const trimmed = newNode.trim();
+    if (!trimmed) {
+      return;
+    }
+    if (form.nodes.some((node) => node.name === trimmed)) {
+      toast.error('Node already configured');
+      return;
+    }
+    setForm((prev) => ({
+      ...prev,
+      nodes: [
+        ...prev.nodes,
+        {
+          name: trimmed,
+          enabled: extension.enabled,
+          username: '',
+          password: '',
+          passwordSet: false,
+          schedule: '',
+          include: ensureDomains(prev.include),
+          retention: 14,
+        },
+      ],
+    }));
+    setRemovedNodes((prev) => prev.filter((node) => node !== trimmed));
+    setExpandedNodes((prev) => {
+      const next = new Set(prev);
+      next.add(trimmed);
+      return next;
+    });
+    setNewNode('');
+  }, [extension.enabled, form.include, form.nodes, newNode]);
+
   const handleSave = useCallback(async () => {
     try {
       setSaving(true);
@@ -246,7 +341,12 @@ function MegaBackupControls({
         }
         nodePayload[node.name] = nodeConfig;
       });
-      payload.nodes = nodePayload;
+      removedNodes.forEach((name) => {
+        nodePayload[name] = null;
+      });
+      if (Object.keys(nodePayload).length > 0) {
+        payload.nodes = nodePayload;
+      }
       await extensionsApi.update(extension.key, { config: payload });
       toast.success('Backup settings saved');
       onReload();
@@ -255,13 +355,31 @@ function MegaBackupControls({
         ...prev,
         nodes: prev.nodes.map((node) => ({ ...node, password: '' })),
       }));
+      setRemovedNodes([]);
     } catch (err: any) {
       console.error('failed to save backup settings', err);
       toast.error(err?.response?.data?.error || 'Failed to save backup settings');
     } finally {
       setSaving(false);
     }
-  }, [extension.key, form, onReload]);
+  }, [extension.key, form, onReload, removedNodes]);
+
+  const buildIncludeList = useCallback(() => {
+    const include = new Set<string>(['domains']);
+    if (restoreSettings.includeUsers) {
+      include.add('users');
+    }
+    if (restoreSettings.includeExtensions) {
+      include.add('extensions');
+    }
+    if (restoreSettings.includeNodes) {
+      include.add('nodes');
+    }
+    if (restoreSettings.includeEdge) {
+      include.add('edge_health');
+    }
+    return Array.from(include);
+  }, [restoreSettings]);
 
   const handleRunBackup = useCallback(async () => {
     try {
@@ -279,15 +397,26 @@ function MegaBackupControls({
 
   const handleRestore = useCallback(
     async (name: string) => {
-      if (!window.confirm(`Restore backup ${name}? This will overwrite datasets on this node.`)) {
+      if (
+        !window.confirm(
+          `Restore backup ${name}? This will overwrite selected datasets on this node.`,
+        )
+      ) {
         return;
       }
       try {
         setRestoreLoading(name);
+        const includes = buildIncludeList();
         await backupApi.restore({
           name,
-          include: ['domains'],
-          wipe: { domains: true },
+          include: includes,
+          wipe: {
+            domains: restoreSettings.wipeDomains,
+            users: restoreSettings.wipeUsers,
+            extensions: restoreSettings.wipeExtensions,
+            nodes: restoreSettings.wipeNodes,
+            edge_health: restoreSettings.wipeEdge,
+          },
         });
         toast.success('Backup restored');
         await refreshStatus();
@@ -298,36 +427,76 @@ function MegaBackupControls({
         setRestoreLoading(null);
       }
     },
-    [refreshStatus],
+    [buildIncludeList, refreshStatus, restoreSettings],
   );
 
-  const addNode = useCallback(() => {
-    const trimmed = newNode.trim();
-    if (!trimmed) {
+  const handleUploadFile = useCallback(async () => {
+    if (!fileUploading) {
+      toast.error('Select a backup file first');
       return;
     }
-    if (form.nodes.some((node) => node.name === trimmed)) {
-      toast.error('Node already configured');
+    try {
+      setUploading(true);
+      await backupApi.uploadFile(fileUploading, fileUploading.name);
+      toast.success('Backup uploaded to Mega');
+      setFileUploading(null);
+      await refreshStatus();
+    } catch (err: any) {
+      console.error('upload failed', err);
+      toast.error(err?.response?.data?.error || 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  }, [fileUploading, refreshStatus]);
+
+  const MANUAL_RESTORE_KEY = '__manual__';
+
+  const handleRestoreFromFile = useCallback(async () => {
+    if (!fileRestoring) {
+      toast.error('Select a backup file to restore');
       return;
     }
-    setForm((prev) => ({
-      ...prev,
-      nodes: [
-        ...prev.nodes,
-        {
-          name: trimmed,
-          enabled: true,
-          username: '',
-          password: '',
-          passwordSet: false,
-          schedule: '',
-          include: ensureDomains(prev.include),
-          retention: 14,
+    try {
+      setRestoreLoading(MANUAL_RESTORE_KEY);
+      const include = buildIncludeList();
+      await backupApi.restoreFromFile({
+        file: fileRestoring,
+        include,
+        wipe: {
+          domains: restoreSettings.wipeDomains,
+          users: restoreSettings.wipeUsers,
+          extensions: restoreSettings.wipeExtensions,
+          nodes: restoreSettings.wipeNodes,
+          edge_health: restoreSettings.wipeEdge,
         },
-      ],
-    }));
-    setNewNode('');
-  }, [form.nodes, form.include, newNode]);
+      });
+      toast.success('Backup restored from file');
+      setFileRestoring(null);
+      await refreshStatus();
+    } catch (err: any) {
+      console.error('restore from file failed', err);
+      toast.error(err?.response?.data?.error || 'Restore failed');
+    } finally {
+      setRestoreLoading(null);
+    }
+  }, [buildIncludeList, fileRestoring, refreshStatus, restoreSettings]);
+
+  const renderDatasetCheckbox = (target: 'global' | string, dataset: { value: string; label: string; required?: boolean }) => (
+    <label key={`${target}-${dataset.value}`} className="backup-dataset-item">
+      <input
+        type="checkbox"
+        checked={
+          target === 'global'
+            ? form.include.includes(dataset.value)
+            : form.nodes.find((node) => node.name === target)?.include.includes(dataset.value) ??
+              false
+        }
+        onChange={(event) => toggleDataset(target, dataset.value, event.target.checked)}
+        disabled={dataset.required}
+      />
+      {dataset.label}
+    </label>
+  );
 
   return (
     <div className="backup-panel">
@@ -351,6 +520,12 @@ function MegaBackupControls({
           <span className="backup-status-label">Next run</span>
           <span className="backup-status-value">
             {status?.nextRunAt ? formatUpdated(status.nextRunAt) : 'Not scheduled'}
+          </span>
+        </div>
+        <div className="backup-status-row">
+          <span className="backup-status-label">Credentials</span>
+          <span className="backup-status-value">
+            {status?.hasCredentials ? 'Configured' : 'Missing'}
           </span>
         </div>
         {status?.lastError && (
@@ -379,6 +554,180 @@ function MegaBackupControls({
         </div>
       </div>
 
+      <div className="backup-manual">
+        <div className="backup-manual-section">
+          <h4>Upload backup</h4>
+          <p className="backup-manual-description">
+            Push a local archive to Mega.nz without waiting for the scheduler.
+          </p>
+          <div className="backup-manual-controls">
+            <input
+              type="file"
+              accept=".gz"
+              onChange={(event) => setFileUploading(event.target.files?.[0] ?? null)}
+            />
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleUploadFile}
+              disabled={!fileUploading || uploading}
+            >
+              {uploading ? 'Uploading…' : 'Upload'}
+            </Button>
+          </div>
+          {fileUploading && <span className="backup-file-note">{fileUploading.name}</span>}
+        </div>
+        <div className="backup-manual-section">
+          <h4>Restore from file</h4>
+          <p className="backup-manual-description">
+            Apply a local backup directly to this node. Domains are always restored.
+          </p>
+          <div className="backup-manual-controls">
+            <input
+              type="file"
+              accept=".gz"
+              onChange={(event) => setFileRestoring(event.target.files?.[0] ?? null)}
+            />
+            <div className="backup-restore-options">
+              <div className="backup-restore-column">
+                <span className="backup-restore-title">Include datasets</span>
+                <label className="backup-restore-toggle">
+                  <input
+                    type="checkbox"
+                    checked={restoreSettings.includeUsers}
+                    onChange={(event) =>
+                      setRestoreSettings((prev) => ({
+                        ...prev,
+                        includeUsers: event.target.checked,
+                      }))
+                    }
+                  />
+                  Users
+                </label>
+                <label className="backup-restore-toggle">
+                  <input
+                    type="checkbox"
+                    checked={restoreSettings.includeExtensions}
+                    onChange={(event) =>
+                      setRestoreSettings((prev) => ({
+                        ...prev,
+                        includeExtensions: event.target.checked,
+                      }))
+                    }
+                  />
+                  Extensions
+                </label>
+                <label className="backup-restore-toggle">
+                  <input
+                    type="checkbox"
+                    checked={restoreSettings.includeNodes}
+                    onChange={(event) =>
+                      setRestoreSettings((prev) => ({
+                        ...prev,
+                        includeNodes: event.target.checked,
+                      }))
+                    }
+                  />
+                  Nodes
+                </label>
+                <label className="backup-restore-toggle">
+                  <input
+                    type="checkbox"
+                    checked={restoreSettings.includeEdge}
+                    onChange={(event) =>
+                      setRestoreSettings((prev) => ({
+                        ...prev,
+                        includeEdge: event.target.checked,
+                      }))
+                    }
+                  />
+                  Edge health
+                </label>
+              </div>
+              <div className="backup-restore-column">
+                <span className="backup-restore-title">Wipe existing</span>
+                <label className="backup-restore-toggle">
+                  <input
+                    type="checkbox"
+                    checked={restoreSettings.wipeDomains}
+                    onChange={(event) =>
+                      setRestoreSettings((prev) => ({
+                        ...prev,
+                        wipeDomains: event.target.checked,
+                      }))
+                    }
+                  />
+                  Domains
+                </label>
+                <label className="backup-restore-toggle">
+                  <input
+                    type="checkbox"
+                    checked={restoreSettings.wipeUsers}
+                    onChange={(event) =>
+                      setRestoreSettings((prev) => ({
+                        ...prev,
+                        wipeUsers: event.target.checked,
+                      }))
+                    }
+                  />
+                  Users
+                </label>
+                <label className="backup-restore-toggle">
+                  <input
+                    type="checkbox"
+                    checked={restoreSettings.wipeExtensions}
+                    onChange={(event) =>
+                      setRestoreSettings((prev) => ({
+                        ...prev,
+                        wipeExtensions: event.target.checked,
+                      }))
+                    }
+                  />
+                  Extensions
+                </label>
+                <label className="backup-restore-toggle">
+                  <input
+                    type="checkbox"
+                    checked={restoreSettings.wipeNodes}
+                    onChange={(event) =>
+                      setRestoreSettings((prev) => ({
+                        ...prev,
+                        wipeNodes: event.target.checked,
+                      }))
+                    }
+                  />
+                  Nodes
+                </label>
+                <label className="backup-restore-toggle">
+                  <input
+                    type="checkbox"
+                    checked={restoreSettings.wipeEdge}
+                    onChange={(event) =>
+                      setRestoreSettings((prev) => ({
+                        ...prev,
+                        wipeEdge: event.target.checked,
+                      }))
+                    }
+                  />
+                  Edge health
+                </label>
+              </div>
+            </div>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleRestoreFromFile}
+              disabled={!fileRestoring || restoreLoading === MANUAL_RESTORE_KEY}
+            >
+              {restoreLoading === MANUAL_RESTORE_KEY ? 'Restoring…' : 'Restore from file'}
+            </Button>
+            {fileRestoring && (
+              <span className="backup-file-note">{fileRestoring.name}</span>
+            )}
+          </div>
+        </div>
+      </div>
+
       <div className="backup-history">
         <h4>Recent backups</h4>
         {history.length === 0 ? (
@@ -393,6 +742,11 @@ function MegaBackupControls({
                     {formatUpdated(item.createdAt)} ·{' '}
                     {item.sizeBytes ? `${(item.sizeBytes / (1024 * 1024)).toFixed(1)} MB` : 'unknown size'}
                   </div>
+                  {item.includes && item.includes.length > 0 && (
+                    <div className="backup-history-datasets">
+                      Datasets: {item.includes.join(', ')}
+                    </div>
+                  )}
                 </div>
                 <Button
                   variant="ghost"
@@ -428,19 +782,7 @@ function MegaBackupControls({
           <div className="backup-datasets">
             <span>Default datasets</span>
             <div className="backup-dataset-list">
-              {BACKUP_DATASETS.map((dataset) => (
-                <label key={`global-${dataset.value}`} className="backup-dataset-item">
-                  <input
-                    type="checkbox"
-                    checked={form.include.includes(dataset.value)}
-                    onChange={(event) =>
-                      toggleDataset('global', dataset.value, event.target.checked)
-                    }
-                    disabled={dataset.required}
-                  />
-                  {dataset.label}
-                </label>
-              ))}
+              {BACKUP_DATASETS.map((dataset) => renderDatasetCheckbox('global', dataset))}
             </div>
           </div>
         </div>
@@ -461,85 +803,104 @@ function MegaBackupControls({
             </div>
           </div>
           {form.nodes.map((node) => (
-            <Card key={node.name} className="backup-node-card">
+            <Card
+              key={node.name}
+              className={`backup-node-card ${
+                expandedNodes.has(node.name) ? 'expanded' : 'collapsed'
+              }`}
+            >
               <div className="backup-node-header">
-                <div>
+                <div className="backup-node-title">
                   <strong>{node.name}</strong>
                   {node.passwordSet && <span className="backup-password-flag">Password set</span>}
+                  {!expandedNodes.has(node.name) && (
+                    <div className="backup-node-summary">
+                      <span>{node.username || 'No credentials'}</span>
+                      <span>{node.schedule || `inherits ${form.scheduleDefault}`}</span>
+                    </div>
+                  )}
                 </div>
-                <div>
+                <div className="backup-node-actions">
                   <Switch
                     checked={node.enabled}
                     onChange={(checked) => updateNode(node.name, { enabled: checked })}
                   />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => toggleNodePanel(node.name)}
+                  >
+                    {expandedNodes.has(node.name) ? 'Hide' : 'Configure'}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleRemoveNode(node.name)}
+                  >
+                    Remove
+                  </Button>
                 </div>
               </div>
-              <div className="backup-node-grid">
-                <label>
-                  Username
-                  <input
-                    type="text"
-                    value={node.username}
-                    onChange={(event) =>
-                      updateNode(node.name, { username: event.target.value })
-                    }
-                    placeholder="mega@example.com"
-                  />
-                </label>
-                <label>
-                  Password
-                  <input
-                    type="password"
-                    value={node.password}
-                    onChange={(event) =>
-                      updateNode(node.name, { password: event.target.value })
-                    }
-                    placeholder={node.passwordSet ? 'Update to rotate secret' : 'Required'}
-                  />
-                </label>
-                <label>
-                  Schedule override
-                  <input
-                    type="text"
-                    value={node.schedule}
-                    onChange={(event) =>
-                      updateNode(node.name, { schedule: event.target.value })
-                    }
-                    placeholder={form.scheduleDefault}
-                  />
-                </label>
-                <label>
-                  Retention (backups to keep)
-                  <input
-                    type="number"
-                    min={1}
-                    value={node.retention}
-                    onChange={(event) =>
-                      updateNode(node.name, {
-                        retention: Number.parseInt(event.target.value, 10) || 1,
-                      })
-                    }
-                  />
-                </label>
-              </div>
-              <div className="backup-datasets">
-                <span>Datasets</span>
-                <div className="backup-dataset-list">
-                  {BACKUP_DATASETS.map((dataset) => (
-                    <label key={`${node.name}-${dataset.value}`} className="backup-dataset-item">
+              {expandedNodes.has(node.name) && (
+                <>
+                  <div className="backup-node-grid">
+                    <label>
+                      Username
                       <input
-                        type="checkbox"
-                        checked={node.include.includes(dataset.value)}
+                        type="text"
+                        value={node.username}
                         onChange={(event) =>
-                          toggleDataset(node.name, dataset.value, event.target.checked)
+                          updateNode(node.name, { username: event.target.value })
                         }
-                        disabled={dataset.required}
+                        placeholder="mega@example.com"
                       />
-                      {dataset.label}
                     </label>
-                  ))}
-                </div>
-              </div>
+                    <label>
+                      Password
+                      <input
+                        type="password"
+                        value={node.password}
+                        onChange={(event) =>
+                          updateNode(node.name, { password: event.target.value })
+                        }
+                        placeholder={node.passwordSet ? 'Update to rotate secret' : 'Required'}
+                      />
+                    </label>
+                    <label>
+                      Schedule override
+                      <input
+                        type="text"
+                        value={node.schedule}
+                        onChange={(event) =>
+                          updateNode(node.name, { schedule: event.target.value })
+                        }
+                        placeholder={form.scheduleDefault}
+                      />
+                    </label>
+                    <label>
+                      Retention (backups to keep)
+                      <input
+                        type="number"
+                        min={1}
+                        value={node.retention}
+                        onChange={(event) =>
+                          updateNode(node.name, {
+                            retention: Number.parseInt(event.target.value, 10) || 1,
+                          })
+                        }
+                      />
+                    </label>
+                  </div>
+                  <div className="backup-datasets">
+                    <span>Datasets</span>
+                    <div className="backup-dataset-list">
+                      {BACKUP_DATASETS.map((dataset) =>
+                        renderDatasetCheckbox(node.name, dataset),
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
             </Card>
           ))}
         </div>
@@ -785,7 +1146,7 @@ function SystemExtensions() {
     setError(null);
     try {
       const data = await extensionsApi.list();
-      setExtensions(data);
+      setExtensions(sortExtensionsList(data));
     } catch (err: any) {
       console.error('Failed to load extensions', err);
       setError(err?.response?.data?.error || 'Failed to load extensions');
@@ -804,7 +1165,9 @@ function SystemExtensions() {
       try {
         const updated = await extensionsApi.update(key, { enabled });
         setExtensions((prev) =>
-          prev.map((ext) => (ext.key === updated.key ? updated : ext)),
+          sortExtensionsList(
+            prev.map((ext) => (ext.key === updated.key ? updated : ext)),
+          ),
         );
         toast.success(`${updated.name} ${enabled ? 'enabled' : 'disabled'}`);
       } catch (err: any) {

@@ -403,6 +403,82 @@ export const backups = {
       completedAt: data.completed_at ?? "",
     };
   },
+
+  uploadFile: async (file: File, name?: string): Promise<BackupRunResult> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    if (name && name.trim() !== "") {
+      formData.append("name", name.trim());
+    }
+    const res = await client.post<any>('/admin/backups/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    const data = res.data ?? {};
+    return {
+      name: data.name ?? data.backupName ?? "",
+      uploaded: true,
+      includes: Array.isArray(data.includes)
+        ? (data.includes as unknown[]).map((entry) =>
+            typeof entry === "string" ? entry : String(entry),
+          )
+        : [],
+      sizeBytes: Number(data.size_bytes ?? 0),
+      startedAt: data.started_at || undefined,
+      completedAt: data.completed_at || undefined,
+    };
+  },
+
+  restoreFromFile: async (options: {
+    file: File;
+    include?: string[];
+    wipe?: {
+      domains?: boolean;
+      users?: boolean;
+      extensions?: boolean;
+      nodes?: boolean;
+      edge_health?: boolean;
+    };
+  }): Promise<BackupRestoreResult> => {
+    const formData = new FormData();
+    formData.append('file', options.file);
+    if (options.include) {
+      options.include.forEach((value) => formData.append('include', value));
+    }
+    if (options.wipe?.domains !== undefined) {
+      formData.append('wipe_domains', String(options.wipe.domains));
+    }
+    if (options.wipe?.users !== undefined) {
+      formData.append('wipe_users', String(options.wipe.users));
+    }
+    if (options.wipe?.extensions !== undefined) {
+      formData.append('wipe_extensions', String(options.wipe.extensions));
+    }
+    if (options.wipe?.nodes !== undefined) {
+      formData.append('wipe_nodes', String(options.wipe.nodes));
+    }
+    if (options.wipe?.edge_health !== undefined) {
+      formData.append('wipe_edge', String(options.wipe.edge_health));
+    }
+    const res = await client.post<any>('/admin/backups/restore/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    const data = res.data ?? {};
+    return {
+      name: data.name ?? "",
+      includes: Array.isArray(data.includes)
+        ? (data.includes as unknown[]).map((entry) =>
+            typeof entry === "string" ? entry : String(entry),
+          )
+        : [],
+      domains: Number(data.domains ?? 0),
+      users: Number(data.users ?? 0),
+      extensions: Boolean(data.extensions),
+      nodes: Number(data.nodes ?? 0),
+      edgeHealth: Number(data.edge_health ?? 0),
+      startedAt: data.started_at ?? "",
+      completedAt: data.completed_at ?? "",
+    };
+  },
 };
 
 export const infra = {

@@ -148,6 +148,8 @@ Data persistence: All state lives under `./data`. Keep regular backups of this d
 - The backend scheduler (`backend/internal/backup`) produces gzipped JSON bundles containing at least domain state, TLS material, and optional datasets (users, extensions, infra, edge health). Bundles are uploaded to Mega under `/<ns_base_domain>/<ns_label>/<node_name>/`.
 - Manual `Run backup now` and `Restore` actions are available from the extension card. Restores default to wiping and repopulating domain state so a fresh node can be refilled without conflicts.
 - Status and history endpoints live under `/api/v1/admin/backups/*` (`GET /status`, `GET /`, `POST /run`, `POST /restore`). CLI operators can trigger a run with `curl -X POST /api/v1/admin/backups/run` using the admin JWT.
+- Operators can now `POST /api/v1/admin/backups/upload` (multipart `file`) to push an existing archive to Mega, or `POST /api/v1/admin/backups/restore/upload` to restore straight from an uploaded file. The UI mirrors these flows with dataset inclusion/ wipe toggles and on-demand refresh.
+- Remote backup listings are fetched directly from Mega on every refresh, so manual additions/removals are reflected immediately; per-node overrides can be removed from the UI and propagate cleanly via the extension config.
 - Local staging artefacts live under `data/backups/` and the scheduler tracks last-run metadata via `data/cluster/backups/status.json`. Retention limits are enforced on Mega after each successful upload.
 
 ## TLS automation

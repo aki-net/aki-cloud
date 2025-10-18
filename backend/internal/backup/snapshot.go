@@ -152,8 +152,11 @@ func readBundle(path string) (backupBundle, error) {
 	return bundle, nil
 }
 
-func (s *Service) uploadToMega(client *mega.Mega, localPath string) (string, error) {
-	name := filepath.Base(localPath)
+func (s *Service) uploadToMega(client *mega.Mega, localPath string, preferName string) (string, error) {
+	name := strings.TrimSpace(preferName)
+	if name == "" {
+		name = filepath.Base(localPath)
+	}
 	targetParts := []string{
 		s.cfg.NSBaseDomain,
 		s.cfg.NSLabel,

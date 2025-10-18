@@ -359,8 +359,21 @@ func (s *Service) ListGlobal() ([]Extension, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Extension, 0, len(s.definitions))
-	for key, def := range s.definitions {
+	defKeys := make([]string, 0, len(s.definitions))
+	for key := range s.definitions {
+		defKeys = append(defKeys, key)
+	}
+	sort.SliceStable(defKeys, func(i, j int) bool {
+		di := s.definitions[defKeys[i]]
+		dj := s.definitions[defKeys[j]]
+		if di.Name == dj.Name {
+			return defKeys[i] < defKeys[j]
+		}
+		return di.Name < dj.Name
+	})
+	out := make([]Extension, 0, len(defKeys))
+	for _, key := range defKeys {
+		def := s.definitions[key]
 		stored, ok := doc.Config.Global[key]
 		state := resolveState(def, stored, ok)
 		out = append(out, Extension{
@@ -920,6 +933,10 @@ func mergeMegaBackupConfig(current, updates, defaults map[string]interface{}) ma
 			existing = cloneGenericMap(prev)
 		}
 		for node, payload := range nodesRaw {
+			if payload == nil {
+				delete(existing, node)
+				continue
+			}
 			nodeUpdate, ok := payload.(map[string]interface{})
 			if !ok {
 				continue
@@ -928,7 +945,12 @@ func mergeMegaBackupConfig(current, updates, defaults map[string]interface{}) ma
 			if prevNode, ok := existing[node].(map[string]interface{}); ok {
 				existingNode = cloneGenericMap(prevNode)
 			}
-			existing[node] = mergeMegaBackupNode(existingNode, nodeUpdate)
+			merged := mergeMegaBackupNode(existingNode, nodeUpdate)
+			if len(merged) == 0 {
+				delete(existing, node)
+			} else {
+				existing[node] = merged
+			}
 		}
 		base["nodes"] = existing
 	}
@@ -938,6 +960,11 @@ func mergeMegaBackupConfig(current, updates, defaults map[string]interface{}) ma
 func mergeMegaBackupNode(current, updates map[string]interface{}) map[string]interface{} {
 	out := cloneGenericMap(current)
 	passwordProvided := false
+	if remove, ok := updates["remove"]; ok {
+		if b, ok := remove.(bool); ok && b {
+			return map[string]interface{}{}
+		}
+	}
 	for key, value := range updates {
 		switch strings.ToLower(key) {
 		case "password":

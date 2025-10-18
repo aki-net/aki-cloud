@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"aki-cloud/backend/internal/auth"
@@ -42,7 +43,6 @@ import (
 	"github.com/miekg/dns"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/net/publicsuffix"
-	"sync"
 )
 
 // Server holds routing dependencies.
@@ -566,6 +566,8 @@ func (s *Server) Routes() http.Handler {
 					r.Get("/", s.handleListBackups)
 					r.Post("/run", s.handleRunBackup)
 					r.Post("/restore", s.handleRestoreBackup)
+					r.Post("/upload", s.handleUploadBackup)
+					r.Post("/restore/upload", s.handleRestoreBackupUpload)
 				})
 
 				r.Post("/ops/rebuild", s.handleRebuild)
@@ -3050,6 +3052,11 @@ func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
 	}
 	list, err := s.Backups.List(r.Context())
 	if err != nil {
+		if errors.Is(err, backup.ErrCredentialsMissing) {
+			w.Header().Set("X-Backup-Warning", "credentials-missing")
+			writeJSON(w, http.StatusOK, []backup.BackupDescriptor{})
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -3108,6 +3115,76 @@ func (s *Server) handleRestoreBackup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, restoreResultDTO(payload.Name, result))
 }
 
+func (s *Server) handleUploadBackup(w http.ResponseWriter, r *http.Request) {
+	if s.Backups == nil {
+		writeError(w, http.StatusNotImplemented, "backup service unavailable")
+		return
+	}
+	if err := r.ParseMultipartForm(64 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "failed to parse upload form")
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "file field required")
+		return
+	}
+	defer file.Close()
+	name := r.FormValue("name")
+	if name == "" && header != nil {
+		name = header.Filename
+	}
+	result, err := s.Backups.Upload(r.Context(), name, file)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, runResultDTO(backup.RunResult{
+		BackupName:  result.Name,
+		Bytes:       result.SizeBytes,
+		Includes:    result.Includes,
+		Uploaded:    true,
+		StartedAt:   result.CreatedAt,
+		CompletedAt: result.CreatedAt,
+	}))
+}
+
+func (s *Server) handleRestoreBackupUpload(w http.ResponseWriter, r *http.Request) {
+	if s.Backups == nil {
+		writeError(w, http.StatusNotImplemented, "backup service unavailable")
+		return
+	}
+	if err := r.ParseMultipartForm(128 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "failed to parse upload form")
+		return
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "file field required")
+		return
+	}
+	defer file.Close()
+	include := parseIncludeValues(r.MultipartForm.Value["include"])
+	wipeDomains := isTruthy(r.FormValue("wipe_domains"))
+	if r.FormValue("wipe_domains") == "" {
+		wipeDomains = true
+	}
+	req := backup.RestoreRequest{
+		Include:     include,
+		WipeDomains: wipeDomains,
+		WipeUsers:   isTruthy(r.FormValue("wipe_users")),
+		WipeExt:     isTruthy(r.FormValue("wipe_extensions")),
+		WipeNodes:   isTruthy(r.FormValue("wipe_nodes")),
+		WipeEdge:    isTruthy(r.FormValue("wipe_edge")),
+	}
+	result, err := s.Backups.RestoreFromUpload(r.Context(), req, file)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, restoreResultDTO("", result))
+}
+
 func runResultDTO(res backup.RunResult) backupRunDTO {
 	dto := backupRunDTO{
 		Name:      res.BackupName,
@@ -3136,6 +3213,29 @@ func restoreResultDTO(name string, res backup.RestoreResult) backupRestoreDTO {
 		StartedAt:   res.StartedAt.UTC().Format(time.RFC3339),
 		CompletedAt: res.CompletedAt.UTC().Format(time.RFC3339),
 	}
+}
+
+func parseIncludeValues(values []string) []string {
+	set := make(map[string]struct{})
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		tokens := strings.Split(value, ",")
+		for _, token := range tokens {
+			trimmed := strings.TrimSpace(token)
+			if trimmed == "" {
+				continue
+			}
+			set[trimmed] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for item := range set {
+		out = append(out, item)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func formatTimePtr(t *time.Time) string {
